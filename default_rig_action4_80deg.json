@@ -1,0 +1,59 @@
+{
+    "name": "DJI Action 4 Dual-Rig 2.7K Dewarp (80 deg, 15 deg tilt)",
+    "left_camera": {
+        "name": "DJI Action 4 2.7K Standard/Dewarp (16:9)",
+        "sensor_width": 9.6,
+        "sensor_height": 7.2,
+        "image_width": 2720,
+        "image_height": 1530,
+        "fx": 1950.0,
+        "fy": 1950.0,
+        "cx": 1360.0,
+        "cy": 765.0,
+        "k1": 0.0,
+        "k2": 0.0,
+        "k3": 0.0,
+        "k4": 0.0,
+        "model_type": "pinhole"
+    },
+    "right_camera": {
+        "name": "DJI Action 4 2.7K Standard/Dewarp (16:9)",
+        "sensor_width": 9.6,
+        "sensor_height": 7.2,
+        "image_width": 2720,
+        "image_height": 1530,
+        "fx": 1950.0,
+        "fy": 1950.0,
+        "cx": 1360.0,
+        "cy": 765.0,
+        "k1": 0.0,
+        "k2": 0.0,
+        "k3": 0.0,
+        "k4": 0.0,
+        "model_type": "pinhole"
+    },
+    "left_pose": {
+        "yaw": -40.0,
+        "pitch": -15.0,
+        "roll": 0.0,
+        "tx": -0.04,
+        "ty": 0.0,
+        "tz": 0.0
+    },
+    "right_pose": {
+        "yaw": 40.0,
+        "pitch": -15.0,
+        "roll": 0.0,
+        "tx": 0.04,
+        "ty": 0.0,
+        "tz": 0.0
+    },
+    "global_pitch_correction": 15.0,
+    "global_roll_correction": 0.0,
+    "global_yaw_center": 0.0,
+    "pano_hfov": 130.0,
+    "projection_type": "cylindrical",
+    "blend_width_deg": 8.0,
+    "vertical_crop_offset": 0.0
+}
+
