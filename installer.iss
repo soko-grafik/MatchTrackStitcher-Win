@@ -2,7 +2,7 @@
 ; Creates a professional Windows Setup Installer (.exe) with desktop and start menu shortcuts
 
 #define MyAppName "MatchTrack Stitcher"
-#define MyAppVersion "1.4.2"
+#define MyAppVersion "1.5.0"
 #define MyAppPublisher "MatchTrack"
 #define MyAppExeName "MatchTrack-Stitcher.exe"
 
@@ -15,7 +15,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=installer_output
-OutputBaseFilename=MatchTrack-Stitcher-Setup-v1.4.2
+OutputBaseFilename=MatchTrack-Stitcher-Setup-v1.5.0
 
 
 Compression=lzma2/ultra64

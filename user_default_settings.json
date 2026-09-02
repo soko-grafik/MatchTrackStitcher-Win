@@ -9,8 +9,8 @@
             "sensor_height": 7.2,
             "image_width": 1920,
             "image_height": 1080,
-            "fx": 788.5528901201104,
-            "fy": 788.5528901201104,
+            "fx": 802.6845912503697,
+            "fy": 802.6845912503697,
             "cx": 960.0,
             "cy": 540.0,
             "k1": 0.0,
@@ -25,8 +25,8 @@
             "sensor_height": 7.2,
             "image_width": 1920,
             "image_height": 1080,
-            "fx": 788.5528901201104,
-            "fy": 788.5528901201104,
+            "fx": 802.6845912503697,
+            "fy": 802.6845912503697,
             "cx": 960.0,
             "cy": 540.0,
             "k1": 0.0,
@@ -36,9 +36,9 @@
             "model_type": "pinhole"
         },
         "left_pose": {
-            "yaw": -38.7,
-            "pitch": -2.0,
-            "roll": -7.0,
+            "yaw": -38.2,
+            "pitch": -2.7,
+            "roll": -6.6,
             "tx": -0.04,
             "ty": 0.0,
             "tz": 0.0,
@@ -56,15 +56,15 @@
                     1.0
                 ],
                 [
-                    0.0,
+                    0.006,
                     1.0
                 ]
             ]
         },
         "right_pose": {
-            "yaw": 37.6,
-            "pitch": -2.0,
-            "roll": 10.5,
+            "yaw": 37.4,
+            "pitch": -2.7,
+            "roll": 11.0,
             "tx": 0.04,
             "ty": 0.0,
             "tz": 0.0,
@@ -74,12 +74,12 @@
                     0.0
                 ],
                 [
-                    1.0,
-                    0.0
+                    1.2766666666666666,
+                    -0.5883950617283951
                 ],
                 [
-                    1.0,
-                    1.0
+                    1.0477777777777777,
+                    1.825432098765432
                 ],
                 [
                     0.0,
@@ -87,76 +87,76 @@
                 ]
             ]
         },
-        "global_pitch_correction": 2.0,
+        "global_pitch_correction": 2.7,
         "global_roll_correction": 0.0,
-        "global_yaw_center": 1.2,
+        "global_yaw_center": 11.4,
         "pano_hfov": 142.0,
         "projection_type": "cylindrical",
-        "blend_width_deg": 1.5,
-        "vertical_crop_offset": -0.82,
+        "blend_width_deg": 1.0,
+        "vertical_crop_offset": -0.7,
         "horizontal_squeeze": 0.5,
         "auto_crop_lir": true,
-        "lir_safety_margin": 0.005
+        "lir_safety_margin": 0.02
     },
     "sync": {
         "frame_offset_right": -46
     },
     "autocam": {
-        "ai_tracking": false,
-        "tracking_mode": "player_density",
+        "ai_tracking": true,
+        "tracking_mode": "ball_centric",
         "enable_dynamic_zoom": false,
         "fixed_zoom_factor": 1.0,
         "min_zoom": 1.0,
         "max_zoom": 1.25,
         "zoom_speed": 0.07,
-        "anticipation_lead": 0.05,
-        "smoothing_factor": 0.86,
-        "deadband_width": 0.11,
-        "max_pan_speed": 0.07,
-        "vertical_center_bias": 0.75,
-        "tactical_margin": 0.0,
+        "anticipation_lead": 0.1,
+        "smoothing_factor": 0.81,
+        "deadband_width": 0.17,
+        "max_pan_speed": 0.05,
+        "vertical_center_bias": 0.5,
+        "tactical_margin": 5.5,
         "pitch_corners": [
             [
-                0.0,
-                0.0
+                0.259,
+                0.218
             ],
             [
-                0.5,
-                0.0
+                0.503,
+                0.214
             ],
             [
-                1.0,
-                0.0
+                0.7090000000000001,
+                0.21
             ],
             [
-                1.0,
-                1.0
+                0.993,
+                0.391
             ],
             [
-                0.5,
-                1.0
+                0.508,
+                0.7859999999999999
             ],
             [
-                0.0,
-                1.0
+                -0.017,
+                0.419
             ]
         ],
-        "scan_step": 8,
-        "use_fp16": true
+        "scan_step": 12,
+        "use_fp16": false
     },
     "export": {
-        "format": "21:10",
-        "resolution_width": 3360,
-        "resolution_height": 1600,
+        "format": "32:9",
+        "resolution_width": 5120,
+        "resolution_height": 1440,
         "codec": "hevc_nvenc_hq",
         "bitrate_mbps": 30,
         "trim_only": true,
         "audio_source": "left"
     },
     "ui_view": {
-        "view_mode": "16:9_tactical",
+        "view_mode": "32:9",
         "show_frame": false,
-        "frame_opacity": 50.0,
+        "frame_opacity": 33.0,
         "show_center_line": false,
         "show_autocam": true,
         "show_ball": false,
