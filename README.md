@@ -341,7 +341,7 @@ Copyright © 2026 MatchTrack / soko-grafik.
 Wenn dir die Plattform bei deiner Videoanalyse, Spielvorbereitung und Trainingsarbeit hilft und du die Weiterentwicklung unterstützen möchtest, freue ich mich riesig über deine Unterstützung und einen Kaffee!
 
 <p align="center">
-  <a href="https://ppaypal.me/soko21061983" target="_blank">
+  <a href="https://paypal.me/soko21061983" target="_blank">
     <img src="https://img.shields.io/badge/Donate-PayPal.Me-00457C?style=for-the-badge&logo=paypal&logoColor=white" alt="Donate via PayPal.Me" />
   </a>
   &nbsp;&nbsp;
