@@ -334,7 +334,6 @@ Dieses Projekt ist urheberrechtlich geschützt. Alle Rechte vorbehalten.
 Copyright © 2026 MatchTrack / soko-grafik.
 
 
-
 ## ☕ Support & Spenden
 
 **MatchTrack Online** ist ein unabhängiges Projekt, das mit viel Herzblut für Trainer und Vereine entwickelt wird. Der Betrieb von Testservern, die Bereitstellung von Updates und die kontinuierliche Entwicklung neuer Funktionen erfordern jedoch viel Zeit und laufende Ressourcen.
@@ -342,11 +341,11 @@ Copyright © 2026 MatchTrack / soko-grafik.
 Wenn dir die Plattform bei deiner Videoanalyse, Spielvorbereitung und Trainingsarbeit hilft und du die Weiterentwicklung unterstützen möchtest, freue ich mich riesig über deine Unterstützung und einen Kaffee!
 
 <p align="center">
-  <a href="https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=hello%40soko-grafik.de&currency_code=EUR&item_name=MatchTrack+Online+Support" target="_blank">
-    <img src="https://img.shields.io/badge/Donate-PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white" alt="Donate via PayPal" />
+  <a href="https://ppaypal.me/soko21061983" target="_blank">
+    <img src="https://img.shields.io/badge/Donate-PayPal.Me-00457C?style=for-the-badge&logo=paypal&logoColor=white" alt="Donate via PayPal.Me" />
   </a>
   &nbsp;&nbsp;
-  <a href="https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=hello%40soko-grafik.de&currency_code=EUR&item_name=MatchTrack+Online+Support" target="_blank">
+  <a href="https://paypal.me/soko21061983" target="_blank">
     <img src="https://img.shields.io/badge/Buy_Me_A_Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black" alt="Buy Me A Coffee" />
   </a>
 </p>
