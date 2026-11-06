@@ -34,7 +34,7 @@ from ..auto_stitch import (
 )
 from ..autocam import AutoCamConfig
 from ..tactical_warp import generate_tactical_16x9_luts, generate_tactical_16x9_canvas_luts, apply_tactical_16x9_warp
-from ..logger import get_logger, get_gui_handler, GuiLogRecord, setup_logging
+from ..logger import get_logger, get_gui_handler, GuiLogRecord, setup_logging, install_crash_handlers
 from ..paths import get_log_file_path, get_default_settings_path, get_resource_path
 
 logger = get_logger("gui")
@@ -192,6 +192,7 @@ class LogViewerWidget(QWidget):
         # Log Output Box
         self.txt_log = QPlainTextEdit()
         self.txt_log.setReadOnly(True)
+        self.txt_log.setMaximumBlockCount(1500)
         self.txt_log.setStyleSheet("""
             QPlainTextEdit {
                 background-color: #0b0f14;
@@ -314,109 +315,113 @@ class RenderWorker(QThread):
         self.use_lookahead = use_lookahead
 
     def run(self):
-        def callback(processed, total, fps, eta, stage_text=""):
-            self.progress_signal.emit(processed, total, fps, eta, stage_text)
+        try:
+            def callback(processed, total, fps, eta, stage_text=""):
+                self.progress_signal.emit(processed, total, fps, eta, stage_text)
 
-        if self.engine.is_panorama_mode():
-            if self.mode == "21:10":
-                success = self.engine.convert_panorama_to_21x10(
-                    output_filepath=self.out_path,
-                    out_width=self.width,
-                    out_height=self.height,
+            if self.engine.is_panorama_mode():
+                if self.mode == "21:10":
+                    success = self.engine.convert_panorama_to_21x10(
+                        output_filepath=self.out_path,
+                        out_width=self.width,
+                        out_height=self.height,
+                        codec=self.codec,
+                        bitrate_mbps=self.bitrate,
+                        start_frame=self.start_frame,
+                        end_frame=self.end_frame,
+                        progress_callback=callback
+                    )
+                elif self.mode == "16:9_autocam":
+                    success = self.engine.render_broadcast_from_panorama(
+                        output_filepath=self.out_path,
+                        out_width=self.width,
+                        out_height=self.height,
+                        codec=self.codec,
+                        bitrate_mbps=self.bitrate,
+                        start_frame=self.start_frame,
+                        end_frame=self.end_frame,
+                        use_lookahead=self.use_lookahead,
+                        progress_callback=callback
+                    )
+                else:
+                    success = self.engine.convert_panorama_to_21x10(
+                        output_filepath=self.out_path,
+                        out_width=self.width,
+                        out_height=self.height,
+                        codec=self.codec,
+                        bitrate_mbps=self.bitrate,
+                        start_frame=self.start_frame,
+                        end_frame=self.end_frame,
+                        progress_callback=callback
+                    )
+            elif self.mode == "both":
+                success = self.engine.render_two_stage_broadcast(
+                    output_16x9_filepath=self.out_path,
+                    out_16x9_width=self.width,
+                    out_16x9_height=self.height,
                     codec=self.codec,
                     bitrate_mbps=self.bitrate,
                     start_frame=self.start_frame,
                     end_frame=self.end_frame,
+                    audio_source=self.audio_source,
+                    use_lookahead=self.use_lookahead,
+                    keep_32x9=True,
                     progress_callback=callback
                 )
             elif self.mode == "16:9_autocam":
-                success = self.engine.render_broadcast_from_panorama(
-                    output_filepath=self.out_path,
-                    out_width=self.width,
-                    out_height=self.height,
+                success = self.engine.render_two_stage_broadcast(
+                    output_16x9_filepath=self.out_path,
+                    out_16x9_width=self.width,
+                    out_16x9_height=self.height,
                     codec=self.codec,
                     bitrate_mbps=self.bitrate,
                     start_frame=self.start_frame,
                     end_frame=self.end_frame,
+                    audio_source=self.audio_source,
                     use_lookahead=self.use_lookahead,
+                    keep_32x9=False,
                     progress_callback=callback
                 )
-            else:
-                success = self.engine.convert_panorama_to_21x10(
+            elif self.mode == "21:10":
+                def cb_2110(proc, total, fps, eta):
+                    self.progress_signal.emit(proc, total, fps, eta, "21:10 Panorama Rendering...")
+
+                success = self.engine.render_video_to_file(
                     output_filepath=self.out_path,
                     out_width=self.width,
                     out_height=self.height,
+                    mode="21:10",
                     codec=self.codec,
                     bitrate_mbps=self.bitrate,
                     start_frame=self.start_frame,
                     end_frame=self.end_frame,
-                    progress_callback=callback
+                    audio_source=self.audio_source,
+                    progress_callback=cb_2110
                 )
-        elif self.mode == "both":
-            success = self.engine.render_two_stage_broadcast(
-                output_16x9_filepath=self.out_path,
-                out_16x9_width=self.width,
-                out_16x9_height=self.height,
-                codec=self.codec,
-                bitrate_mbps=self.bitrate,
-                start_frame=self.start_frame,
-                end_frame=self.end_frame,
-                audio_source=self.audio_source,
-                use_lookahead=self.use_lookahead,
-                keep_32x9=True,
-                progress_callback=callback
-            )
-        elif self.mode == "16:9_autocam":
-            success = self.engine.render_two_stage_broadcast(
-                output_16x9_filepath=self.out_path,
-                out_16x9_width=self.width,
-                out_16x9_height=self.height,
-                codec=self.codec,
-                bitrate_mbps=self.bitrate,
-                start_frame=self.start_frame,
-                end_frame=self.end_frame,
-                audio_source=self.audio_source,
-                use_lookahead=self.use_lookahead,
-                keep_32x9=False,
-                progress_callback=callback
-            )
-        elif self.mode == "21:10":
-            def cb_2110(proc, total, fps, eta):
-                self.progress_signal.emit(proc, total, fps, eta, "21:10 Panorama Rendering...")
+            else: # 32:9 Panorama
+                def cb_329(proc, total, fps, eta):
+                    self.progress_signal.emit(proc, total, fps, eta, "32:9 Panorama Rendering...")
 
-            success = self.engine.render_video_to_file(
-                output_filepath=self.out_path,
-                out_width=self.width,
-                out_height=self.height,
-                mode="21:10",
-                codec=self.codec,
-                bitrate_mbps=self.bitrate,
-                start_frame=self.start_frame,
-                end_frame=self.end_frame,
-                audio_source=self.audio_source,
-                progress_callback=cb_2110
-            )
-        else: # 32:9 Panorama
-            def cb_329(proc, total, fps, eta):
-                self.progress_signal.emit(proc, total, fps, eta, "32:9 Panorama Rendering...")
+                success = self.engine.render_video_to_file(
+                    output_filepath=self.out_path,
+                    out_width=self.width,
+                    out_height=self.height,
+                    mode="32:9",
+                    codec=self.codec,
+                    bitrate_mbps=self.bitrate,
+                    start_frame=self.start_frame,
+                    end_frame=self.end_frame,
+                    audio_source=self.audio_source,
+                    progress_callback=cb_329
+                )
 
-            success = self.engine.render_video_to_file(
-                output_filepath=self.out_path,
-                out_width=self.width,
-                out_height=self.height,
-                mode="32:9",
-                codec=self.codec,
-                bitrate_mbps=self.bitrate,
-                start_frame=self.start_frame,
-                end_frame=self.end_frame,
-                audio_source=self.audio_source,
-                progress_callback=cb_329
-            )
-
-        if success:
-            self.finished_signal.emit(True, "Export erfolgreich abgeschlossen!")
-        else:
-            self.finished_signal.emit(False, "Export wurde abgebrochen oder es trat ein Fehler auf.")
+            if success:
+                self.finished_signal.emit(True, "Export erfolgreich abgeschlossen!")
+            else:
+                self.finished_signal.emit(False, "Export wurde abgebrochen oder es trat ein Fehler auf.")
+        except Exception as e:
+            logger.critical(f"Kritischer Ausnahmefehler im RenderWorker: {e}", exc_info=True)
+            self.finished_signal.emit(False, f"Schwerwiegender interner Fehler: {e}")
 
 
 class InteractivePanoramaViewport(QWidget):
@@ -2474,6 +2479,7 @@ class MainWindow(QMainWindow):
         # Bottom Log Viewer Dock
         self.log_viewer = QPlainTextEdit()
         self.log_viewer.setReadOnly(True)
+        self.log_viewer.setMaximumBlockCount(1500)
         self.log_viewer.setMaximumHeight(90)
         self.log_viewer.setStyleSheet("""
             QPlainTextEdit {
@@ -2493,13 +2499,24 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Bereit. Bitte Videos laden oder Profil öffnen.")
 
-        # Setup GUI logging sink
+        # Setup GUI logging sink via thread-safe Qt Signal/Slot
+        self.log_emitter = LogEmitter(self)
+        self.log_emitter.log_signal.connect(self._safe_append_log, Qt.QueuedConnection)
         self.gui_handler = get_gui_handler()
-        self.gui_handler.subscribe(self.append_log_message)
+        self._log_sub_cb = lambda rec: self.log_emitter.log_signal.emit(rec)
+        self.gui_handler.subscribe(self._log_sub_cb)
 
-    def append_log_message(self, record: GuiLogRecord):
+    @Slot(object)
+    def _safe_append_log(self, record: GuiLogRecord):
         if hasattr(self, 'log_viewer') and self.log_viewer is not None:
             self.log_viewer.appendPlainText(record.formatted())
+
+    def append_log_message(self, record: GuiLogRecord):
+        """Thread-safe forwarder for legacy callers."""
+        if hasattr(self, 'log_emitter'):
+            self.log_emitter.log_signal.emit(record)
+        else:
+            self._safe_append_log(record)
 
     def apply_dark_theme(self):
         self.setStyleSheet("""
@@ -3893,7 +3910,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Auto-save current settings on clean close."""
         try:
-            if hasattr(self, 'gui_handler'):
+            if hasattr(self, 'gui_handler') and hasattr(self, '_log_sub_cb'):
+                self.gui_handler.unsubscribe(self._log_sub_cb)
+            elif hasattr(self, 'gui_handler'):
                 self.gui_handler.unsubscribe(self.append_log_message)
             default_path = get_default_settings_path()
             settings_dict = self.get_current_settings_dict()
@@ -4145,12 +4164,19 @@ class MainWindow(QMainWindow):
             dlg = QMessageBox(self)
             dlg.setIcon(QMessageBox.Warning)
             dlg.setWindowTitle("Export Status")
-            dlg.setText(f"{message}\n\nMöchten Sie das System-Log öffnen, um Details zum Fehler zu sehen?")
+            dlg.setText(f"{message}\n\nMöchten Sie das System-Log (matchtrack.log) öffnen, um Details zum Fehler zu sehen?")
             btn_log = dlg.addButton("📋 System-Log öffnen", QMessageBox.AcceptRole)
             btn_close = dlg.addButton("Schließen", QMessageBox.RejectRole)
             dlg.exec()
             if dlg.clickedButton() == btn_log:
-                self.right_pane.setCurrentWidget(self.tab_log_widget)
+                log_path = get_log_file_path()
+                if os.path.exists(log_path):
+                    try:
+                        os.startfile(log_path)
+                    except Exception as e:
+                        logger.error(f"Konnte Logdatei nicht öffnen: {e}")
+                else:
+                    QMessageBox.information(self, "Logdatei", f"Logdatei noch nicht vorhanden:\n{log_path}")
 
     def cancel_video_export(self):
         if self.render_worker and self.render_worker.isRunning():
@@ -4161,7 +4187,24 @@ class MainWindow(QMainWindow):
 
 def launch_gui():
     setup_logging()
+    install_crash_handlers()
     logger.info("Starte MatchTrack-Stitcher Benutzeroberfläche...")
+
+    # Install Qt message handler to catch native Qt warnings and errors
+    from PySide6.QtCore import qInstallMessageHandler, QtMsgType
+    def qt_message_handler(mode, context, message):
+        if mode == QtMsgType.QtDebugMsg:
+            logger.debug(f"[Qt] {message}")
+        elif mode == QtMsgType.QtInfoMsg:
+            logger.info(f"[Qt] {message}")
+        elif mode == QtMsgType.QtWarningMsg:
+            logger.warning(f"[Qt] {message}")
+        elif mode == QtMsgType.QtCriticalMsg:
+            logger.error(f"[Qt Critical] {message}")
+        elif mode == QtMsgType.QtFatalMsg:
+            logger.critical(f"[Qt Fatal] {message}")
+
+    qInstallMessageHandler(qt_message_handler)
 
     # Set Windows Taskbar AppUserModelID for explicit app icon display
     if sys.platform == "win32":

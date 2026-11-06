@@ -12,9 +12,17 @@ from .paths import get_resource_path
 
 try:
     import torch
+    if "YOLO_CONFIG_DIR" not in os.environ:
+        import tempfile
+        candidate_dir = os.path.join(tempfile.gettempdir(), "ultralytics")
+        try:
+            os.makedirs(candidate_dir, exist_ok=True)
+            os.environ["YOLO_CONFIG_DIR"] = candidate_dir
+        except Exception:
+            pass
     from ultralytics import YOLO
     HAS_YOLO = True
-except ImportError:
+except Exception:
     HAS_YOLO = False
 
 

@@ -29,7 +29,9 @@ bin/
 # Logs & Databases
 *.log
 matchtrack.log
+matchtrack_crash.log
 *.sqlite3
+Ultralytics/
 
 # Test outputs & temporary media
 tests/output/

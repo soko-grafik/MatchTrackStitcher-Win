@@ -115,6 +115,13 @@ def get_log_file_path() -> str:
     return os.path.join(root, "matchtrack.log")
 
 
+def get_crash_log_file_path() -> str:
+    """Returns the absolute path to matchtrack_crash.log."""
+    log_path = get_log_file_path()
+    log_dir = os.path.dirname(os.path.abspath(log_path))
+    return os.path.join(log_dir, "matchtrack_crash.log")
+
+
 def get_default_settings_path() -> str:
     """Returns the absolute path to user_default_settings.json."""
     if getattr(sys, 'frozen', False):

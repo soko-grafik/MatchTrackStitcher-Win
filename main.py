@@ -7,11 +7,12 @@ import argparse
 from matchtrack.gui import launch_gui
 from matchtrack.rig_geometry import RigConfiguration
 from matchtrack.stitcher_engine import StitcherEngine
-from matchtrack.logger import setup_logging, get_logger
+from matchtrack.logger import setup_logging, get_logger, install_crash_handlers
 
 
 def main():
     setup_logging()
+    install_crash_handlers()
     logger = get_logger("main")
     parser = argparse.ArgumentParser(description="MatchTrack-Stitcher: 32:9 Soccer Panorama Video Stitcher & 16:9 Broadcast Follow-Cam")
     parser.add_argument("--left", type=str, help="Path to left camera video file")

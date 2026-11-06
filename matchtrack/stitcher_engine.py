@@ -3,6 +3,7 @@ Core High-Performance Stitching & Video Render Engine.
 Supports frame-accurate seeking, preview generation, and hardware-accelerated (NVENC) batch export.
 """
 import os
+import shutil
 import time
 import subprocess
 import threading
@@ -17,7 +18,7 @@ from .color_matcher import ColorExposureMatcher
 from .ai_tracker import AIBroadcastTracker, BroadcastConfig
 from .audio_sync import has_audio_stream
 from .paths import get_ffmpeg_path
-from .logger import get_logger
+from .logger import get_logger, get_process_memory_mb
 
 logger = get_logger("engine")
 
@@ -338,6 +339,17 @@ class StitcherEngine:
         logger.info(f"Frame-Bereich:     {start_frame} bis {end_frame} (Gesamt: {frames_to_process} Frames)")
         logger.info(f"Encoder / Bitrate: {codec} @ {bitrate_mbps} Mbps")
 
+        # Check target disk space
+        target_dir = os.path.dirname(os.path.abspath(output_filepath))
+        try:
+            total_disk, used_disk, free_disk = shutil.disk_usage(target_dir)
+            free_gb = free_disk / (1024**3)
+            logger.info(f"Ziel-Speicherplatz ({target_dir}): {free_gb:.1f} GB frei (von {total_disk / (1024**3):.1f} GB)")
+            if free_gb < 1.0:
+                logger.error(f"Kritisch wenig Speicherplatz auf {target_dir}: Nur {free_gb:.2f} GB frei! Export droht fehlzuschlagen.")
+        except Exception as e:
+            logger.warning(f"Konnte Speicherplatz für Zielordner {target_dir} nicht prüfen: {e}")
+
         tactical_map_x, tactical_map_y = None, None
         # Intermediate stitch resolution for 16:9 modes
         if mode == "16:9_autocam":
@@ -367,10 +379,17 @@ class StitcherEngine:
         cap_l = cv2.VideoCapture(self.video_left.filepath, cv2.CAP_FFMPEG)
         if not cap_l.isOpened():
             cap_l = cv2.VideoCapture(self.video_left.filepath)
+        if not cap_l.isOpened():
+            logger.error(f"Konnte linkes Video nicht für Render-Export öffnen: {self.video_left.filepath}")
+            return False
 
         cap_r = cv2.VideoCapture(self.video_right.filepath, cv2.CAP_FFMPEG)
         if not cap_r.isOpened():
             cap_r = cv2.VideoCapture(self.video_right.filepath)
+        if not cap_r.isOpened():
+            logger.error(f"Konnte rechtes Video nicht für Render-Export öffnen: {self.video_right.filepath}")
+            cap_l.release()
+            return False
 
         # Seek once at start_frame
         cap_l.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
@@ -385,6 +404,7 @@ class StitcherEngine:
 
         def reader_thread():
             logger.debug("Reader-Thread gestartet.")
+            consecutive_missing = 0
             try:
                 for f_idx in range(start_frame, end_frame):
                     if self._stop_render.is_set():
@@ -404,6 +424,15 @@ class StitcherEngine:
                             logger.warning(f"Kamera Rechts: Kein Frame bei Index {r_idx}")
                     else:
                         frame_r = None
+
+                    if not ret_l and not ret_r:
+                        consecutive_missing += 1
+                        if consecutive_missing >= 60:
+                            logger.error(f"Lesefehler-Abbruch: 60 aufeinanderfolgende Frames fehlen bei Index {f_idx}!")
+                            self._stop_render.set()
+                            break
+                    else:
+                        consecutive_missing = 0
                     
                     # Push to worker queue (blocks if queue full)
                     while not self._stop_render.is_set():
@@ -677,11 +706,15 @@ class StitcherEngine:
                     eta_sec = (frames_to_process - processed) / max(current_fps, 0.001)
                     m_eta, s_eta = divmod(int(eta_sec), 60)
                     pct = int((processed / max(frames_to_process, 1)) * 100)
-                    logger.info(f"Render-Status: {processed}/{frames_to_process} ({pct}%) | {current_fps:.1f} FPS | Restzeit: {m_eta:02d}:{s_eta:02d}")
+                    ram_mb = get_process_memory_mb()
+                    ram_str = f" | RAM: {ram_mb:.0f} MB" if ram_mb > 0 else ""
+                    logger.info(f"Render-Status: {processed}/{frames_to_process} ({pct}%) | {current_fps:.1f} FPS{ram_str} | Restzeit: {m_eta:02d}:{s_eta:02d}")
 
             if not self._stop_render.is_set() and processed == frames_to_process:
                 render_success = True
-                logger.info(f"🎉 Rendering erfolgreich abgeschlossen! ({processed} Frames in {time.time()-start_time:.1f}s)")
+                logger.info(f"🎉 Rendering erfolgreich abgeschlossen! ({processed} Frames in {time.time()-start_time:.1f}s, Ø {processed/max(time.time()-start_time, 0.001):.1f} FPS)")
+            elif not render_success and not self._stop_render.is_set():
+                logger.error(f"Render-Export unvollständig beendet bei Frame {processed}/{frames_to_process}!")
 
         except Exception as e:
             logger.error(f"Schwerer Ausnahmefehler während des Renderns: {e}", exc_info=True)
@@ -768,6 +801,17 @@ class StitcherEngine:
         logger.info(f"Frame-Bereich:     {start_frame} bis {end_frame} (Gesamt: {frames_to_process} Frames)")
         logger.info(f"Encoder / Bitrate: {codec} @ {bitrate_mbps} Mbps")
         logger.info(f"Lookahead-Modus:   {'Aktiviert (2-Pass Filmisch)' if use_lookahead else 'Deaktiviert (1-Pass)'}")
+
+        # Check target disk space
+        target_dir = os.path.dirname(os.path.abspath(output_filepath))
+        try:
+            total_disk, used_disk, free_disk = shutil.disk_usage(target_dir)
+            free_gb = free_disk / (1024**3)
+            logger.info(f"Ziel-Speicherplatz ({target_dir}): {free_gb:.1f} GB frei (von {total_disk / (1024**3):.1f} GB)")
+            if free_gb < 1.0:
+                logger.error(f"Kritisch wenig Speicherplatz auf {target_dir}: Nur {free_gb:.2f} GB frei! Export droht fehlzuschlagen.")
+        except Exception as e:
+            logger.warning(f"Konnte Speicherplatz für Zielordner {target_dir} nicht prüfen: {e}")
 
         # Stage 1: Precompute Trajectory if Lookahead is enabled
         if use_lookahead:
@@ -883,9 +927,21 @@ class StitcherEngine:
                     eta_sec = (frames_to_process - processed) / max(current_fps, 0.001)
                     progress_callback(processed, frames_to_process, current_fps, eta_sec, "Stufe 2/2: 16:9 Follow-Cam Rendering...")
 
+                if processed % 150 == 0 or processed == frames_to_process:
+                    elapsed = time.time() - start_time
+                    current_fps = processed / max(elapsed, 0.001)
+                    eta_sec = (frames_to_process - processed) / max(current_fps, 0.001)
+                    m_eta, s_eta = divmod(int(eta_sec), 60)
+                    pct = int((processed / max(frames_to_process, 1)) * 100)
+                    ram_mb = get_process_memory_mb()
+                    ram_str = f" | RAM: {ram_mb:.0f} MB" if ram_mb > 0 else ""
+                    logger.info(f"16:9 Render-Status: {processed}/{frames_to_process} ({pct}%) | {current_fps:.1f} FPS{ram_str} | Restzeit: {m_eta:02d}:{s_eta:02d}")
+
             if not self._stop_render.is_set() and processed == frames_to_process:
                 render_success = True
                 logger.info(f"🎉 16:9 Follow-Cam erfolgreich gerendert! ({processed} Frames in {time.time()-start_time:.1f}s)")
+            elif not render_success and not self._stop_render.is_set():
+                logger.error(f"16:9 Follow-Cam Export unvollständig beendet bei Frame {processed}/{frames_to_process}!")
         except Exception as e:
             logger.error(f"Fehler beim 16:9 Broadcast Rendering: {e}", exc_info=True)
             render_success = False
@@ -950,6 +1006,17 @@ class StitcherEngine:
         logger.info(f"Ziel-Datei (21:10): {output_filepath} ({out_width}x{out_height})")
         logger.info(f"Frame-Bereich:     {start_frame} bis {end_frame} (Gesamt: {frames_to_process} Frames)")
         logger.info(f"Encoder / Bitrate: {codec} @ {bitrate_mbps} Mbps")
+
+        # Check target disk space
+        target_dir = os.path.dirname(os.path.abspath(output_filepath))
+        try:
+            total_disk, used_disk, free_disk = shutil.disk_usage(target_dir)
+            free_gb = free_disk / (1024**3)
+            logger.info(f"Ziel-Speicherplatz ({target_dir}): {free_gb:.1f} GB frei (von {total_disk / (1024**3):.1f} GB)")
+            if free_gb < 1.0:
+                logger.error(f"Kritisch wenig Speicherplatz auf {target_dir}: Nur {free_gb:.2f} GB frei! Export droht fehlzuschlagen.")
+        except Exception as e:
+            logger.warning(f"Konnte Speicherplatz für Zielordner {target_dir} nicht prüfen: {e}")
 
         ffmpeg_bin = get_ffmpeg_path()
         codec_flags = get_encoder_flags(codec, bitrate_mbps)
@@ -1041,9 +1108,21 @@ class StitcherEngine:
                     eta_sec = (frames_to_process - processed) / max(current_fps, 0.001)
                     progress_callback(processed, frames_to_process, current_fps, eta_sec, "21:10 Konvertierung...")
 
+                if processed % 150 == 0 or processed == frames_to_process:
+                    elapsed = time.time() - start_time
+                    current_fps = processed / max(elapsed, 0.001)
+                    eta_sec = (frames_to_process - processed) / max(current_fps, 0.001)
+                    m_eta, s_eta = divmod(int(eta_sec), 60)
+                    pct = int((processed / max(frames_to_process, 1)) * 100)
+                    ram_mb = get_process_memory_mb()
+                    ram_str = f" | RAM: {ram_mb:.0f} MB" if ram_mb > 0 else ""
+                    logger.info(f"21:10 Render-Status: {processed}/{frames_to_process} ({pct}%) | {current_fps:.1f} FPS{ram_str} | Restzeit: {m_eta:02d}:{s_eta:02d}")
+
             if not self._stop_render.is_set() and processed == frames_to_process:
                 render_success = True
                 logger.info(f"🎉 21:10 Panorama erfolgreich konvertiert! ({processed} Frames in {time.time()-start_time:.1f}s)")
+            elif not render_success and not self._stop_render.is_set():
+                logger.error(f"21:10 Panorama Konvertierung unvollständig beendet bei Frame {processed}/{frames_to_process}!")
         except Exception as e:
             logger.error(f"Fehler bei der 21:10 Panorama-Konvertierung: {e}", exc_info=True)
             render_success = False
@@ -1107,6 +1186,17 @@ class StitcherEngine:
         logger.info(f"Ziel-Datei (16:9):   {output_filepath} ({out_width}x{out_height})")
         logger.info(f"Frame-Bereich:       {start_frame} bis {end_frame} (Gesamt: {frames_to_process} Frames)")
         logger.info(f"Encoder / Bitrate:   {codec} @ {bitrate_mbps} Mbps")
+
+        # Check target disk space
+        target_dir = os.path.dirname(os.path.abspath(output_filepath))
+        try:
+            total_disk, used_disk, free_disk = shutil.disk_usage(target_dir)
+            free_gb = free_disk / (1024**3)
+            logger.info(f"Ziel-Speicherplatz ({target_dir}): {free_gb:.1f} GB frei (von {total_disk / (1024**3):.1f} GB)")
+            if free_gb < 1.0:
+                logger.error(f"Kritisch wenig Speicherplatz auf {target_dir}: Nur {free_gb:.2f} GB frei! Export droht fehlzuschlagen.")
+        except Exception as e:
+            logger.warning(f"Konnte Speicherplatz für Zielordner {target_dir} nicht prüfen: {e}")
 
         # Generate 16:9 Tactical Remap LUTs once
         map_x, map_y = generate_tactical_16x9_luts(
@@ -1204,9 +1294,21 @@ class StitcherEngine:
                     eta_sec = (frames_to_process - processed) / max(current_fps, 0.001)
                     progress_callback(processed, frames_to_process, current_fps, eta_sec, "16:9 Taktik-Warp...")
 
+                if processed % 150 == 0 or processed == frames_to_process:
+                    elapsed = time.time() - start_time
+                    current_fps = processed / max(elapsed, 0.001)
+                    eta_sec = (frames_to_process - processed) / max(current_fps, 0.001)
+                    m_eta, s_eta = divmod(int(eta_sec), 60)
+                    pct = int((processed / max(frames_to_process, 1)) * 100)
+                    ram_mb = get_process_memory_mb()
+                    ram_str = f" | RAM: {ram_mb:.0f} MB" if ram_mb > 0 else ""
+                    logger.info(f"Taktik-Warp Render-Status: {processed}/{frames_to_process} ({pct}%) | {current_fps:.1f} FPS{ram_str} | Restzeit: {m_eta:02d}:{s_eta:02d}")
+
             if not self._stop_render.is_set() and processed == frames_to_process:
                 render_success = True
                 logger.info(f"🎉 16:9 Taktik-Warp erfolgreich exportiert! ({processed} Frames in {time.time()-start_time:.1f}s)")
+            elif not render_success and not self._stop_render.is_set():
+                logger.error(f"16:9 Taktik-Warp Export unvollständig beendet bei Frame {processed}/{frames_to_process}!")
         except Exception as e:
             logger.error(f"Fehler beim 16:9 Taktik-Warp: {e}", exc_info=True)
             render_success = False
