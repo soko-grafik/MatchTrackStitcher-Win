@@ -149,7 +149,12 @@
             ]
         ],
         "scan_step": 12,
-        "use_fp16": false
+        "use_fp16": false,
+        "enable_radar": true,
+        "radar_position": "top_right",
+        "radar_width": 320,
+        "radar_opacity": 0.85,
+        "burn_radar_in_export": false
     },
     "export": {
         "format": "32:9",
@@ -167,6 +172,7 @@
         "show_center_line": true,
         "show_autocam": false,
         "show_ball": false,
+        "show_radar": true,
         "show_seam": true,
         "show_grid": true,
         "sync_angles": false,

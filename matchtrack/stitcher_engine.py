@@ -19,6 +19,7 @@ from .ai_tracker import AIBroadcastTracker, BroadcastConfig
 from .audio_sync import has_audio_stream
 from .paths import get_ffmpeg_path
 from .logger import get_logger, get_process_memory_mb
+from .radar_minimap import SoccerRadarRenderer
 
 logger = get_logger("engine")
 
@@ -685,6 +686,20 @@ class StitcherEngine:
                 else:
                     final_frame = stitched
 
+                if getattr(self.ai_broadcast.config, "burn_radar_in_export", False):
+                    try:
+                        SoccerRadarRenderer.draw_radar_opencv(
+                            final_frame,
+                            self.ai_broadcast.active_players,
+                            self.ai_broadcast.current_ball_norm,
+                            self.ai_broadcast.get_camera_span(),
+                            radar_w=getattr(self.ai_broadcast.config, "radar_width", 320),
+                            pos=getattr(self.ai_broadcast.config, "radar_position", "top_right"),
+                            opacity=getattr(self.ai_broadcast.config, "radar_opacity", 0.85)
+                        )
+                    except Exception as e:
+                        logger.warning(f"Konnte Radar nicht in Frame {f_idx} einbrennen: {e}")
+
                 try:
                     proc.stdin.write(final_frame.tobytes())
                 except (BrokenPipeError, OSError) as e:
@@ -918,6 +933,20 @@ class StitcherEngine:
                 else:
                     final_frame = self.ai_broadcast.extract_16x9_frame(pano_frame, out_width, out_height, frame_index=f_idx)
 
+                if getattr(self.ai_broadcast.config, "burn_radar_in_export", False):
+                    try:
+                        SoccerRadarRenderer.draw_radar_opencv(
+                            final_frame,
+                            self.ai_broadcast.active_players,
+                            self.ai_broadcast.current_ball_norm,
+                            self.ai_broadcast.get_camera_span(),
+                            radar_w=getattr(self.ai_broadcast.config, "radar_width", 320),
+                            pos=getattr(self.ai_broadcast.config, "radar_position", "top_right"),
+                            opacity=getattr(self.ai_broadcast.config, "radar_opacity", 0.85)
+                        )
+                    except Exception as e:
+                        logger.warning(f"Konnte Radar nicht in Frame {f_idx} einbrennen: {e}")
+
                 try:
                     proc.stdin.write(final_frame.tobytes())
                 except (BrokenPipeError, OSError) as e:
@@ -1098,6 +1127,20 @@ class StitcherEngine:
                     final_frame = cv2.resize(pano_frame, (out_width, out_height), interpolation=cv2.INTER_LINEAR)
                 else:
                     final_frame = pano_frame
+
+                if getattr(self.ai_broadcast.config, "burn_radar_in_export", False):
+                    try:
+                        SoccerRadarRenderer.draw_radar_opencv(
+                            final_frame,
+                            self.ai_broadcast.active_players,
+                            self.ai_broadcast.current_ball_norm,
+                            self.ai_broadcast.get_camera_span(),
+                            radar_w=getattr(self.ai_broadcast.config, "radar_width", 320),
+                            pos=getattr(self.ai_broadcast.config, "radar_position", "top_right"),
+                            opacity=getattr(self.ai_broadcast.config, "radar_opacity", 0.85)
+                        )
+                    except Exception as e:
+                        logger.warning(f"Konnte Radar nicht in Frame {f_idx} einbrennen: {e}")
 
                 try:
                     proc.stdin.write(final_frame.tobytes())
@@ -1284,6 +1327,20 @@ class StitcherEngine:
                     break
 
                 final_frame = apply_tactical_16x9_warp(pano_frame, map_x, map_y)
+
+                if getattr(self.ai_broadcast.config, "burn_radar_in_export", False):
+                    try:
+                        SoccerRadarRenderer.draw_radar_opencv(
+                            final_frame,
+                            self.ai_broadcast.active_players,
+                            self.ai_broadcast.current_ball_norm,
+                            self.ai_broadcast.get_camera_span(),
+                            radar_w=getattr(self.ai_broadcast.config, "radar_width", 320),
+                            pos=getattr(self.ai_broadcast.config, "radar_position", "top_right"),
+                            opacity=getattr(self.ai_broadcast.config, "radar_opacity", 0.85)
+                        )
+                    except Exception as e:
+                        logger.warning(f"Konnte Radar nicht in Frame {f_idx} einbrennen: {e}")
 
                 try:
                     proc.stdin.write(final_frame.tobytes())

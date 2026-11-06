@@ -9,6 +9,7 @@ import numpy as np
 import cv2
 from typing import Tuple, Optional, List, Dict, Any, Callable
 from .paths import get_resource_path
+from .bytetrack import ByteTracker
 
 try:
     import torch
@@ -160,6 +161,13 @@ class BroadcastConfig:
     scan_step: int = 5                   # Step interval for offline trajectory scan (5 = 3x faster, 8 = 5x faster)
     use_fp16: bool = True                # Enable Half-precision FP16 on CUDA Tensor Cores
 
+    # 2D Tactical Radar Minimap Overlay
+    enable_radar: bool = True            # Display 2D bird's-eye pitch radar
+    radar_position: str = "top_right"    # 'top_right', 'bottom_right', 'bottom_center', 'top_left', 'bottom_left'
+    radar_width: int = 320               # Width of radar in pixels
+    radar_opacity: float = 0.85          # Opacity of radar overlay (0.3 to 1.0)
+    burn_radar_in_export: bool = False   # Whether to burn radar minimap directly into exported video
+
 
 class AIBroadcastTracker:
     """
@@ -192,8 +200,10 @@ class AIBroadcastTracker:
         self.ball_confidence: float = 0.0
         self.last_detected_ball_px: Optional[Tuple[int, int]] = None
         
-        # Player Cluster State
+        # Player Cluster & Multi-Object ByteTracker State
         self.last_player_centroid: float = 0.5
+        self.bytetracker = ByteTracker(track_thresh=0.40, high_thresh=0.50, match_thresh=0.65)
+        self.current_player_tracks: List[Tuple[float, float, int]] = [] # (norm_x, norm_y, team_id)
         
         # Motion history for CV fallback
         self.prev_gray: Optional[np.ndarray] = None
@@ -263,6 +273,8 @@ class AIBroadcastTracker:
         self.ball_confidence = 0.0
         self.last_detected_ball_px = None
         self.last_player_centroid = 0.5
+        self.bytetracker.reset()
+        self.current_player_tracks.clear()
         self.prev_gray = None
         self.precomputed_trajectory.clear()
 
@@ -343,6 +355,9 @@ class AIBroadcastTracker:
             offset_y = 0
 
         player_positions: List[Tuple[float, float]] = []
+        player_boxes: List[List[float]] = []
+        player_scores: List[float] = []
+        player_teams: List[int] = []
         ball_candidates: List[Tuple[float, float, float, int, int]] = [] # (norm_x, norm_y, score, px_x, px_y)
 
         # 3. AI Inference (Players & Ball)
@@ -381,6 +396,37 @@ class AIBroadcastTracker:
                         is_player = (cls_name in ["player", "goalkeeper", "referee", "person"] or (cls_id == 0 and self.model_name in ["yolo11n", "yolov8n"]))
 
                         if is_player:
+                            bx1 = max(0.0, min(1.0, float(xyxy[0] + offset_x) / infer_w))
+                            by1 = max(0.0, min(1.0, float(xyxy[1] + offset_y) / infer_h))
+                            bx2 = max(0.0, min(1.0, float(xyxy[2] + offset_x) / infer_w))
+                            by2 = max(0.0, min(1.0, float(xyxy[3] + offset_y) / infer_h))
+
+                            team_id = 0
+                            if cls_name == "referee":
+                                team_id = 2  # Referee (yellow/neutral)
+                            else:
+                                # Sample upper torso jersey color in BGR space
+                                px1 = max(0, min(infer_w - 1, int(round(xyxy[0] + offset_x))))
+                                py1 = max(0, min(infer_h - 1, int(round(xyxy[1] + offset_y))))
+                                px2 = max(px1 + 1, min(infer_w, int(round(xyxy[2] + offset_x))))
+                                py2 = max(py1 + 1, min(infer_h, int(round(xyxy[3] + offset_y))))
+                                bh = py2 - py1
+                                bw = px2 - px1
+                                if bh >= 6 and bw >= 4:
+                                    ty1 = py1 + int(bh * 0.25)
+                                    ty2 = py1 + int(bh * 0.55)
+                                    tx1 = px1 + int(bw * 0.20)
+                                    tx2 = px1 + int(bw * 0.80)
+                                    torso = infer_img[ty1:ty2, tx1:tx2]
+                                    if torso.size > 0:
+                                        b_mean = float(np.mean(torso[:, :, 0]))
+                                        r_mean = float(np.mean(torso[:, :, 2]))
+                                        team_id = 1 if r_mean > b_mean else 0
+
+                            player_boxes.append([bx1, by1, bx2, by2])
+                            player_scores.append(conf)
+                            player_teams.append(team_id)
+
                             if cls_name != "goalkeeper":
                                 player_positions.append((norm_x, norm_y))
                         elif is_ball:
@@ -416,6 +462,22 @@ class AIBroadcastTracker:
                             ball_candidates.append((norm_x, norm_y, conf, orig_px_x, orig_px_y))
             except Exception:
                 pass
+
+        # Multi-Object Tracking (ByteTrack) update with high & low confidence detections
+        if len(player_boxes) > 0:
+            det_arr = np.array(player_boxes, dtype=np.float32)
+            score_arr = np.array(player_scores, dtype=np.float32)
+            team_arr = np.array(player_teams, dtype=np.int32)
+            active_tracks = self.bytetracker.update(det_arr, score_arr, team_arr)
+            self.current_player_tracks = [(cx, cy, tid) for (_, cx, cy, _, _, tid) in active_tracks]
+        else:
+            active_tracks = self.bytetracker.update(np.empty((0, 4), dtype=np.float32), np.empty(0, dtype=np.float32), np.empty(0, dtype=np.int32))
+            if active_tracks:
+                self.current_player_tracks = [(cx, cy, tid) for (_, cx, cy, _, _, tid) in active_tracks]
+            elif player_positions:
+                self.current_player_tracks = [(px, py, 0) for px, py in player_positions]
+            else:
+                self.current_player_tracks = []
 
         # 4. Fallback Player Cluster via Motion / Pitch Mask if no AI players found
         if len(player_positions) == 0:
@@ -602,6 +664,26 @@ class AIBroadcastTracker:
         self.cam_y = self.config.vertical_center_bias
 
         return self.cam_x, self.cam_y, self.cam_zoom
+
+    @property
+    def active_players(self) -> List[Tuple[float, float, int]]:
+        """List of active tracked players as (norm_x, norm_y, team_id)."""
+        return self.current_player_tracks
+
+    @property
+    def current_ball_norm(self) -> Optional[Tuple[float, float]]:
+        """Current normalized ball coordinates (norm_x, norm_y) if tracked, else None."""
+        if self.ball_confidence > 0.15:
+            return (self.kalman.pos[0], self.kalman.pos[1])
+        return None
+
+    def get_camera_span(self, pano_aspect: float = 32.0 / 9.0) -> Tuple[float, float]:
+        """Returns normalized (x_start, x_end) coverage of current virtual camera FOV."""
+        zoom = max(1.0, self.cam_zoom)
+        box_w_norm = min(1.0, (1.0 / pano_aspect) * (16.0 / 9.0) / zoom)
+        span_left = max(0.0, self.cam_x - box_w_norm * 0.5)
+        span_right = min(1.0, self.cam_x + box_w_norm * 0.5)
+        return (span_left, span_right)
 
     def get_crop_aspect_ratios(self) -> Tuple[float, float]:
         """

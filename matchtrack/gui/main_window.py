@@ -34,6 +34,7 @@ from ..auto_stitch import (
 )
 from ..autocam import AutoCamConfig
 from ..tactical_warp import generate_tactical_16x9_luts, generate_tactical_16x9_canvas_luts, apply_tactical_16x9_warp
+from ..radar_minimap import SoccerRadarRenderer
 from ..logger import get_logger, get_gui_handler, GuiLogRecord, setup_logging, install_crash_handlers
 from ..paths import get_log_file_path, get_default_settings_path, get_resource_path
 
@@ -502,6 +503,15 @@ class InteractivePanoramaViewport(QWidget):
         self.show_ball_tracking = True
         self.show_center_line = True
         self.pick_center_mode = False
+
+        # 2D Tactical Radar Minimap (FIFA Pitch)
+        self.show_radar = True
+        self.radar_position = "top_right"
+        self.radar_width = 320
+        self.radar_opacity = 0.85
+        self.radar_players: List[Tuple[float, float, int]] = []
+        self.radar_ball: Optional[Tuple[float, float]] = None
+        self.radar_cam_span: Optional[Tuple[float, float]] = None
         
         # Semi-transparent 32:9 Frame Overlay
         self.show_transparent_frame = True
@@ -604,12 +614,48 @@ class InteractivePanoramaViewport(QWidget):
             self.setCursor(Qt.ArrowCursor)
         self.update()
 
-    def set_frame(self, frame_bgr: np.ndarray, autocam_box: Optional[Tuple[int, int, int, int]] = None, ball_px: Optional[Tuple[int, int]] = None, dynamic_zoom: float = 1.35):
-        """Updates the displayed frame, broadcast box, and ball reticle."""
+    def set_radar_enabled(self, enabled: bool):
+        """Toggles 2D tactical radar display."""
+        self.show_radar = enabled
+        self.update()
+
+    def set_radar_position(self, pos: str):
+        """Sets anchor position ('top_right', 'bottom_right', 'bottom_center', 'top_left', 'bottom_left')."""
+        self.radar_position = pos
+        self.update()
+
+    def set_radar_width(self, width: int):
+        """Sets radar width in pixels."""
+        self.radar_width = max(180, min(600, int(width)))
+        self.update()
+
+    def set_radar_opacity(self, opacity: float):
+        """Sets radar opacity (0.2 to 1.0)."""
+        self.radar_opacity = max(0.2, min(1.0, float(opacity)))
+        self.update()
+
+    def set_frame(self, 
+                  frame_bgr: np.ndarray, 
+                  autocam_box: Optional[Tuple[int, int, int, int]] = None, 
+                  ball_px: Optional[Tuple[int, int]] = None, 
+                  dynamic_zoom: float = 1.35,
+                  players: Optional[List[Tuple[float, float, int]]] = None,
+                  ball_norm: Optional[Tuple[float, float]] = None,
+                  cam_span: Optional[Tuple[float, float]] = None):
+        """Updates the displayed frame, broadcast box, ball reticle, and 2D tactical radar."""
         self.current_frame_bgr = frame_bgr
         self.autocam_box = autocam_box
         self.ball_px = ball_px
         self.dynamic_zoom = dynamic_zoom
+
+        if players is not None:
+            self.radar_players = players
+        if ball_norm is not None:
+            self.radar_ball = ball_norm
+        elif ball_px is not None and frame_bgr is not None:
+            self.radar_ball = (ball_px[0] / max(1, frame_bgr.shape[1]), ball_px[1] / max(1, frame_bgr.shape[0]))
+        if cam_span is not None:
+            self.radar_cam_span = cam_span
 
         if frame_bgr is None:
             self.current_qimage = None
@@ -1204,6 +1250,20 @@ class InteractivePanoramaViewport(QWidget):
             painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
             painter.drawText(banner_rect, Qt.AlignCenter, "📍 Klicken Sie auf die Spielfeld-Mittellinie / Anstoßkreis im Bild zum sofortigen Zentrieren")
 
+        # 7. 2D Tactical Radar Minimap Overlay (FIFA Standard Pitch)
+        if self.show_radar and self.current_frame_bgr is not None:
+            SoccerRadarRenderer.paint_radar_qt(
+                painter=painter,
+                widget_w=self.width(),
+                widget_h=self.height(),
+                players=self.radar_players,
+                ball_norm=self.radar_ball,
+                cam_span=self.radar_cam_span,
+                radar_w=self.radar_width,
+                pos=self.radar_position,
+                opacity=self.radar_opacity
+            )
+
         # HUD in top-left
         painter.setPen(QColor(220, 220, 220, 220))
         painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
@@ -1553,6 +1613,13 @@ class MainWindow(QMainWindow):
         act_grid = QWidgetAction(self)
         act_grid.setDefaultWidget(self.chk_show_grid)
         menu_overlays.addAction(act_grid)
+
+        self.chk_show_radar_menu = QCheckBox("🗺️ 2D Taktik-Radar")
+        self.chk_show_radar_menu.setChecked(True)
+        self.chk_show_radar_menu.toggled.connect(self.toggle_radar_overlay)
+        act_radar = QWidgetAction(self)
+        act_radar.setDefaultWidget(self.chk_show_radar_menu)
+        menu_overlays.addAction(act_radar)
 
         self.btn_overlays_menu.setMenu(menu_overlays)
         vp_tool_bar.addWidget(self.btn_overlays_menu)
@@ -2463,6 +2530,50 @@ class MainWindow(QMainWindow):
 
         scroll_layout_ac.addWidget(grp_ac_follow)
 
+        # 2D Tactical Radar Group (FIFA Pitch Mini-Map)
+        grp_radar = QGroupBox("🗺️ 2D Taktik-Radar (Mini-Map)")
+        layout_radar = QVBoxLayout(grp_radar)
+        layout_radar.setSpacing(8)
+
+        self.chk_show_radar = QCheckBox("🗺️ 2D Taktik-Radar im Bild einblenden")
+        self.chk_show_radar.setChecked(True)
+        self.chk_show_radar.setStyleSheet("font-weight: 600; color: #10b981;")
+        self.chk_show_radar.setToolTip("Zeigt eine 2D-Vogelperspektive des FIFA-Spielfelds (105x68m) mit Live-Spielern (Blau/Rot), Ball und 16:9 Kamerasichtfeld")
+        self.chk_show_radar.toggled.connect(self.on_radar_param_changed)
+        layout_radar.addWidget(self.chk_show_radar)
+
+        lbl_radar_pos = QLabel("Radar-Position im Bild:")
+        lbl_radar_pos.setStyleSheet("font-weight: 600; color: #f4f4f6; font-size: 11px;")
+        layout_radar.addWidget(lbl_radar_pos)
+
+        self.combo_radar_pos = QComboBox()
+        self.combo_radar_pos.addItem("↗️ Oben-Rechts (Standard)", "top_right")
+        self.combo_radar_pos.addItem("↘️ Unten-Rechts", "bottom_right")
+        self.combo_radar_pos.addItem("⬇️ Unten-Mitte (Klassisch)", "bottom_center")
+        self.combo_radar_pos.addItem("↖️ Oben-Links", "top_left")
+        self.combo_radar_pos.addItem("↙️ Unten-Links", "bottom_left")
+        self.combo_radar_pos.currentIndexChanged.connect(self.on_radar_param_changed)
+        layout_radar.addWidget(self.combo_radar_pos)
+
+        self.ctrl_radar_width = LabeledSliderSpinBox("Radar-Größe (Breite):", 200, 520, 320, 10, "px", decimals=0)
+        self.ctrl_radar_width.setToolTip("Breite der Mini-Map in Pixeln (Höhe passt sich automatisch dem FIFA 105x68m Seitenverhältnis an)")
+        self.ctrl_radar_width.valueChanged.connect(self.on_radar_param_changed)
+        layout_radar.addWidget(self.ctrl_radar_width)
+
+        self.ctrl_radar_opacity = LabeledSliderSpinBox("Radar-Deckkraft:", 0.30, 1.00, 0.85, 0.05, "", decimals=2)
+        self.ctrl_radar_opacity.setToolTip("Transparenz des Rasens und der Spielfeldmarkierungen im Videobild")
+        self.ctrl_radar_opacity.valueChanged.connect(self.on_radar_param_changed)
+        layout_radar.addWidget(self.ctrl_radar_opacity)
+
+        self.chk_burn_radar = QCheckBox("🎬 Radar fest in exportiertes Video einbrennen")
+        self.chk_burn_radar.setChecked(False)
+        self.chk_burn_radar.setStyleSheet("font-weight: 600; color: #38bdf8; margin-top: 4px;")
+        self.chk_burn_radar.setToolTip("Rendert die 2D-Minimap fest in das fertige Video beim 16:9- oder 32:9-Export.")
+        self.chk_burn_radar.toggled.connect(self.on_burn_radar_toggled)
+        layout_radar.addWidget(self.chk_burn_radar)
+
+        scroll_layout_ac.addWidget(grp_radar)
+
         scroll_layout_ac.addStretch()
         scroll_area_ac.setWidget(scroll_widget_ac)
         autocam_layout.addWidget(scroll_area_ac)
@@ -2585,6 +2696,13 @@ class MainWindow(QMainWindow):
         self.chk_lookahead.setChecked(True)
         self.chk_lookahead.setStyleSheet("font-weight: 600; color: #f59e0b;")
         exp_form.addWidget(self.chk_lookahead)
+
+        self.chk_exp_burn_radar = QCheckBox("🗺️ 2D Taktik-Radar in Video einbrennen")
+        self.chk_exp_burn_radar.setChecked(False)
+        self.chk_exp_burn_radar.setStyleSheet("font-weight: 600; color: #38bdf8;")
+        self.chk_exp_burn_radar.setToolTip("Rendert das 2D Taktik-Radar (Mini-Map) mit Live-Spielern und Ball direkt in das exportierte MP4-Video.")
+        self.chk_exp_burn_radar.toggled.connect(self.on_burn_radar_toggled)
+        exp_form.addWidget(self.chk_exp_burn_radar)
 
         export_layout.addWidget(grp_exp_settings)
 
@@ -3337,6 +3455,53 @@ class MainWindow(QMainWindow):
         self.viewport.show_ball_tracking = checked
         self.viewport.update()
 
+    def toggle_radar_overlay(self, checked: bool):
+        self.viewport.set_radar_enabled(checked)
+        if hasattr(self, 'chk_show_radar'):
+            self.chk_show_radar.blockSignals(True)
+            self.chk_show_radar.setChecked(checked)
+            self.chk_show_radar.blockSignals(False)
+        cfg = getattr(self.engine.ai_broadcast, 'config', None)
+        if cfg:
+            cfg.enable_radar = checked
+
+    def on_radar_param_changed(self):
+        show_r = self.chk_show_radar.isChecked() if hasattr(self, 'chk_show_radar') else True
+        pos = self.combo_radar_pos.currentData() if hasattr(self, 'combo_radar_pos') else "top_right"
+        w = int(self.ctrl_radar_width.value()) if hasattr(self, 'ctrl_radar_width') else 320
+        op = float(self.ctrl_radar_opacity.value()) if hasattr(self, 'ctrl_radar_opacity') else 0.85
+
+        self.viewport.set_radar_enabled(show_r)
+        self.viewport.set_radar_position(pos)
+        self.viewport.set_radar_width(w)
+        self.viewport.set_radar_opacity(op)
+
+        if hasattr(self, 'chk_show_radar_menu'):
+            self.chk_show_radar_menu.blockSignals(True)
+            self.chk_show_radar_menu.setChecked(show_r)
+            self.chk_show_radar_menu.blockSignals(False)
+
+        cfg = getattr(self.engine.ai_broadcast, 'config', None)
+        if cfg:
+            cfg.enable_radar = show_r
+            cfg.radar_position = pos
+            cfg.radar_width = w
+            cfg.radar_opacity = op
+
+    def on_burn_radar_toggled(self, checked: bool):
+        if hasattr(self, 'chk_burn_radar'):
+            self.chk_burn_radar.blockSignals(True)
+            self.chk_burn_radar.setChecked(checked)
+            self.chk_burn_radar.blockSignals(False)
+        if hasattr(self, 'chk_exp_burn_radar'):
+            self.chk_exp_burn_radar.blockSignals(True)
+            self.chk_exp_burn_radar.setChecked(checked)
+            self.chk_exp_burn_radar.blockSignals(False)
+
+        cfg = getattr(self.engine.ai_broadcast, 'config', None)
+        if cfg:
+            cfg.burn_radar_in_export = checked
+
     def on_follow_ball_toggled(self, checked):
         self.engine.autocam.config.follow_ball = checked
         self.refresh_preview()
@@ -3850,7 +4015,11 @@ class MainWindow(QMainWindow):
         else:
             pw, ph = 1280, 360
         frame, autocam_box, ball_px, cur_zoom = self.engine.render_preview_frame(self.current_frame_idx, preview_width=pw, preview_height=ph, view_mode=vm)
-        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom)
+        ai_tracker = getattr(self.engine, 'ai_broadcast', None)
+        players = ai_tracker.active_players if ai_tracker else None
+        ball_norm = ai_tracker.current_ball_norm if ai_tracker else None
+        cam_span = ai_tracker.get_camera_span() if ai_tracker else None
+        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span)
         self.hq_preview_timer.start()
 
     def render_high_res_preview(self):
@@ -3864,7 +4033,11 @@ class MainWindow(QMainWindow):
         else:
             pw, ph = 2560, 720
         frame, autocam_box, ball_px, cur_zoom = self.engine.render_preview_frame(self.current_frame_idx, preview_width=pw, preview_height=ph, view_mode=vm)
-        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom)
+        ai_tracker = getattr(self.engine, 'ai_broadcast', None)
+        players = ai_tracker.active_players if ai_tracker else None
+        ball_norm = ai_tracker.current_ball_norm if ai_tracker else None
+        cam_span = ai_tracker.get_camera_span() if ai_tracker else None
+        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span)
 
     def refresh_preview(self):
         if not self.has_active_video():
@@ -3876,7 +4049,11 @@ class MainWindow(QMainWindow):
         else:
             pw, ph = 2560, 720
         frame, autocam_box, ball_px, cur_zoom = self.engine.render_preview_frame(self.current_frame_idx, preview_width=pw, preview_height=ph, view_mode=vm)
-        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom)
+        ai_tracker = getattr(self.engine, 'ai_broadcast', None)
+        players = ai_tracker.active_players if ai_tracker else None
+        ball_norm = ai_tracker.current_ball_norm if ai_tracker else None
+        cam_span = ai_tracker.get_camera_span() if ai_tracker else None
+        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span)
 
     def get_current_settings_dict(self) -> dict:
         """Serializes all rig, camera, AI autocam, export, and UI settings into a dictionary."""
@@ -3913,7 +4090,12 @@ class MainWindow(QMainWindow):
             "tactical_margin": self.ctrl_tactical_margin.value() if hasattr(self, 'ctrl_tactical_margin') else getattr(ac_cfg, 'tactical_margin', 0.0),
             "pitch_corners": [[sx.value() / 100.0, sy.value() / 100.0] for sx, sy in self.spin_pitch_corners] if hasattr(self, 'spin_pitch_corners') and len(self.spin_pitch_corners) == 6 else getattr(ac_cfg, 'pitch_corners', [[0.0, 0.05], [0.5, 0.05], [1.0, 0.05], [1.0, 0.95], [0.5, 0.95], [0.0, 0.95]]),
             "scan_step": self.combo_scan_speed.currentData() if hasattr(self, 'combo_scan_speed') else ac_cfg.scan_step,
-            "use_fp16": self.chk_fp16.isChecked() if hasattr(self, 'chk_fp16') else ac_cfg.use_fp16
+            "use_fp16": self.chk_fp16.isChecked() if hasattr(self, 'chk_fp16') else ac_cfg.use_fp16,
+            "enable_radar": self.chk_show_radar.isChecked() if hasattr(self, 'chk_show_radar') else getattr(ac_cfg, 'enable_radar', True),
+            "radar_position": self.combo_radar_pos.currentData() if hasattr(self, 'combo_radar_pos') else getattr(ac_cfg, 'radar_position', 'top_right'),
+            "radar_width": int(self.ctrl_radar_width.value()) if hasattr(self, 'ctrl_radar_width') else getattr(ac_cfg, 'radar_width', 320),
+            "radar_opacity": float(self.ctrl_radar_opacity.value()) if hasattr(self, 'ctrl_radar_opacity') else getattr(ac_cfg, 'radar_opacity', 0.85),
+            "burn_radar_in_export": self.chk_burn_radar.isChecked() if hasattr(self, 'chk_burn_radar') else getattr(ac_cfg, 'burn_radar_in_export', False)
         }
 
         # UI preferences
@@ -3924,6 +4106,7 @@ class MainWindow(QMainWindow):
             "show_center_line": self.chk_show_center_line.isChecked() if hasattr(self, 'chk_show_center_line') else True,
             "show_autocam": self.chk_show_autocam.isChecked() if hasattr(self, 'chk_show_autocam') else True,
             "show_ball": self.chk_show_ball.isChecked() if hasattr(self, 'chk_show_ball') else True,
+            "show_radar": self.chk_show_radar.isChecked() if hasattr(self, 'chk_show_radar') else True,
             "show_seam": self.chk_show_seam.isChecked() if hasattr(self, 'chk_show_seam') else True,
             "show_grid": self.chk_show_grid.isChecked() if hasattr(self, 'chk_show_grid') else True,
             "sync_angles": getattr(self, 'sync_angles', True),
@@ -4139,6 +4322,36 @@ class MainWindow(QMainWindow):
                 self.chk_fp16.setChecked(bool(ac["use_fp16"]))
                 self.engine.ai_broadcast.config.use_fp16 = bool(ac["use_fp16"])
 
+            if hasattr(self, 'chk_show_radar') and "enable_radar" in ac:
+                self.chk_show_radar.setChecked(bool(ac["enable_radar"]))
+                self.viewport.set_radar_enabled(bool(ac["enable_radar"]))
+                self.engine.ai_broadcast.config.enable_radar = bool(ac["enable_radar"])
+
+            if hasattr(self, 'combo_radar_pos') and "radar_position" in ac:
+                idx = self.combo_radar_pos.findData(ac["radar_position"])
+                if idx >= 0:
+                    self.combo_radar_pos.setCurrentIndex(idx)
+                    self.viewport.set_radar_position(ac["radar_position"])
+                    self.engine.ai_broadcast.config.radar_position = ac["radar_position"]
+
+            if hasattr(self, 'ctrl_radar_width') and "radar_width" in ac:
+                self.ctrl_radar_width.setValue(float(ac["radar_width"]))
+                self.viewport.set_radar_width(int(ac["radar_width"]))
+                self.engine.ai_broadcast.config.radar_width = int(ac["radar_width"])
+
+            if hasattr(self, 'ctrl_radar_opacity') and "radar_opacity" in ac:
+                self.ctrl_radar_opacity.setValue(float(ac["radar_opacity"]))
+                self.viewport.set_radar_opacity(float(ac["radar_opacity"]))
+                self.engine.ai_broadcast.config.radar_opacity = float(ac["radar_opacity"])
+
+            if "burn_radar_in_export" in ac:
+                burn_val = bool(ac["burn_radar_in_export"])
+                if hasattr(self, 'chk_burn_radar'):
+                    self.chk_burn_radar.setChecked(burn_val)
+                if hasattr(self, 'chk_exp_burn_radar'):
+                    self.chk_exp_burn_radar.setChecked(burn_val)
+                self.engine.ai_broadcast.config.burn_radar_in_export = burn_val
+
         # 4. Export Settings
         if "export" in data and isinstance(data["export"], dict):
             exp = data["export"]
@@ -4187,6 +4400,13 @@ class MainWindow(QMainWindow):
                 self.chk_show_autocam.setChecked(bool(ui["show_autocam"]))
             if hasattr(self, 'chk_show_ball') and "show_ball" in ui:
                 self.chk_show_ball.setChecked(bool(ui["show_ball"]))
+            if "show_radar" in ui:
+                r_show = bool(ui["show_radar"])
+                if hasattr(self, 'chk_show_radar'):
+                    self.chk_show_radar.setChecked(r_show)
+                if hasattr(self, 'chk_show_radar_menu'):
+                    self.chk_show_radar_menu.setChecked(r_show)
+                self.viewport.set_radar_enabled(r_show)
             if hasattr(self, 'chk_show_seam') and "show_seam" in ui:
                 self.chk_show_seam.setChecked(bool(ui["show_seam"]))
             if hasattr(self, 'chk_show_grid') and "show_grid" in ui:
