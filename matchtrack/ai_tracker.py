@@ -10,6 +10,15 @@ import cv2
 from typing import Tuple, Optional, List, Dict, Any, Callable
 from .paths import get_resource_path
 from .bytetrack import ByteTracker
+from .ai_detector import (
+    DetectionBox, 
+    BaseDetectorBackend, 
+    YOLODetectorBackend, 
+    RTDETRBackend, 
+    YOLOPoseBackend, 
+    OffsideAnalyzer,
+    SKELETON_CONNECTIONS
+)
 
 try:
     import torch
@@ -168,6 +177,11 @@ class BroadcastConfig:
     radar_opacity: float = 0.85          # Opacity of radar overlay (0.3 to 1.0)
     burn_radar_in_export: bool = False   # Whether to burn radar minimap directly into exported video
 
+    # Phase C: AI Detector Engine & Tactical Skeleton/Offside
+    ai_backend: str = "yolo11"           # "yolo11" (Ultralytics), "rtdetr" (Transformer), "pose" (YOLO-Pose)
+    enable_offside_line: bool = True     # Automatic VAR Virtual Offside Line
+    enable_skeletons: bool = False       # Display player 17-keypoint skeletons & body orientation
+
 
 class AIBroadcastTracker:
     """
@@ -211,7 +225,12 @@ class AIBroadcastTracker:
         # Precomputed offline lookahead trajectory cache {frame_index: (cam_x, cam_y, cam_zoom)}
         self.precomputed_trajectory: Dict[int, Tuple[float, float, float]] = {}
         
-        # AI Models
+        # AI Detector Backend & Tactical Analysis
+        self.detector_backend: Optional[BaseDetectorBackend] = None
+        self.current_detections: List[DetectionBox] = []
+        self._current_offside_line: Optional[Tuple[float, int, str]] = None
+
+        # AI Models Legacy
         self.model: Optional[Any] = None
         self.ball_model: Optional[Any] = None
         self.model_name: str = "none"
@@ -219,42 +238,47 @@ class AIBroadcastTracker:
         self._init_models()
 
     def _init_models(self):
-        """Initializes specialized soccer detection models or general YOLO models."""
-        if not HAS_YOLO:
-            return
-
-        # 1. Try to load specialized soccer models first
-        soccer_player_path = get_resource_path("yolo11m_football_player.pt")
-        soccer_ball_path = get_resource_path("yolo11n_football_ball.pt")
-        yolo11n_path = get_resource_path("yolo11n.pt")
-        yolov8n_path = get_resource_path("yolov8n.pt")
+        """Initializes specialized soccer detection models, RT-DETR Transformer, or YOLO-Pose."""
+        backend_type = getattr(self.config, 'ai_backend', 'yolo11')
+        use_fp16 = (self.device == "cuda" and getattr(self.config, "use_fp16", True))
 
         try:
-            if os.path.exists(soccer_player_path):
-                self.model = YOLO(soccer_player_path)
-                self.model_name = "yolo11m_football_player"
-            elif os.path.exists(yolo11n_path):
-                self.model = YOLO(yolo11n_path)
-                self.model_name = "yolo11n"
-            elif os.path.exists(yolov8n_path):
-                self.model = YOLO(yolov8n_path)
-                self.model_name = "yolov8n"
+            if backend_type == "rtdetr":
+                self.detector_backend = RTDETRBackend("rtdetr-l.pt")
+                if not self.detector_backend.load(self.device, use_fp16):
+                    logger.warning("RTDETR konnte nicht geladen werden, Fallback auf YOLO11.")
+                    self.detector_backend = YOLODetectorBackend()
+                    self.detector_backend.load(self.device, use_fp16)
+            elif backend_type == "pose":
+                self.detector_backend = YOLOPoseBackend("yolov8n-pose.pt")
+                if not self.detector_backend.load(self.device, use_fp16):
+                    logger.warning("YOLO-Pose konnte nicht geladen werden, Fallback auf YOLO11.")
+                    self.detector_backend = YOLODetectorBackend()
+                    self.detector_backend.load(self.device, use_fp16)
+            else:
+                self.detector_backend = YOLODetectorBackend()
+                self.detector_backend.load(self.device, use_fp16)
 
-            # Optional dedicated ball model
-            if os.path.exists(soccer_ball_path):
-                self.ball_model = YOLO(soccer_ball_path)
-
-            # Warmup inference
-            if self.model is not None:
-                dummy = np.zeros((320, 640, 3), dtype=np.uint8)
-                with torch.inference_mode():
-                    self.model.predict(dummy, device=self.device, verbose=False, imgsz=320)
-                    if self.ball_model is not None:
-                        self.ball_model.predict(dummy, device=self.device, verbose=False, imgsz=320)
+            # Direct references for compatibility
+            if isinstance(self.detector_backend, YOLODetectorBackend):
+                self.model = self.detector_backend.model
+                self.ball_model = self.detector_backend.ball_model
+                self.model_name = self.detector_backend.player_model_name
+            else:
+                self.model = getattr(self.detector_backend, "model", None)
+                self.ball_model = None
+                self.model_name = getattr(self.detector_backend, "name", "custom")
         except Exception as e:
-            print(f"Warning: Could not initialize AI tracker on {self.device}: {e}")
+            logger.warning(f"Konnte AI-Backend nicht initialisieren: {e}")
+            self.detector_backend = None
             self.model = None
             self.ball_model = None
+
+    def set_backend(self, backend_name: str) -> bool:
+        """Switches the active AI detection engine ('yolo11', 'rtdetr', 'pose')."""
+        self.config.ai_backend = backend_name
+        self._init_models()
+        return self.detector_backend is not None and getattr(self.detector_backend, 'is_loaded', False)
 
     def reset(self):
         """Resets tracking state."""
@@ -360,9 +384,36 @@ class AIBroadcastTracker:
         player_teams: List[int] = []
         ball_candidates: List[Tuple[float, float, float, int, int]] = [] # (norm_x, norm_y, score, px_x, px_y)
 
-        # 3. AI Inference (Players & Ball)
+        # 3. AI Inference via Pluggable Backend (YOLO11, RT-DETR, or YOLO-Pose)
         use_fp16 = (self.device == "cuda" and getattr(self.config, "use_fp16", True))
-        if self.model is not None and self.config.ai_tracking:
+        if self.detector_backend is not None and self.config.ai_tracking:
+            try:
+                raw_players, raw_balls = self.detector_backend.predict(
+                    target_infer,
+                    conf_thresh=0.20,
+                    offset_x=offset_x,
+                    offset_y=offset_y,
+                    pano_w=infer_w,
+                    pano_h=infer_h
+                )
+                valid_players = [p for p in raw_players if is_point_in_pitch_polygon(p.center[0], p.center[1], corners)]
+                valid_balls = [b for b in raw_balls if is_point_in_pitch_polygon(b.center[0], b.center[1], corners)]
+                self.current_detections = valid_players
+
+                for p in valid_players:
+                    player_boxes.append(list(p.bbox))
+                    player_scores.append(p.conf)
+                    player_teams.append(p.team_id)
+                    if p.cls_name != "goalkeeper":
+                        player_positions.append(p.center)
+
+                for b in valid_balls:
+                    orig_px_x = int(round(b.center[0] * w))
+                    orig_px_y = int(round(b.center[1] * h))
+                    ball_candidates.append((b.center[0], b.center[1], b.conf, orig_px_x, orig_px_y))
+            except Exception as e:
+                logger.warning(f"Inferenz-Fehler im Detektor: {e}")
+        elif self.model is not None and self.config.ai_tracking:
             try:
                 with torch.inference_mode():
                     results = self.model.predict(
@@ -387,76 +438,24 @@ class AIBroadcastTracker:
                         norm_x = cx / infer_w
                         norm_y = cy / infer_h
 
-                        # Discard any detections outside the arbitrary 4-corner pitch polygon
                         if not is_point_in_pitch_polygon(norm_x, norm_y, corners):
                             continue
 
-                        # Check if class is player or ball
-                        is_ball = (cls_name == "ball" or cls_id == 32 or (cls_id == 0 and self.model_name == "yolo11n_football_ball"))
-                        is_player = (cls_name in ["player", "goalkeeper", "referee", "person"] or (cls_id == 0 and self.model_name in ["yolo11n", "yolov8n"]))
+                        is_ball = (cls_name == "ball" or cls_id == 32)
+                        is_player = (cls_name in ["player", "goalkeeper", "referee", "person"] or cls_id == 0)
 
                         if is_player:
                             bx1 = max(0.0, min(1.0, float(xyxy[0] + offset_x) / infer_w))
                             by1 = max(0.0, min(1.0, float(xyxy[1] + offset_y) / infer_h))
                             bx2 = max(0.0, min(1.0, float(xyxy[2] + offset_x) / infer_w))
                             by2 = max(0.0, min(1.0, float(xyxy[3] + offset_y) / infer_h))
-
                             team_id = 0
-                            if cls_name == "referee":
-                                team_id = 2  # Referee (yellow/neutral)
-                            else:
-                                # Sample upper torso jersey color in BGR space
-                                px1 = max(0, min(infer_w - 1, int(round(xyxy[0] + offset_x))))
-                                py1 = max(0, min(infer_h - 1, int(round(xyxy[1] + offset_y))))
-                                px2 = max(px1 + 1, min(infer_w, int(round(xyxy[2] + offset_x))))
-                                py2 = max(py1 + 1, min(infer_h, int(round(xyxy[3] + offset_y))))
-                                bh = py2 - py1
-                                bw = px2 - px1
-                                if bh >= 6 and bw >= 4:
-                                    ty1 = py1 + int(bh * 0.25)
-                                    ty2 = py1 + int(bh * 0.55)
-                                    tx1 = px1 + int(bw * 0.20)
-                                    tx2 = px1 + int(bw * 0.80)
-                                    torso = infer_img[ty1:ty2, tx1:tx2]
-                                    if torso.size > 0:
-                                        b_mean = float(np.mean(torso[:, :, 0]))
-                                        r_mean = float(np.mean(torso[:, :, 2]))
-                                        team_id = 1 if r_mean > b_mean else 0
-
                             player_boxes.append([bx1, by1, bx2, by2])
                             player_scores.append(conf)
                             player_teams.append(team_id)
-
                             if cls_name != "goalkeeper":
                                 player_positions.append((norm_x, norm_y))
                         elif is_ball:
-                            orig_px_x = int(round(cx * (w / infer_w)))
-                            orig_px_y = int(round(cy * (h / infer_h)))
-                            ball_candidates.append((norm_x, norm_y, conf, orig_px_x, orig_px_y))
-            except Exception:
-                pass
-
-        # Optional: Run dedicated ball model if available
-        if self.ball_model is not None and self.config.ai_tracking and len(ball_candidates) == 0:
-            try:
-                with torch.inference_mode():
-                    b_results = self.ball_model.predict(
-                        target_infer,
-                        device=self.device,
-                        half=use_fp16,
-                        verbose=False,
-                        imgsz=640,
-                        conf=0.15
-                    )
-                if b_results and len(b_results) > 0:
-                    for box in b_results[0].boxes:
-                        conf = float(box.conf[0])
-                        xyxy = box.xyxy[0].cpu().numpy()
-                        cx = float((xyxy[0] + xyxy[2]) * 0.5) + offset_x
-                        cy = float((xyxy[1] + xyxy[3]) * 0.5) + offset_y
-                        norm_x = cx / infer_w
-                        norm_y = cy / infer_h
-                        if is_point_in_pitch_polygon(norm_x, norm_y, corners):
                             orig_px_x = int(round(cx * (w / infer_w)))
                             orig_px_y = int(round(cy * (h / infer_h)))
                             ball_candidates.append((norm_x, norm_y, conf, orig_px_x, orig_px_y))
@@ -553,6 +552,13 @@ class AIBroadcastTracker:
 
         ball_x, ball_y = self.kalman.pos
         ball_vx, _ = self.kalman.vel
+
+        # 6.5. Compute VAR Virtual Offside Line
+        if getattr(self.config, 'enable_offside_line', True) and len(self.current_detections) >= 4:
+            b_norm = (ball_x, ball_y) if self.ball_confidence > 0.15 else None
+            self._current_offside_line = OffsideAnalyzer.compute_offside_line(self.current_detections, ball_pos=b_norm)
+        else:
+            self._current_offside_line = None
 
         # 7. Action Center Strategy Fusion
         mode = getattr(self.config, "tracking_mode", "hybrid_fusion")
@@ -676,6 +682,16 @@ class AIBroadcastTracker:
         if self.ball_confidence > 0.15:
             return (self.kalman.pos[0], self.kalman.pos[1])
         return None
+
+    @property
+    def active_detections(self) -> List[DetectionBox]:
+        """List of active detection boxes (including pose keypoints and orientation)."""
+        return self.current_detections
+
+    @property
+    def current_offside_line(self) -> Optional[Tuple[float, int, str]]:
+        """VAR virtual offside line: (norm_x, defending_team, label)."""
+        return self._current_offside_line
 
     def get_camera_span(self, pano_aspect: float = 32.0 / 9.0) -> Tuple[float, float]:
         """Returns normalized (x_start, x_end) coverage of current virtual camera FOV."""

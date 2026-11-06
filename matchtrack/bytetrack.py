@@ -288,3 +288,4 @@ class ByteTracker:
                 unmatched_dets.discard(c)
 
         return matched, sorted(list(unmatched_tracks)), sorted(list(unmatched_dets))
+

@@ -39,7 +39,8 @@ class SoccerRadarRenderer:
         radar_w: int = 340,
         pos: str = "top_right",
         opacity: float = 0.85,
-        margin: int = 16
+        margin: int = 16,
+        offside_line: Optional[Tuple[float, int, str]] = None
     ) -> np.ndarray:
         """
         Draws the 2D tactical radar onto a BGR numpy frame with smooth alpha blending.
@@ -145,6 +146,13 @@ class SoccerRadarRenderer:
             cv2.circle(overlay, (bx, by), 5, (255, 255, 255), 1, cv2.LINE_AA)
             cv2.circle(overlay, (bx, by), 4, (0, 245, 255), -1, cv2.LINE_AA)
 
+        # 9. Virtual Offside Line (VAR Reference)
+        if offside_line is not None:
+            off_x, off_team, _ = offside_line
+            ox_px = int(round(np.clip(off_x, 0.0, 1.0) * (radar_w - 6) + 3))
+            line_col = (50, 70, 235) if off_team == 1 else (235, 130, 50)
+            cv2.line(overlay, (ox_px, 2), (ox_px, radar_h - 3), line_col, 1, cv2.LINE_AA)
+
         # Alpha composite into target frame
         target_roi = frame_bgr[ry:ry+radar_h, rx:rx+radar_w]
         blended = cv2.addWeighted(overlay, opacity, target_roi, 1.0 - opacity, 0)
@@ -164,7 +172,8 @@ class SoccerRadarRenderer:
         radar_w: int = 320,
         pos: str = "top_right",
         opacity: float = 0.88,
-        margin: int = 16
+        margin: int = 16,
+        offside_line: Optional[Tuple[float, int, str]] = None
     ):
         """
         Paints high-DPI antialiased 2D tactical radar directly into a Qt QPainter.
@@ -285,6 +294,14 @@ class SoccerRadarRenderer:
             painter.setPen(QPen(QColor(255, 255, 255, 230), 1.5))
             painter.setBrush(QColor(255, 220, 0)) # Bright yellow ball
             painter.drawEllipse(QPointF(bx, by), 4.5, 4.5)
+
+        # 5. Virtual Offside Line (VAR Reference)
+        if offside_line is not None:
+            off_x, off_team, _ = offside_line
+            px = pitch_rect.left() + max(0.0, min(1.0, off_x)) * pw
+            pen_offside = QPen(QColor(239, 68, 68, int(220 * opacity)) if off_team == 1 else QColor(59, 130, 246, int(220 * opacity)), 1.5, Qt.DashLine)
+            painter.setPen(pen_offside)
+            painter.drawLine(QPointF(px, pitch_rect.top()), QPointF(px, pitch_rect.bottom()))
 
         # Badge tag: "🗺️ 2D Taktik-Radar"
         painter.setPen(QColor(160, 185, 170, int(190 * opacity)))

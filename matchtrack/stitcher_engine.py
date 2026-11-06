@@ -688,6 +688,7 @@ class StitcherEngine:
 
                 if getattr(self.ai_broadcast.config, "burn_radar_in_export", False):
                     try:
+                        off_line = getattr(self.ai_broadcast, "current_offside_line", None) if getattr(self.ai_broadcast.config, "enable_offside_line", True) else None
                         SoccerRadarRenderer.draw_radar_opencv(
                             final_frame,
                             self.ai_broadcast.active_players,
@@ -695,7 +696,8 @@ class StitcherEngine:
                             self.ai_broadcast.get_camera_span(),
                             radar_w=getattr(self.ai_broadcast.config, "radar_width", 320),
                             pos=getattr(self.ai_broadcast.config, "radar_position", "top_right"),
-                            opacity=getattr(self.ai_broadcast.config, "radar_opacity", 0.85)
+                            opacity=getattr(self.ai_broadcast.config, "radar_opacity", 0.85),
+                            offside_line=off_line
                         )
                     except Exception as e:
                         logger.warning(f"Konnte Radar nicht in Frame {f_idx} einbrennen: {e}")
@@ -935,6 +937,7 @@ class StitcherEngine:
 
                 if getattr(self.ai_broadcast.config, "burn_radar_in_export", False):
                     try:
+                        off_line = getattr(self.ai_broadcast, "current_offside_line", None) if getattr(self.ai_broadcast.config, "enable_offside_line", True) else None
                         SoccerRadarRenderer.draw_radar_opencv(
                             final_frame,
                             self.ai_broadcast.active_players,
@@ -942,7 +945,8 @@ class StitcherEngine:
                             self.ai_broadcast.get_camera_span(),
                             radar_w=getattr(self.ai_broadcast.config, "radar_width", 320),
                             pos=getattr(self.ai_broadcast.config, "radar_position", "top_right"),
-                            opacity=getattr(self.ai_broadcast.config, "radar_opacity", 0.85)
+                            opacity=getattr(self.ai_broadcast.config, "radar_opacity", 0.85),
+                            offside_line=off_line
                         )
                     except Exception as e:
                         logger.warning(f"Konnte Radar nicht in Frame {f_idx} einbrennen: {e}")
@@ -1130,6 +1134,7 @@ class StitcherEngine:
 
                 if getattr(self.ai_broadcast.config, "burn_radar_in_export", False):
                     try:
+                        off_line = getattr(self.ai_broadcast, "current_offside_line", None) if getattr(self.ai_broadcast.config, "enable_offside_line", True) else None
                         SoccerRadarRenderer.draw_radar_opencv(
                             final_frame,
                             self.ai_broadcast.active_players,
@@ -1137,7 +1142,8 @@ class StitcherEngine:
                             self.ai_broadcast.get_camera_span(),
                             radar_w=getattr(self.ai_broadcast.config, "radar_width", 320),
                             pos=getattr(self.ai_broadcast.config, "radar_position", "top_right"),
-                            opacity=getattr(self.ai_broadcast.config, "radar_opacity", 0.85)
+                            opacity=getattr(self.ai_broadcast.config, "radar_opacity", 0.85),
+                            offside_line=off_line
                         )
                     except Exception as e:
                         logger.warning(f"Konnte Radar nicht in Frame {f_idx} einbrennen: {e}")
@@ -1330,6 +1336,7 @@ class StitcherEngine:
 
                 if getattr(self.ai_broadcast.config, "burn_radar_in_export", False):
                     try:
+                        off_line = getattr(self.ai_broadcast, "current_offside_line", None) if getattr(self.ai_broadcast.config, "enable_offside_line", True) else None
                         SoccerRadarRenderer.draw_radar_opencv(
                             final_frame,
                             self.ai_broadcast.active_players,
@@ -1337,7 +1344,8 @@ class StitcherEngine:
                             self.ai_broadcast.get_camera_span(),
                             radar_w=getattr(self.ai_broadcast.config, "radar_width", 320),
                             pos=getattr(self.ai_broadcast.config, "radar_position", "top_right"),
-                            opacity=getattr(self.ai_broadcast.config, "radar_opacity", 0.85)
+                            opacity=getattr(self.ai_broadcast.config, "radar_opacity", 0.85),
+                            offside_line=off_line
                         )
                     except Exception as e:
                         logger.warning(f"Konnte Radar nicht in Frame {f_idx} einbrennen: {e}")

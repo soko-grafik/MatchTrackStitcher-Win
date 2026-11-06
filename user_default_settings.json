@@ -154,7 +154,10 @@
         "radar_position": "top_right",
         "radar_width": 320,
         "radar_opacity": 0.85,
-        "burn_radar_in_export": false
+        "burn_radar_in_export": false,
+        "ai_backend": "yolo11",
+        "enable_offside_line": true,
+        "enable_skeletons": false
     },
     "export": {
         "format": "32:9",
@@ -173,6 +176,8 @@
         "show_autocam": false,
         "show_ball": false,
         "show_radar": true,
+        "show_offside_line": true,
+        "show_skeletons": false,
         "show_seam": true,
         "show_grid": true,
         "sync_angles": false,

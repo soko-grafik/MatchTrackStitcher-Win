@@ -40,6 +40,10 @@ tests/output/
 *.avi
 *.mkv
 
+# Large AI Weights
+rtdetr*.pt
+*pose*.pt
+
 # IDEs & Editor files / C++ Builds
 .idea/
 .vscode/

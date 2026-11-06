@@ -5,6 +5,7 @@ Dedicated Soccer Ball Tracking (Ball Reticle & Trajectory Follow), and 32:9/16:9
 """
 import os
 import sys
+import math
 from typing import Optional, Tuple, List, Dict, Any
 import cv2
 import numpy as np
@@ -35,6 +36,7 @@ from ..auto_stitch import (
 from ..autocam import AutoCamConfig
 from ..tactical_warp import generate_tactical_16x9_luts, generate_tactical_16x9_canvas_luts, apply_tactical_16x9_warp
 from ..radar_minimap import SoccerRadarRenderer
+from ..ai_detector import SKELETON_CONNECTIONS
 from ..logger import get_logger, get_gui_handler, GuiLogRecord, setup_logging, install_crash_handlers
 from ..paths import get_log_file_path, get_default_settings_path, get_resource_path
 
@@ -512,6 +514,12 @@ class InteractivePanoramaViewport(QWidget):
         self.radar_players: List[Tuple[float, float, int]] = []
         self.radar_ball: Optional[Tuple[float, float]] = None
         self.radar_cam_span: Optional[Tuple[float, float]] = None
+
+        # Tactical VAR Offside Line & Player Skeletons
+        self.show_offside_line = True
+        self.show_skeletons = False
+        self.current_offside_line: Optional[Tuple[float, int, str]] = None
+        self.current_detections: List[Any] = []
         
         # Semi-transparent 32:9 Frame Overlay
         self.show_transparent_frame = True
@@ -634,6 +642,16 @@ class InteractivePanoramaViewport(QWidget):
         self.radar_opacity = max(0.2, min(1.0, float(opacity)))
         self.update()
 
+    def set_offside_line_enabled(self, enabled: bool):
+        """Toggles FIFA VAR virtual offside line display."""
+        self.show_offside_line = enabled
+        self.update()
+
+    def set_skeletons_enabled(self, enabled: bool):
+        """Toggles player skeleton keypoint and limb display."""
+        self.show_skeletons = enabled
+        self.update()
+
     def set_frame(self, 
                   frame_bgr: np.ndarray, 
                   autocam_box: Optional[Tuple[int, int, int, int]] = None, 
@@ -641,12 +659,16 @@ class InteractivePanoramaViewport(QWidget):
                   dynamic_zoom: float = 1.35,
                   players: Optional[List[Tuple[float, float, int]]] = None,
                   ball_norm: Optional[Tuple[float, float]] = None,
-                  cam_span: Optional[Tuple[float, float]] = None):
-        """Updates the displayed frame, broadcast box, ball reticle, and 2D tactical radar."""
+                  cam_span: Optional[Tuple[float, float]] = None,
+                  offside_line: Optional[Tuple[float, int, str]] = None,
+                  detections: Optional[List[Any]] = None):
+        """Updates the displayed frame, broadcast box, ball reticle, 2D tactical radar, offside line, and detections."""
         self.current_frame_bgr = frame_bgr
         self.autocam_box = autocam_box
         self.ball_px = ball_px
         self.dynamic_zoom = dynamic_zoom
+        self.current_offside_line = offside_line
+        self.current_detections = detections if detections is not None else []
 
         if players is not None:
             self.radar_players = players
@@ -952,6 +974,70 @@ class InteractivePanoramaViewport(QWidget):
                 painter.setPen(QColor(46, 204, 113))
                 painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
                 painter.drawText(int(screen_bx + 16), int(screen_by - 6), "⚽ Ball")
+
+            # 3b. Player Skeletons & Extremities (YOLO-Pose / Tactical Analysis)
+            if self.show_skeletons and self.current_detections:
+                for det in self.current_detections:
+                    if getattr(det, 'keypoints', None) is not None:
+                        kpts = det.keypoints
+                        team_id = getattr(det, 'team_id', 0)
+                        col_limb = QColor(239, 68, 68, 220) if team_id == 1 else (QColor(234, 179, 8, 220) if team_id in (2, -1) else QColor(59, 130, 246, 220))
+                        painter.setPen(QPen(col_limb, 2, Qt.SolidLine))
+                        # Connect limbs
+                        for i1, i2 in SKELETON_CONNECTIONS:
+                            if i1 < len(kpts) and i2 < len(kpts):
+                                if kpts[i1, 2] > 0.25 and kpts[i2, 2] > 0.25:
+                                    p1 = QPointF(target_rect.left() + kpts[i1, 0] * target_rect.width(),
+                                                 target_rect.top() + kpts[i1, 1] * target_rect.height())
+                                    p2 = QPointF(target_rect.left() + kpts[i2, 0] * target_rect.width(),
+                                                 target_rect.top() + kpts[i2, 1] * target_rect.height())
+                                    painter.drawLine(p1, p2)
+                        # Draw joints
+                        painter.setPen(QPen(QColor(255, 255, 255), 1))
+                        painter.setBrush(col_limb)
+                        for i in range(len(kpts)):
+                            if kpts[i, 2] > 0.25:
+                                pt = QPointF(target_rect.left() + kpts[i, 0] * target_rect.width(),
+                                             target_rect.top() + kpts[i, 1] * target_rect.height())
+                                r = 3.0 if i in (15, 16) else 2.0  # Emphasize feet/ankles for VAR
+                                painter.drawEllipse(pt, r, r)
+                        # Heading direction arrow
+                        if getattr(det, 'heading_deg', None) is not None:
+                            cx = target_rect.left() + det.center[0] * target_rect.width()
+                            cy = target_rect.top() + det.center[1] * target_rect.height()
+                            rad = math.radians(det.heading_deg)
+                            hx = cx + 18.0 * math.cos(rad)
+                            hy = cy + 18.0 * math.sin(rad)
+                            painter.setPen(QPen(QColor(255, 255, 255, 220), 1.5, Qt.SolidLine))
+                            painter.drawLine(QPointF(cx, cy), QPointF(hx, hy))
+                    else:
+                        # Draw tactical feet anchor for non-pose backends
+                        cx = target_rect.left() + det.center[0] * target_rect.width()
+                        bottom_y = target_rect.top() + det.bbox[3] * target_rect.height()
+                        col = QColor(239, 68, 68, 200) if getattr(det, 'team_id', 0) == 1 else (QColor(234, 179, 8, 200) if getattr(det, 'team_id', 0) in (2, -1) else QColor(59, 130, 246, 200))
+                        painter.setPen(QPen(QColor(255, 255, 255, 180), 1))
+                        painter.setBrush(col)
+                        painter.drawEllipse(QPointF(cx, bottom_y), 3.0, 3.0)
+
+            # 3c. FIFA VAR Virtual Offside Line
+            if self.show_offside_line and self.current_offside_line is not None:
+                off_x, off_team, off_label = self.current_offside_line
+                ox = target_rect.left() + off_x * target_rect.width()
+                if target_rect.left() <= ox <= target_rect.right():
+                    col_off = QColor(239, 68, 68, 230) if off_team == 1 else QColor(59, 130, 246, 230)
+                    pen_off = QPen(col_off, 2, Qt.DashLine)
+                    painter.setPen(pen_off)
+                    painter.drawLine(QPointF(ox, target_rect.top()), QPointF(ox, target_rect.bottom()))
+                    
+                    # VAR Offside Badge Tag
+                    badge_w, badge_h = 160.0, 20.0
+                    badge_y = target_rect.bottom() - 26.0
+                    badge_rect = QRectF(ox - badge_w * 0.5, badge_y, badge_w, badge_h)
+                    painter.fillRect(badge_rect, QColor(0, 0, 0, 215))
+                    painter.setPen(col_off)
+                    painter.drawRect(badge_rect)
+                    painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
+                    painter.drawText(badge_rect, Qt.AlignCenter, off_label)
 
         # 4. Photoshop-style Corner Pinning Handles & Wireframes
         if self.corner_pin_mode:
@@ -1261,7 +1347,8 @@ class InteractivePanoramaViewport(QWidget):
                 cam_span=self.radar_cam_span,
                 radar_w=self.radar_width,
                 pos=self.radar_position,
-                opacity=self.radar_opacity
+                opacity=self.radar_opacity,
+                offside_line=self.current_offside_line if self.show_offside_line else None
             )
 
         # HUD in top-left
@@ -1620,6 +1707,20 @@ class MainWindow(QMainWindow):
         act_radar = QWidgetAction(self)
         act_radar.setDefaultWidget(self.chk_show_radar_menu)
         menu_overlays.addAction(act_radar)
+
+        self.chk_show_offside_menu = QCheckBox("🚩 Virtuelle Abseitslinie (VAR)")
+        self.chk_show_offside_menu.setChecked(True)
+        self.chk_show_offside_menu.toggled.connect(self.toggle_offside_line)
+        act_offside = QWidgetAction(self)
+        act_offside.setDefaultWidget(self.chk_show_offside_menu)
+        menu_overlays.addAction(act_offside)
+
+        self.chk_show_skeletons_menu = QCheckBox("🦴 Spieler-Skelette & Pose")
+        self.chk_show_skeletons_menu.setChecked(False)
+        self.chk_show_skeletons_menu.toggled.connect(self.toggle_skeletons)
+        act_skeletons = QWidgetAction(self)
+        act_skeletons.setDefaultWidget(self.chk_show_skeletons_menu)
+        menu_overlays.addAction(act_skeletons)
 
         self.btn_overlays_menu.setMenu(menu_overlays)
         vp_tool_bar.addWidget(self.btn_overlays_menu)
@@ -2510,9 +2611,25 @@ class MainWindow(QMainWindow):
         self.ctrl_zone_boost.valueChanged.connect(self.on_autocam_param_changed)
         layout_ac_follow.addWidget(self.ctrl_zone_boost)
 
-        grp_scan_speed = QGroupBox("⚡ KI-Berechnungsgeschwindigkeit")
+        grp_scan_speed = QGroupBox("🤖 KI-Erkennungs-Modell & Performance")
         layout_scan = QVBoxLayout(grp_scan_speed)
         layout_scan.setSpacing(6)
+
+        lbl_engine = QLabel("KI-Tracking-Architektur:")
+        lbl_engine.setStyleSheet("font-weight: 600; color: #f4f4f6; font-size: 11px;")
+        layout_scan.addWidget(lbl_engine)
+
+        self.combo_ai_engine = QComboBox()
+        self.combo_ai_engine.addItem("🏆 YOLO11 Ultra-Fast (Standard / Spezialisiert)", "yolo11")
+        self.combo_ai_engine.addItem("🤖 RF-DETR Transformer (Apache 2.0 / Attention)", "rtdetr")
+        self.combo_ai_engine.addItem("🦴 YOLO-Pose Skelett (Extremitäten & VAR-Abseits)", "pose")
+        self.combo_ai_engine.currentIndexChanged.connect(self.on_ai_engine_changed)
+        layout_scan.addWidget(self.combo_ai_engine)
+
+        lbl_scan = QLabel("Berechnungsintervall:")
+        lbl_scan.setStyleSheet("font-weight: 600; color: #f4f4f6; font-size: 11px; margin-top: 4px;")
+        layout_scan.addWidget(lbl_scan)
+
         self.combo_scan_speed = QComboBox()
         self.combo_scan_speed.addItem("⚡ Ausgewogen (Jeder 5. Frame – Empfohlen)", 5)
         self.combo_scan_speed.addItem("🚀 Turbo-Modus (Jeder 8. Frame – 5x schneller)", 8)
@@ -2529,6 +2646,27 @@ class MainWindow(QMainWindow):
         layout_ac_follow.addWidget(grp_scan_speed)
 
         scroll_layout_ac.addWidget(grp_ac_follow)
+
+        # Tactical VAR & Pose Overlays Group
+        grp_var = QGroupBox("🚩 Taktik & FIFA-VAR-Entscheidungen")
+        layout_var = QVBoxLayout(grp_var)
+        layout_var.setSpacing(8)
+
+        self.chk_show_offside = QCheckBox("🚩 Virtuelle Abseitslinie (VAR-Linie)")
+        self.chk_show_offside.setChecked(True)
+        self.chk_show_offside.setStyleSheet("font-weight: 600; color: #f59e0b;")
+        self.chk_show_offside.setToolTip("Berechnet den vorletzten Verteidiger millimetergenau anhand von Fuß- und Körperachsen und projiziert die Abseitslinie auf Rasen und Radar.")
+        self.chk_show_offside.toggled.connect(self.toggle_offside_line)
+        layout_var.addWidget(self.chk_show_offside)
+
+        self.chk_show_skeletons = QCheckBox("🦴 Spieler-Skelette & Pose (17 Keypoints)")
+        self.chk_show_skeletons.setChecked(False)
+        self.chk_show_skeletons.setStyleSheet("font-weight: 600; color: #a855f7;")
+        self.chk_show_skeletons.setToolTip("Zeigt Gelenke, Extremitäten (Sprunggelenke, Knie, Schultern) und Blick-/Laufrichtung der Spieler.")
+        self.chk_show_skeletons.toggled.connect(self.toggle_skeletons)
+        layout_var.addWidget(self.chk_show_skeletons)
+
+        scroll_layout_ac.addWidget(grp_var)
 
         # 2D Tactical Radar Group (FIFA Pitch Mini-Map)
         grp_radar = QGroupBox("🗺️ 2D Taktik-Radar (Mini-Map)")
@@ -3488,6 +3626,38 @@ class MainWindow(QMainWindow):
             cfg.radar_width = w
             cfg.radar_opacity = op
 
+    def toggle_offside_line(self, checked: bool):
+        if hasattr(self.viewport, 'set_offside_line_enabled'):
+            self.viewport.set_offside_line_enabled(checked)
+        if hasattr(self, 'chk_show_offside'):
+            self.chk_show_offside.blockSignals(True)
+            self.chk_show_offside.setChecked(checked)
+            self.chk_show_offside.blockSignals(False)
+        if hasattr(self, 'chk_show_offside_menu'):
+            self.chk_show_offside_menu.blockSignals(True)
+            self.chk_show_offside_menu.setChecked(checked)
+            self.chk_show_offside_menu.blockSignals(False)
+        cfg = getattr(self.engine.ai_broadcast, 'config', None)
+        if cfg:
+            cfg.enable_offside_line = checked
+        self.viewport.update()
+
+    def toggle_skeletons(self, checked: bool):
+        if hasattr(self.viewport, 'set_skeletons_enabled'):
+            self.viewport.set_skeletons_enabled(checked)
+        if hasattr(self, 'chk_show_skeletons'):
+            self.chk_show_skeletons.blockSignals(True)
+            self.chk_show_skeletons.setChecked(checked)
+            self.chk_show_skeletons.blockSignals(False)
+        if hasattr(self, 'chk_show_skeletons_menu'):
+            self.chk_show_skeletons_menu.blockSignals(True)
+            self.chk_show_skeletons_menu.setChecked(checked)
+            self.chk_show_skeletons_menu.blockSignals(False)
+        cfg = getattr(self.engine.ai_broadcast, 'config', None)
+        if cfg:
+            cfg.enable_skeletons = checked
+        self.viewport.update()
+
     def on_burn_radar_toggled(self, checked: bool):
         if hasattr(self, 'chk_burn_radar'):
             self.chk_burn_radar.blockSignals(True)
@@ -3967,6 +4137,15 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "Spielfeld erkennen", "Konnte kein eindeutiges grünes Spielfeld im aktuellen Bild erkennen.")
 
+    def on_ai_engine_changed(self):
+        """Switches the active detector backend (YOLO11, RT-DETR, YOLO-Pose)."""
+        if hasattr(self, 'combo_ai_engine') and hasattr(self.engine, 'ai_broadcast'):
+            backend_id = self.combo_ai_engine.currentData() or "yolo11"
+            self.engine.ai_broadcast.set_backend(backend_id)
+            if hasattr(self, 'status_bar'):
+                self.status_bar.showMessage(f"🤖 KI-Modell gewechselt: {self.combo_ai_engine.currentText()}", 3500)
+            self.refresh_preview()
+
     def on_scan_speed_changed(self):
         """Updates lookahead scan speed and FP16 toggle in AI engine."""
         if hasattr(self, 'combo_scan_speed'):
@@ -4019,7 +4198,9 @@ class MainWindow(QMainWindow):
         players = ai_tracker.active_players if ai_tracker else None
         ball_norm = ai_tracker.current_ball_norm if ai_tracker else None
         cam_span = ai_tracker.get_camera_span() if ai_tracker else None
-        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span)
+        offside_line = getattr(ai_tracker, 'current_offside_line', None) if ai_tracker else None
+        detections = getattr(ai_tracker, 'active_detections', None) if ai_tracker else None
+        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span, offside_line=offside_line, detections=detections)
         self.hq_preview_timer.start()
 
     def render_high_res_preview(self):
@@ -4037,7 +4218,9 @@ class MainWindow(QMainWindow):
         players = ai_tracker.active_players if ai_tracker else None
         ball_norm = ai_tracker.current_ball_norm if ai_tracker else None
         cam_span = ai_tracker.get_camera_span() if ai_tracker else None
-        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span)
+        offside_line = getattr(ai_tracker, 'current_offside_line', None) if ai_tracker else None
+        detections = getattr(ai_tracker, 'active_detections', None) if ai_tracker else None
+        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span, offside_line=offside_line, detections=detections)
 
     def refresh_preview(self):
         if not self.has_active_video():
@@ -4053,7 +4236,9 @@ class MainWindow(QMainWindow):
         players = ai_tracker.active_players if ai_tracker else None
         ball_norm = ai_tracker.current_ball_norm if ai_tracker else None
         cam_span = ai_tracker.get_camera_span() if ai_tracker else None
-        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span)
+        offside_line = getattr(ai_tracker, 'current_offside_line', None) if ai_tracker else None
+        detections = getattr(ai_tracker, 'active_detections', None) if ai_tracker else None
+        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span, offside_line=offside_line, detections=detections)
 
     def get_current_settings_dict(self) -> dict:
         """Serializes all rig, camera, AI autocam, export, and UI settings into a dictionary."""
@@ -4095,7 +4280,10 @@ class MainWindow(QMainWindow):
             "radar_position": self.combo_radar_pos.currentData() if hasattr(self, 'combo_radar_pos') else getattr(ac_cfg, 'radar_position', 'top_right'),
             "radar_width": int(self.ctrl_radar_width.value()) if hasattr(self, 'ctrl_radar_width') else getattr(ac_cfg, 'radar_width', 320),
             "radar_opacity": float(self.ctrl_radar_opacity.value()) if hasattr(self, 'ctrl_radar_opacity') else getattr(ac_cfg, 'radar_opacity', 0.85),
-            "burn_radar_in_export": self.chk_burn_radar.isChecked() if hasattr(self, 'chk_burn_radar') else getattr(ac_cfg, 'burn_radar_in_export', False)
+            "burn_radar_in_export": self.chk_burn_radar.isChecked() if hasattr(self, 'chk_burn_radar') else getattr(ac_cfg, 'burn_radar_in_export', False),
+            "ai_backend": self.combo_ai_engine.currentData() if hasattr(self, 'combo_ai_engine') else getattr(ac_cfg, 'ai_backend', 'yolo11'),
+            "enable_offside_line": self.chk_show_offside.isChecked() if hasattr(self, 'chk_show_offside') else getattr(ac_cfg, 'enable_offside_line', True),
+            "enable_skeletons": self.chk_show_skeletons.isChecked() if hasattr(self, 'chk_show_skeletons') else getattr(ac_cfg, 'enable_skeletons', False)
         }
 
         # UI preferences
@@ -4107,6 +4295,8 @@ class MainWindow(QMainWindow):
             "show_autocam": self.chk_show_autocam.isChecked() if hasattr(self, 'chk_show_autocam') else True,
             "show_ball": self.chk_show_ball.isChecked() if hasattr(self, 'chk_show_ball') else True,
             "show_radar": self.chk_show_radar.isChecked() if hasattr(self, 'chk_show_radar') else True,
+            "show_offside_line": self.chk_show_offside.isChecked() if hasattr(self, 'chk_show_offside') else True,
+            "show_skeletons": self.chk_show_skeletons.isChecked() if hasattr(self, 'chk_show_skeletons') else False,
             "show_seam": self.chk_show_seam.isChecked() if hasattr(self, 'chk_show_seam') else True,
             "show_grid": self.chk_show_grid.isChecked() if hasattr(self, 'chk_show_grid') else True,
             "sync_angles": getattr(self, 'sync_angles', True),
@@ -4352,6 +4542,18 @@ class MainWindow(QMainWindow):
                     self.chk_exp_burn_radar.setChecked(burn_val)
                 self.engine.ai_broadcast.config.burn_radar_in_export = burn_val
 
+            if hasattr(self, 'combo_ai_engine') and "ai_backend" in ac:
+                idx = self.combo_ai_engine.findData(ac["ai_backend"])
+                if idx >= 0:
+                    self.combo_ai_engine.setCurrentIndex(idx)
+                    self.engine.ai_broadcast.set_backend(ac["ai_backend"])
+
+            if "enable_offside_line" in ac:
+                self.toggle_offside_line(bool(ac["enable_offside_line"]))
+
+            if "enable_skeletons" in ac:
+                self.toggle_skeletons(bool(ac["enable_skeletons"]))
+
         # 4. Export Settings
         if "export" in data and isinstance(data["export"], dict):
             exp = data["export"]
@@ -4407,6 +4609,10 @@ class MainWindow(QMainWindow):
                 if hasattr(self, 'chk_show_radar_menu'):
                     self.chk_show_radar_menu.setChecked(r_show)
                 self.viewport.set_radar_enabled(r_show)
+            if "show_offside_line" in ui:
+                self.toggle_offside_line(bool(ui["show_offside_line"]))
+            if "show_skeletons" in ui:
+                self.toggle_skeletons(bool(ui["show_skeletons"]))
             if hasattr(self, 'chk_show_seam') and "show_seam" in ui:
                 self.chk_show_seam.setChecked(bool(ui["show_seam"]))
             if hasattr(self, 'chk_show_grid') and "show_grid" in ui:
