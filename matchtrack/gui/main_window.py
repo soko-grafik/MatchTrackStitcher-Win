@@ -9,11 +9,11 @@ from typing import Optional, Tuple, List, Dict, Any
 import cv2
 import numpy as np
 
-from PySide6.QtCore import Qt, QTimer, QThread, Signal, Slot, QPoint, QPointF, QRectF, QObject
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, Slot, QPoint, QPointF, QRectF, QObject, QEvent
 from PySide6.QtGui import QImage, QPixmap, QIcon, QFont, QColor, QPainter, QPen, QWheelEvent, QMouseEvent, QPolygonF
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QPushButton, QSlider, QSpinBox, QDoubleSpinBox, QComboBox,
+    QLabel, QPushButton, QSlider, QSpinBox, QDoubleSpinBox, QComboBox, QAbstractSpinBox,
     QFileDialog, QProgressBar, QGroupBox, QTabWidget, QSplitter,
     QCheckBox, QMessageBox, QFrame, QScrollArea, QStatusBar, QToolButton,
     QPlainTextEdit, QMenu, QWidgetAction
@@ -38,6 +38,59 @@ from ..logger import get_logger, get_gui_handler, GuiLogRecord, setup_logging, i
 from ..paths import get_log_file_path, get_default_settings_path, get_resource_path
 
 logger = get_logger("gui")
+
+
+class NoWheelSlider(QSlider):
+    """
+    QSlider that ignores mouse-wheel events so that scrolling over the slider
+    scrolls the parent QScrollArea instead of accidentally modifying values.
+    """
+    def wheelEvent(self, event: QWheelEvent):
+        event.ignore()
+
+
+class NoWheelDoubleSpinBox(QDoubleSpinBox):
+    """
+    QDoubleSpinBox that ignores mouse-wheel events to prevent accidental value changes.
+    """
+    def wheelEvent(self, event: QWheelEvent):
+        event.ignore()
+
+
+class NoWheelSpinBox(QSpinBox):
+    """
+    QSpinBox that ignores mouse-wheel events to prevent accidental value changes.
+    """
+    def wheelEvent(self, event: QWheelEvent):
+        event.ignore()
+
+
+class NoWheelComboBox(QComboBox):
+    """
+    QComboBox that ignores mouse-wheel events when popup is closed to prevent accidental selection changes.
+    """
+    def wheelEvent(self, event: QWheelEvent):
+        event.ignore()
+
+
+class ScrollAreaWheelFilter(QObject):
+    """
+    Event filter for interactive input controls (Sliders, SpinBoxes, ComboBoxes)
+    inside scroll areas: ensures mouse-wheel events scroll the enclosing QScrollArea
+    instead of altering input values.
+    """
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Wheel:
+            if isinstance(obj, (QSlider, QAbstractSpinBox, QComboBox)):
+                parent = obj.parentWidget()
+                while parent is not None:
+                    if isinstance(parent, QScrollArea):
+                        QApplication.sendEvent(parent.viewport(), event)
+                        return True
+                    parent = parent.parentWidget()
+                event.ignore()
+                return True
+        return False
 
 
 class LabeledSliderSpinBox(QWidget):
@@ -65,7 +118,7 @@ class LabeledSliderSpinBox(QWidget):
         self.lbl_title = QLabel(label_text)
         self.lbl_title.setStyleSheet("font-weight: 500; color: #ddd; font-size: 11px;")
         
-        self.spin = QDoubleSpinBox()
+        self.spin = NoWheelDoubleSpinBox()
         self.spin.setRange(min_val, max_val)
         self.spin.setValue(default_val)
         self.spin.setSingleStep(step)
@@ -83,7 +136,7 @@ class LabeledSliderSpinBox(QWidget):
         slider_row = QHBoxLayout()
         slider_row.setSpacing(6)
         
-        self.slider = QSlider(Qt.Horizontal)
+        self.slider = NoWheelSlider(Qt.Horizontal)
         self.slider.setTracking(True)
         self.slider.setRange(int(round(min_val * self.multiplier)), int(round(max_val * self.multiplier)))
         self.slider.setValue(int(round(default_val * self.multiplier)))
@@ -1401,25 +1454,6 @@ class MainWindow(QMainWindow):
 
         top_layout.addStretch()
 
-        # Step Workflow Buttons (Direct Jump to Tabs)
-        self.btn_nav_media = QPushButton("1. 📁 Medien & Sync")
-        self.btn_nav_stitch = QPushButton("2. 🎯 Stitching & Rig")
-        self.btn_nav_tactic = QPushButton("3. 📐 Taktik & AutoCam")
-        self.btn_nav_export = QPushButton("4. 🚀 Export")
-        
-        for btn, idx in [(self.btn_nav_media, 0), (self.btn_nav_stitch, 1), (self.btn_nav_tactic, 2), (self.btn_nav_export, 3)]:
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #202028; border: 1px solid #353545; border-radius: 6px;
-                    padding: 6px 12px; font-weight: 600; font-size: 12px; color: #e4e4e7;
-                }
-                QPushButton:hover { background-color: #2e2e3d; border-color: #38bdf8; color: #ffffff; }
-            """)
-            btn.clicked.connect(lambda checked=False, i=idx: self.right_pane.setCurrentIndex(i))
-            top_layout.addWidget(btn)
-
-        top_layout.addSpacing(10)
-
         # Profile / Settings Management Buttons
         self.btn_load_prof_tb = QPushButton("📁 Profil")
         self.btn_load_prof_tb.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; font-size: 11px; padding: 5px 10px; border-radius: 5px; color: #94a3b8;")
@@ -1765,13 +1799,13 @@ class MainWindow(QMainWindow):
         lbl_off_title.setStyleSheet("font-weight: 600; color: #e4e4e7;")
         row_offset.addWidget(lbl_off_title)
         
-        self.slider_offset = QSlider(Qt.Horizontal)
+        self.slider_offset = NoWheelSlider(Qt.Horizontal)
         self.slider_offset.setRange(-600, 600)
         self.slider_offset.setValue(0)
         self.slider_offset.valueChanged.connect(self.on_offset_slider_changed)
         row_offset.addWidget(self.slider_offset, 1)
 
-        self.spin_offset = QSpinBox()
+        self.spin_offset = NoWheelSpinBox()
         self.spin_offset.setRange(-5000, 5000)
         self.spin_offset.setValue(0)
         self.spin_offset.setSuffix(" F")
@@ -1936,7 +1970,7 @@ class MainWindow(QMainWindow):
             lbl = QLabel(lbl_txt)
             lbl.setStyleSheet("font-size: 11px; color: #00d2d3; font-weight: 500; min-width: 130px;")
             
-            spin_x = QDoubleSpinBox()
+            spin_x = NoWheelDoubleSpinBox()
             spin_x.setRange(-80.0, 180.0)
             spin_x.setValue(def_x)
             spin_x.setSingleStep(0.2)
@@ -1945,7 +1979,7 @@ class MainWindow(QMainWindow):
             spin_x.setSuffix("%")
             spin_x.valueChanged.connect(lambda val, s='left', i=idx: self.on_corner_spin_changed(s, i))
 
-            spin_y = QDoubleSpinBox()
+            spin_y = NoWheelDoubleSpinBox()
             spin_y.setRange(-80.0, 180.0)
             spin_y.setValue(def_y)
             spin_y.setSingleStep(0.2)
@@ -1992,7 +2026,7 @@ class MainWindow(QMainWindow):
             lbl = QLabel(lbl_txt)
             lbl.setStyleSheet("font-size: 11px; color: #ff9f43; font-weight: 500; min-width: 130px;")
             
-            spin_x = QDoubleSpinBox()
+            spin_x = NoWheelDoubleSpinBox()
             spin_x.setRange(-80.0, 180.0)
             spin_x.setValue(def_x)
             spin_x.setSingleStep(0.2)
@@ -2001,7 +2035,7 @@ class MainWindow(QMainWindow):
             spin_x.setSuffix("%")
             spin_x.valueChanged.connect(lambda val, s='right', i=idx: self.on_corner_spin_changed(s, i))
 
-            spin_y = QDoubleSpinBox()
+            spin_y = NoWheelDoubleSpinBox()
             spin_y.setRange(-80.0, 180.0)
             spin_y.setValue(def_y)
             spin_y.setSingleStep(0.2)
@@ -2341,7 +2375,13 @@ class MainWindow(QMainWindow):
         # TAB 4: 🚀 Export
         # -------------------------------------------------------------------------
         self.tab_export = QWidget()
-        export_layout = QVBoxLayout(self.tab_export)
+        layout_tab_exp = QVBoxLayout(self.tab_export)
+        layout_tab_exp.setContentsMargins(6, 6, 6, 6)
+        scroll_exp = QScrollArea()
+        scroll_exp.setWidgetResizable(True)
+        widget_exp = QWidget()
+        export_layout = QVBoxLayout(widget_exp)
+        export_layout.setSpacing(10)
 
         grp_trim = QGroupBox("✂️ Export-Schnittbereich")
         layout_trim = QVBoxLayout(grp_trim)
@@ -2355,7 +2395,7 @@ class MainWindow(QMainWindow):
         row_in = QHBoxLayout()
         lbl_in = QLabel("Start (In):")
         lbl_in.setStyleSheet("font-weight: 500; min-width: 60px; color: #ddd;")
-        self.spin_export_in = QSpinBox()
+        self.spin_export_in = NoWheelSpinBox()
         self.spin_export_in.setRange(0, 10000000)
         self.spin_export_in.setValue(0)
         self.spin_export_in.setSuffix(" F")
@@ -2373,7 +2413,7 @@ class MainWindow(QMainWindow):
         row_out = QHBoxLayout()
         lbl_out = QLabel("Ende (Out):")
         lbl_out.setStyleSheet("font-weight: 500; min-width: 60px; color: #ddd;")
-        self.spin_export_out = QSpinBox()
+        self.spin_export_out = NoWheelSpinBox()
         self.spin_export_out.setRange(0, 10000000)
         self.spin_export_out.setValue(0)
         self.spin_export_out.setSuffix(" F")
@@ -2471,8 +2511,14 @@ class MainWindow(QMainWindow):
         export_layout.addWidget(grp_render)
         export_layout.addStretch()
 
+        scroll_exp.setWidget(widget_exp)
+        layout_tab_exp.addWidget(scroll_exp)
+
         self.right_pane.addTab(self.tab_export, "🚀 4. Export")
         splitter.addWidget(self.right_pane)
+
+        # Install wheel filter on right pane to prevent slider value changes on scrolling
+        self._install_scroll_wheel_filter(self.right_pane)
 
         root_layout.addWidget(splitter, 1)
 
@@ -2517,6 +2563,21 @@ class MainWindow(QMainWindow):
             self.log_emitter.log_signal.emit(record)
         else:
             self._safe_append_log(record)
+
+    def _install_scroll_wheel_filter(self, container: QWidget):
+        """
+        Installs ScrollAreaWheelFilter on all interactive controls inside container
+        so that mouse-wheel scrolling scrolls the parent QScrollArea without
+        altering slider, spinbox, or combobox values.
+        """
+        if not hasattr(self, "_wheel_filter"):
+            self._wheel_filter = ScrollAreaWheelFilter(self)
+        
+        if isinstance(container, (QSlider, QAbstractSpinBox, QComboBox)):
+            container.installEventFilter(self._wheel_filter)
+        for child in container.findChildren(QWidget):
+            if isinstance(child, (QSlider, QAbstractSpinBox, QComboBox)):
+                child.installEventFilter(self._wheel_filter)
 
     def apply_dark_theme(self):
         self.setStyleSheet("""
