@@ -116,7 +116,7 @@ class LabeledSliderSpinBox(QWidget):
         # Header row: Title Label + SpinBox
         header = QHBoxLayout()
         self.lbl_title = QLabel(label_text)
-        self.lbl_title.setStyleSheet("font-weight: 500; color: #ddd; font-size: 11px;")
+        self.lbl_title.setStyleSheet("font-weight: 600; color: #d4d4d8; font-size: 12px;")
         
         self.spin = NoWheelDoubleSpinBox()
         self.spin.setRange(min_val, max_val)
@@ -125,7 +125,7 @@ class LabeledSliderSpinBox(QWidget):
         self.spin.setDecimals(decimals)
         if suffix:
             self.spin.setSuffix(f" {suffix}")
-        self.spin.setStyleSheet("background-color: #222; border: 1px solid #444; border-radius: 4px; padding: 2px 6px; font-weight: bold; color: #4aa3df;")
+        self.spin.setStyleSheet("background-color: #111117; border: 1px solid #282839; border-radius: 6px; padding: 2px 8px; font-weight: 600; color: #60a5fa;")
 
         header.addWidget(self.lbl_title)
         header.addStretch()
@@ -140,17 +140,11 @@ class LabeledSliderSpinBox(QWidget):
         self.slider.setTracking(True)
         self.slider.setRange(int(round(min_val * self.multiplier)), int(round(max_val * self.multiplier)))
         self.slider.setValue(int(round(default_val * self.multiplier)))
-        self.slider.setStyleSheet("""
-            QSlider::groove:horizontal { height: 6px; background: #2c2c2c; border-radius: 3px; }
-            QSlider::sub-page:horizontal { background: #3498db; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #ecf0f1; width: 16px; margin: -5px 0; border-radius: 8px; border: 1px solid #2980b9; }
-            QSlider::handle:horizontal:hover { background: #4aa3df; border-color: #fff; }
-        """)
 
         btn_reset = QToolButton()
         btn_reset.setText("↺")
         btn_reset.setToolTip(f"Auf Standardwert ({default_val}{suffix}) zurücksetzen")
-        btn_reset.setStyleSheet("background-color: #2a2a2a; border: 1px solid #3d3d3d; border-radius: 3px; color: #aaa; font-weight: bold; padding: 1px 6px;")
+        btn_reset.setStyleSheet("background-color: #1e1e28; border: 1px solid #2e2e3e; border-radius: 6px; color: #9ca3af; font-weight: bold; padding: 2px 7px;")
         btn_reset.clicked.connect(self.reset_default)
 
         slider_row.addWidget(self.slider, 1)
@@ -1420,15 +1414,15 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(8, 8, 8, 8)
         root_layout.setSpacing(6)
 
-        # 1. TOP APP HEADER BAR
+        # 1. TOP APP HEADER BAR (Samsung One UI Style)
         top_bar = QFrame()
         top_bar.setObjectName("appHeader")
         top_bar.setStyleSheet("""
             #appHeader {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1a1a24, stop:1 #121218);
-                border: 1px solid #2d2d3d;
-                border-radius: 8px;
-                padding: 4px 8px;
+                background-color: #12121a;
+                border: 1px solid #20202e;
+                border-radius: 14px;
+                padding: 6px 12px;
             }
         """)
         top_layout = QHBoxLayout(top_bar)
@@ -1444,72 +1438,29 @@ class MainWindow(QMainWindow):
             top_layout.addWidget(lbl_logo)
 
         lbl_brand = QLabel("MatchTrack Stitcher")
-        lbl_brand.setStyleSheet("font-weight: 800; font-size: 15px; color: #38bdf8; letter-spacing: 0.5px;")
+        lbl_brand.setStyleSheet("font-weight: 800; font-size: 15px; color: #f4f4f6; letter-spacing: 0.5px;")
         top_layout.addWidget(lbl_brand)
 
-        # Video Status Indicator
+        # Video Status Indicator Pill
         self.lbl_video_status = QLabel("⚪ Keine Videos geladen")
-        self.lbl_video_status.setStyleSheet("background: #272730; color: #a1a1aa; border: 1px solid #3f3f46; border-radius: 12px; padding: 3px 10px; font-size: 11px; font-weight: 500;")
+        self.lbl_video_status.setStyleSheet("background: #181824; color: #94a3b8; border: 1px solid #28283a; border-radius: 12px; padding: 4px 12px; font-size: 11px; font-weight: 600;")
         top_layout.addWidget(self.lbl_video_status)
-
-        top_layout.addStretch()
-
-        # Step Workflow Navigation Bar (Always 100% visible, centered in top bar)
-        self.nav_step_btns = []
-        step_items = [
-            ("📁 1. Medien & Sync", 0),
-            ("🎯 2. Stitching & Rig", 1),
-            ("📐 3. Taktik & AutoCam", 2),
-            ("🚀 4. Export", 3)
-        ]
-        for label, idx in step_items:
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #1c1c26;
-                    border: 1px solid #323244;
-                    border-radius: 6px;
-                    padding: 6px 14px;
-                    font-weight: 600;
-                    font-size: 12px;
-                    color: #a1a1aa;
-                }
-                QPushButton:hover {
-                    background-color: #272738;
-                    color: #ffffff;
-                    border-color: #4f4f66;
-                }
-                QPushButton:checked {
-                    background-color: #0284c7;
-                    border-color: #38bdf8;
-                    color: #ffffff;
-                    font-weight: bold;
-                }
-            """)
-            btn.clicked.connect(lambda checked=False, i=idx: self.switch_to_step(i))
-            top_layout.addWidget(btn)
-            self.nav_step_btns.append(btn)
-
-        if self.nav_step_btns:
-            self.nav_step_btns[0].setChecked(True)
 
         top_layout.addStretch()
 
         # Profile / Settings Management Buttons
         self.btn_load_prof_tb = QPushButton("📁 Profil")
-        self.btn_load_prof_tb.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; font-size: 11px; padding: 5px 10px; border-radius: 5px; color: #94a3b8;")
+        self.btn_load_prof_tb.setStyleSheet("background-color: #1c1c28; border: 1px solid #2a2a3e; font-size: 11px; padding: 6px 12px; border-radius: 8px; color: #cbd5e1; font-weight: 600;")
         self.btn_load_prof_tb.setToolTip("Gesamtes Profil aus Datei laden")
         self.btn_load_prof_tb.clicked.connect(self.load_full_profile_from)
 
         self.btn_save_prof_tb = QPushButton("💾 Speichern")
-        self.btn_save_prof_tb.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; font-size: 11px; padding: 5px 10px; border-radius: 5px; color: #94a3b8;")
+        self.btn_save_prof_tb.setStyleSheet("background-color: #1c1c28; border: 1px solid #2a2a3e; font-size: 11px; padding: 6px 12px; border-radius: 8px; color: #cbd5e1; font-weight: 600;")
         self.btn_save_prof_tb.setToolTip("Gesamtes Profil in Datei speichern")
         self.btn_save_prof_tb.clicked.connect(self.save_full_profile_as)
 
         self.btn_save_default_tb = QPushButton("⭐ Standard")
-        self.btn_save_default_tb.setStyleSheet("background-color: #ea580c; border: none; font-weight: bold; font-size: 11px; padding: 5px 10px; border-radius: 5px; color: white;")
+        self.btn_save_default_tb.setStyleSheet("background-color: #2563eb; border: none; font-weight: bold; font-size: 11px; padding: 6px 12px; border-radius: 8px; color: white;")
         self.btn_save_default_tb.setToolTip("Aktuelle Einstellungen als Start-Standard speichern")
         self.btn_save_default_tb.clicked.connect(self.save_as_default_settings)
 
@@ -1531,13 +1482,13 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(6)
 
-        # Viewport Header Toolbar
+        # Viewport Header Toolbar (Clean Samsung One UI Style)
         vp_tool_bar = QHBoxLayout()
-        vp_tool_bar.setContentsMargins(2, 0, 2, 0)
+        vp_tool_bar.setContentsMargins(4, 2, 4, 4)
         vp_tool_bar.setSpacing(8)
 
         lbl_vp_title = QLabel("LIVE VORSCHAU")
-        lbl_vp_title.setStyleSheet("font-weight: 800; color: #38bdf8; font-size: 12px; letter-spacing: 0.5px;")
+        lbl_vp_title.setStyleSheet("font-weight: 800; color: #f4f4f6; font-size: 11px; letter-spacing: 0.8px;")
         vp_tool_bar.addWidget(lbl_vp_title)
 
         # View Mode Dropdown
@@ -1546,7 +1497,7 @@ class MainWindow(QMainWindow):
         self.combo_view_mode.addItem("📐 21:10 Gestauchtes Panorama (Gesamt)", "21:10")
         self.combo_view_mode.addItem("📐 16:9 Taktik-Warp (Spielfeld entzerrt)", "16:9_tactical")
         self.combo_view_mode.addItem("🎥 16:9 Auto-Broadcast (Follow-Cam)", "16:9")
-        self.combo_view_mode.setStyleSheet("font-weight: bold; background-color: #272730; padding: 4px 8px; border: 1px solid #3f3f46; border-radius: 5px;")
+        self.combo_view_mode.setStyleSheet("font-weight: 600; background-color: #181824; padding: 5px 10px; border: 1px solid #2a2a3e; border-radius: 8px;")
         self.combo_view_mode.currentIndexChanged.connect(self.on_view_mode_changed)
         vp_tool_bar.addWidget(self.combo_view_mode)
 
@@ -1555,11 +1506,11 @@ class MainWindow(QMainWindow):
         self.btn_overlays_menu.setText("👁️ Einblendungen ▾")
         self.btn_overlays_menu.setPopupMode(QToolButton.InstantPopup)
         self.btn_overlays_menu.setStyleSheet("""
-            QToolButton { background-color: #202028; border: 1px solid #353545; border-radius: 5px; padding: 4px 10px; font-weight: 500; }
-            QToolButton:hover { background-color: #2e2e3d; border-color: #4f46e5; }
+            QToolButton { background-color: #181824; border: 1px solid #2a2a3e; border-radius: 8px; padding: 5px 12px; font-weight: 600; color: #cbd5e1; }
+            QToolButton:hover { background-color: #242436; border-color: #3b82f6; color: #ffffff; }
         """)
         menu_overlays = QMenu(self.btn_overlays_menu)
-        menu_overlays.setStyleSheet("background-color: #1e1e24; color: #e4e4e7; border: 1px solid #3f3f46; padding: 4px;")
+        menu_overlays.setStyleSheet("background-color: #151520; color: #f4f4f6; border: 1px solid #2a2a3e; border-radius: 8px; padding: 6px;")
 
         self.chk_show_frame = QCheckBox("🔲 32:9 / 16:9 Rahmen")
         self.chk_show_frame.setChecked(True)
@@ -1608,62 +1559,22 @@ class MainWindow(QMainWindow):
 
         vp_tool_bar.addStretch()
 
-        # Context Tools
-        self.btn_pitch_roi_tb = QPushButton("📐 6-Punkte Warp")
-        self.btn_pitch_roi_tb.setCheckable(True)
-        self.btn_pitch_roi_tb.setStyleSheet("background-color: #7c3aed; font-weight: bold; padding: 4px 10px; border-radius: 5px; color: white;")
-        self.btn_pitch_roi_tb.setToolTip("Aktiviert die 6 interaktiven Ziehpunkte zum Entzerren des Videos")
-        self.btn_pitch_roi_tb.toggled.connect(self.on_pitch_roi_toggled)
-        vp_tool_bar.addWidget(self.btn_pitch_roi_tb)
+        # Placeholders for legacy references
+        self.btn_pitch_roi_tb = None
+        self.btn_toggle_tactical_view = None
+        self.btn_corner_pins_tb = None
+        self.btn_pick_center_tb = None
 
-        self.btn_toggle_tactical_view = QPushButton("📐 16:9 Entzerrt")
-        self.btn_toggle_tactical_view.setCheckable(True)
-        self.btn_toggle_tactical_view.setCursor(Qt.PointingHandCursor)
-        self.btn_toggle_tactical_view.setStyleSheet("""
-            QPushButton {
-                background-color: #064e3b;
-                color: #6ee7b7;
-                border: 1px solid #047857;
-                font-weight: bold;
-                padding: 4px 10px;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #047857;
-                color: white;
-            }
-            QPushButton:checked {
-                background-color: #10b981;
-                border-color: #34d399;
-                color: white;
-            }
-        """)
-        self.btn_toggle_tactical_view.setToolTip("Schnellansicht: Schaltet zwischen 32:9 Panorama und dem entzerrten 16:9 Taktik-Spielfeld um")
-        self.btn_toggle_tactical_view.toggled.connect(self.toggle_tactical_view)
-        vp_tool_bar.addWidget(self.btn_toggle_tactical_view)
-
-        self.btn_corner_pins_tb = QPushButton("📐 4 Ecken")
-        self.btn_corner_pins_tb.setCheckable(True)
-        self.btn_corner_pins_tb.setStyleSheet("background-color: #2563eb; font-weight: bold; padding: 4px 10px; border-radius: 5px; color: white;")
-        self.btn_corner_pins_tb.setToolTip("Aktiviert interaktive Ziehpunkte an den 4 Ecken der Kameras im Vorschaubild (Corner Pinning)")
-        self.btn_corner_pins_tb.toggled.connect(self.on_corner_pins_toggled)
-        vp_tool_bar.addWidget(self.btn_corner_pins_tb)
-
-        self.btn_pick_center_tb = QPushButton("📍 Mittellinie")
-        self.btn_pick_center_tb.setCheckable(True)
-        self.btn_pick_center_tb.setStyleSheet("background-color: #0891b2; font-weight: bold; padding: 4px 10px; border-radius: 5px; color: white;")
-        self.btn_pick_center_tb.setToolTip("Klicken Sie auf diesen Button und anschließend im Bild auf die Mittellinie / den Anstoßkreis zum Zentrieren")
-        self.btn_pick_center_tb.toggled.connect(self.on_pick_center_toggled)
-        vp_tool_bar.addWidget(self.btn_pick_center_tb)
-
-        # Zoom buttons
+        # Clean Zoom Controls (One UI Pills)
         btn_zoom_fit = QPushButton("🔍 Fit")
-        btn_zoom_fit.setStyleSheet("padding: 4px 8px; border-radius: 5px;")
+        btn_zoom_fit.setToolTip("Passt die Vorschau optimal in das Fenster ein")
+        btn_zoom_fit.setStyleSheet("background-color: #181824; border: 1px solid #2a2a3e; border-radius: 8px; padding: 5px 10px; font-weight: 600; font-size: 11px; color: #cbd5e1;")
         btn_zoom_fit.clicked.connect(lambda: self.viewport.reset_zoom())
         vp_tool_bar.addWidget(btn_zoom_fit)
 
-        btn_zoom_seam = QPushButton("🔎 Naht (200%)")
-        btn_zoom_seam.setStyleSheet("background-color: #3b2a1a; color: #f59e0b; border: 1px solid #78350f; padding: 4px 8px; border-radius: 5px;")
+        btn_zoom_seam = QPushButton("🔎 200% Zoom")
+        btn_zoom_seam.setToolTip("Vergrößert auf 200% zur genauen Nahtstellen-Ausrichtung")
+        btn_zoom_seam.setStyleSheet("background-color: #181824; border: 1px solid #2a2a3e; border-radius: 8px; padding: 5px 10px; font-weight: 600; font-size: 11px; color: #cbd5e1;")
         btn_zoom_seam.clicked.connect(self.zoom_to_seam)
         vp_tool_bar.addWidget(btn_zoom_seam)
 
@@ -1679,15 +1590,15 @@ class MainWindow(QMainWindow):
         self.viewport.pitch_corners_changed.connect(self.on_viewport_pitch_corners_changed)
         left_layout.addWidget(self.viewport, 1)
 
-        # Timeline & Playback Controls Frame
+        # Timeline & Playback Controls Frame (One UI Style)
         timeline_frame = QFrame()
         timeline_frame.setObjectName("timelineFrame")
         timeline_frame.setStyleSheet("""
             #timelineFrame {
-                background-color: #16161b;
-                border: 1px solid #272730;
-                border-radius: 8px;
-                padding: 6px 10px;
+                background-color: #12121a;
+                border: 1px solid #20202e;
+                border-radius: 14px;
+                padding: 8px 12px;
             }
         """)
         timeline_layout = QVBoxLayout(timeline_frame)
@@ -1698,15 +1609,15 @@ class MainWindow(QMainWindow):
         slider_row = QHBoxLayout()
         slider_row.setSpacing(10)
         self.lbl_current_time = QLabel("00:00:00.00 (F 0)")
-        self.lbl_current_time.setStyleSheet("font-weight: 700; color: #38bdf8; font-family: 'Consolas', monospace; font-size: 13px; min-width: 140px;")
+        self.lbl_current_time.setStyleSheet("font-weight: 700; color: #60a5fa; font-family: 'Consolas', monospace; font-size: 13px; min-width: 140px;")
         
         self.slider_timeline = QSlider(Qt.Horizontal)
         self.slider_timeline.setRange(0, 100)
         self.slider_timeline.setStyleSheet("""
-            QSlider::groove:horizontal { height: 8px; background: #272730; border-radius: 4px; }
-            QSlider::sub-page:horizontal { background: #0284c7; border-radius: 4px; }
-            QSlider::handle:horizontal { background: #ffffff; border: 2px solid #0284c7; width: 16px; margin: -5px 0; border-radius: 8px; }
-            QSlider::handle:horizontal:hover { background: #38bdf8; }
+            QSlider::groove:horizontal { height: 6px; background: #222232; border-radius: 3px; }
+            QSlider::sub-page:horizontal { background: #2563eb; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #ffffff; border: 2px solid #2563eb; width: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::handle:horizontal:hover { background: #93c5fd; }
         """)
         self.slider_timeline.valueChanged.connect(self.on_slider_seek)
 
@@ -1724,15 +1635,15 @@ class MainWindow(QMainWindow):
 
         # Transport
         self.btn_step_back = QPushButton("⏮ -1F")
-        self.btn_step_back.setStyleSheet("padding: 4px 10px; font-weight: 600; border-radius: 5px;")
+        self.btn_step_back.setStyleSheet("background-color: #181824; border: 1px solid #28283a; padding: 5px 10px; font-weight: 600; border-radius: 8px; color: #cbd5e1;")
         self.btn_step_back.clicked.connect(lambda: self.step_frame(-1))
 
         self.btn_play_pause = QPushButton("▶ Abspielen")
-        self.btn_play_pause.setStyleSheet("font-weight: 700; min-width: 110px; background-color: #10b981; border: none; border-radius: 5px; color: white; padding: 5px 12px;")
+        self.btn_play_pause.setStyleSheet("font-weight: 700; min-width: 110px; background-color: #2563eb; border: none; border-radius: 8px; color: white; padding: 6px 14px;")
         self.btn_play_pause.clicked.connect(self.toggle_playback)
 
         self.btn_step_fwd = QPushButton("+1F ⏭")
-        self.btn_step_fwd.setStyleSheet("padding: 4px 10px; font-weight: 600; border-radius: 5px;")
+        self.btn_step_fwd.setStyleSheet("background-color: #181824; border: 1px solid #28283a; padding: 5px 10px; font-weight: 600; border-radius: 8px; color: #cbd5e1;")
         self.btn_step_fwd.clicked.connect(lambda: self.step_frame(1))
 
         ctrl_row.addWidget(self.btn_step_back)
@@ -1743,33 +1654,33 @@ class MainWindow(QMainWindow):
 
         # Trim Controls
         self.btn_set_in = QPushButton("🚩 In (I)")
-        self.btn_set_in.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; font-weight: bold; padding: 4px 9px; color: #10b981; border-radius: 5px;")
+        self.btn_set_in.setStyleSheet("background-color: #181824; border: 1px solid #28283a; font-weight: 600; padding: 5px 10px; color: #34d399; border-radius: 8px;")
         self.btn_set_in.setToolTip("Startpunkt für Video-Export auf aktuellen Frame setzen (Taste 'I')")
         self.btn_set_in.clicked.connect(lambda: self.set_in_point())
 
         self.btn_jump_in = QPushButton("⏮ In")
-        self.btn_jump_in.setStyleSheet("background-color: #202028; border: 1px solid #353545; padding: 4px 8px; color: #a1a1aa; border-radius: 5px;")
+        self.btn_jump_in.setStyleSheet("background-color: #181824; border: 1px solid #28283a; padding: 5px 8px; color: #a1a1aa; border-radius: 8px;")
         self.btn_jump_in.setToolTip("Springe zum Startpunkt (Taste 'Pos1' / 'Home')")
         self.btn_jump_in.clicked.connect(self.jump_to_in_point)
 
         self.btn_set_out = QPushButton("🏁 Out (O)")
-        self.btn_set_out.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; font-weight: bold; padding: 4px 9px; color: #ef4444; border-radius: 5px;")
+        self.btn_set_out.setStyleSheet("background-color: #181824; border: 1px solid #28283a; font-weight: 600; padding: 5px 10px; color: #f87171; border-radius: 8px;")
         self.btn_set_out.setToolTip("Endpunkt für Video-Export auf aktuellen Frame setzen (Taste 'O')")
         self.btn_set_out.clicked.connect(lambda: self.set_out_point())
 
         self.btn_jump_out = QPushButton("Out ⏭")
-        self.btn_jump_out.setStyleSheet("background-color: #202028; border: 1px solid #353545; padding: 4px 8px; color: #a1a1aa; border-radius: 5px;")
+        self.btn_jump_out.setStyleSheet("background-color: #181824; border: 1px solid #28283a; padding: 5px 8px; color: #a1a1aa; border-radius: 8px;")
         self.btn_jump_out.setToolTip("Springe zum Endpunkt (Taste 'Ende')")
         self.btn_jump_out.clicked.connect(self.jump_to_out_point)
 
         self.btn_reset_trim = QToolButton()
         self.btn_reset_trim.setText("↺")
         self.btn_reset_trim.setToolTip("Schnittbereich auf gesamtes Video zurücksetzen")
-        self.btn_reset_trim.setStyleSheet("background-color: #272730; border: 1px solid #3f3f46; border-radius: 4px; color: #a1a1aa; font-weight: bold; padding: 3px 8px;")
+        self.btn_reset_trim.setStyleSheet("background-color: #181824; border: 1px solid #28283a; border-radius: 8px; color: #a1a1aa; font-weight: bold; padding: 5px 8px;")
         self.btn_reset_trim.clicked.connect(self.reset_in_out_points)
 
         self.lbl_trim_info = QLabel("✂️ Schnitt: 00:00:00 ➔ 00:00:00 (Gesamtes Video)")
-        self.lbl_trim_info.setStyleSheet("background-color: #181820; border: 1px solid #0284c7; border-radius: 5px; padding: 4px 10px; color: #38bdf8; font-weight: bold; font-size: 11px;")
+        self.lbl_trim_info.setStyleSheet("background-color: rgba(37, 99, 235, 0.12); border: 1px solid #2563eb; border-radius: 8px; padding: 5px 12px; color: #60a5fa; font-weight: 600; font-size: 11px;")
 
         ctrl_row.addWidget(self.btn_set_in)
         ctrl_row.addWidget(self.btn_jump_in)
@@ -1793,56 +1704,82 @@ class MainWindow(QMainWindow):
         self.right_pane.currentChanged.connect(self._on_tab_changed)
 
         # -------------------------------------------------------------------------
-        # TAB 1: 📁 Medien & Sync
+        # TAB 1: 📁 Medien
         # -------------------------------------------------------------------------
         self.tab_media = QWidget()
         layout_tab_m = QVBoxLayout(self.tab_media)
+        layout_tab_m.setContentsMargins(4, 4, 4, 4)
         scroll_m = QScrollArea()
         scroll_m.setWidgetResizable(True)
         widget_m = QWidget()
         layout_m = QVBoxLayout(widget_m)
-        layout_m.setSpacing(10)
+        layout_m.setSpacing(12)
 
         # Card: Video Inputs
         grp_inputs = QGroupBox("🎥 Kamera-Eingänge (Dual-Rig / Panorama)")
         layout_in = QVBoxLayout(grp_inputs)
-        layout_in.setSpacing(8)
+        layout_in.setSpacing(10)
 
-        # Left Cam
-        box_l = QVBoxLayout()
-        row_btn_l = QHBoxLayout()
-        self.btn_open_left = QPushButton("📂 Video Links (Kamera 1)...")
-        self.btn_open_left.setStyleSheet("background-color: #1e293b; border: 1px solid #3b82f6; font-weight: bold; padding: 6px;")
+        lbl_desc_inputs = QLabel("Laden Sie die Aufnahmen beider Kameras (80° Rig) oder ein 32:9 Panoramavideo:")
+        lbl_desc_inputs.setStyleSheet("color: #8e8e9c; font-size: 11px;")
+        lbl_desc_inputs.setWordWrap(True)
+        layout_in.addWidget(lbl_desc_inputs)
+
+        # Camera 1 (Links) Card
+        card_l = QFrame()
+        card_l.setStyleSheet("QFrame { background-color: #12121c; border: 1px solid #232334; border-radius: 10px; padding: 10px; }")
+        layout_card_l = QVBoxLayout(card_l)
+        layout_card_l.setSpacing(6)
+        row_hdr_l = QHBoxLayout()
+        lbl_title_l = QLabel("🎥 Kamera 1 (Links)")
+        lbl_title_l.setStyleSheet("font-weight: 700; font-size: 12px; color: #f4f4f6;")
+        self.badge_left = QLabel("⚪ Nicht geladen")
+        self.badge_left.setStyleSheet("background: #1c1c28; color: #8e8e9c; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600;")
+        row_hdr_l.addWidget(lbl_title_l)
+        row_hdr_l.addStretch()
+        row_hdr_l.addWidget(self.badge_left)
+        layout_card_l.addLayout(row_hdr_l)
+
+        self.lbl_file_left = QLabel("Keine Videodatei gewählt")
+        self.lbl_file_left.setStyleSheet("color: #8e8e9c; font-size: 11px; padding: 2px 0;")
+        self.lbl_file_left.setWordWrap(True)
+        layout_card_l.addWidget(self.lbl_file_left)
+
+        self.btn_open_left = QPushButton("📂 Linkes Video wählen...")
+        self.btn_open_left.setStyleSheet("background-color: #1a1a26; border: 1px solid #2d2d42; font-weight: 600; padding: 7px; color: #f4f4f6; border-radius: 8px;")
         self.btn_open_left.clicked.connect(self.open_left_video)
-        row_btn_l.addWidget(self.btn_open_left)
-        box_l.addLayout(row_btn_l)
-        self.lbl_file_left = QLabel("Kein Video gewählt")
-        self.lbl_file_left.setStyleSheet("color: #71717a; font-size: 11px; padding-left: 4px;")
-        box_l.addWidget(self.lbl_file_left)
-        layout_in.addLayout(box_l)
+        layout_card_l.addWidget(self.btn_open_left)
+        layout_in.addWidget(card_l)
 
-        # Right Cam
-        box_r = QVBoxLayout()
-        row_btn_r = QHBoxLayout()
-        self.btn_open_right = QPushButton("📂 Video Rechts (Kamera 2)...")
-        self.btn_open_right.setStyleSheet("background-color: #1e293b; border: 1px solid #3b82f6; font-weight: bold; padding: 6px;")
+        # Camera 2 (Rechts) Card
+        card_r = QFrame()
+        card_r.setStyleSheet("QFrame { background-color: #12121c; border: 1px solid #232334; border-radius: 10px; padding: 10px; }")
+        layout_card_r = QVBoxLayout(card_r)
+        layout_card_r.setSpacing(6)
+        row_hdr_r = QHBoxLayout()
+        lbl_title_r = QLabel("🎥 Kamera 2 (Rechts)")
+        lbl_title_r.setStyleSheet("font-weight: 700; font-size: 12px; color: #f4f4f6;")
+        self.badge_right = QLabel("⚪ Nicht geladen")
+        self.badge_right.setStyleSheet("background: #1c1c28; color: #8e8e9c; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600;")
+        row_hdr_r.addWidget(lbl_title_r)
+        row_hdr_r.addStretch()
+        row_hdr_r.addWidget(self.badge_right)
+        layout_card_r.addLayout(row_hdr_r)
+
+        self.lbl_file_right = QLabel("Keine Videodatei gewählt")
+        self.lbl_file_right.setStyleSheet("color: #8e8e9c; font-size: 11px; padding: 2px 0;")
+        self.lbl_file_right.setWordWrap(True)
+        layout_card_r.addWidget(self.lbl_file_right)
+
+        self.btn_open_right = QPushButton("📂 Rechtes Video wählen...")
+        self.btn_open_right.setStyleSheet("background-color: #1a1a26; border: 1px solid #2d2d42; font-weight: 600; padding: 7px; color: #f4f4f6; border-radius: 8px;")
         self.btn_open_right.clicked.connect(self.open_right_video)
-        row_btn_r.addWidget(self.btn_open_right)
-        box_r.addLayout(row_btn_r)
-        self.lbl_file_right = QLabel("Kein Video gewählt")
-        self.lbl_file_right.setStyleSheet("color: #71717a; font-size: 11px; padding-left: 4px;")
-        box_r.addWidget(self.lbl_file_right)
-        layout_in.addLayout(box_r)
-
-        # Separator line
-        line_p = QFrame()
-        line_p.setFrameShape(QFrame.HLine)
-        line_p.setStyleSheet("color: #272730;")
-        layout_in.addWidget(line_p)
+        layout_card_r.addWidget(self.btn_open_right)
+        layout_in.addWidget(card_r)
 
         # Panorama Direct Import
-        self.btn_open_pano = QPushButton("🎬 Fertiges 32:9 Panorama direkt laden...")
-        self.btn_open_pano.setStyleSheet("background-color: #065f46; border: 1px solid #10b981; font-weight: bold; padding: 7px; color: white;")
+        self.btn_open_pano = QPushButton("🎬 Fertiges 32:9 Panoramavideo laden...")
+        self.btn_open_pano.setStyleSheet("background-color: #161622; border: 1px solid #28283a; font-weight: 600; padding: 7px; color: #a1a1aa; border-radius: 8px;")
         self.btn_open_pano.setToolTip("Lädt ein einzelnes fertiges 32:9 Panoramavideo direkt für 16:9 Follow-Cam oder Taktik-Warp")
         self.btn_open_pano.clicked.connect(self.open_panorama_video)
         layout_in.addWidget(self.btn_open_pano)
@@ -1852,24 +1789,26 @@ class MainWindow(QMainWindow):
         # Card: Audio Synchronization & Offset
         grp_sync = QGroupBox("⚡ Audio-Synchronisation & Frame-Offset")
         layout_sync = QVBoxLayout(grp_sync)
-        layout_sync.setSpacing(8)
+        layout_sync.setSpacing(10)
 
-        lbl_sync_info = QLabel("Gleichen Sie den zeitlichen Versatz beider Kameras anhand des Tons oder manuell ab:")
-        lbl_sync_info.setStyleSheet("color: #a1a1aa; font-size: 11px;")
+        lbl_sync_info = QLabel("Gleichen Sie den Versatz beider Kameras per Audio-Waveform automatisch ab oder justieren Sie manuell:")
+        lbl_sync_info.setStyleSheet("color: #8e8e9c; font-size: 11px;")
         lbl_sync_info.setWordWrap(True)
         layout_sync.addWidget(lbl_sync_info)
 
-        self.btn_auto_sync = QPushButton("⚡ Automatische Audio-Synchronisation (Auto-Sync)")
-        self.btn_auto_sync.setStyleSheet("background-color: #047857; font-weight: bold; padding: 8px 12px; color: white; font-size: 12px;")
+        self.btn_auto_sync = QPushButton("⚡ Audio synchronisieren (Auto-Sync)")
+        self.btn_auto_sync.setStyleSheet("background-color: #2563eb; font-weight: bold; padding: 9px 14px; color: white; font-size: 12px; border-radius: 9px;")
         self.btn_auto_sync.setToolTip("Automatische Audio-Synchronisation (FFT Cross-Correlation für Frame-Offset)")
         self.btn_auto_sync.clicked.connect(self.run_audio_sync)
         layout_sync.addWidget(self.btn_auto_sync)
 
+        lbl_manual_sync = QLabel("Manuelle Offset-Feinjustage (Kamera Rechts):")
+        lbl_manual_sync.setStyleSheet("font-weight: 600; color: #f4f4f6; margin-top: 4px;")
+        layout_sync.addWidget(lbl_manual_sync)
+
         row_offset = QHBoxLayout()
-        lbl_off_title = QLabel("Frame-Offset (Kamera Rechts):")
-        lbl_off_title.setStyleSheet("font-weight: 600; color: #e4e4e7;")
-        row_offset.addWidget(lbl_off_title)
-        
+        row_offset.setSpacing(8)
+
         self.slider_offset = NoWheelSlider(Qt.Horizontal)
         self.slider_offset.setRange(-600, 600)
         self.slider_offset.setValue(0)
@@ -1888,10 +1827,22 @@ class MainWindow(QMainWindow):
         btn_offset_reset.setToolTip("Offset auf 0 zurücksetzen")
         btn_offset_reset.clicked.connect(lambda: self.spin_offset.setValue(0))
         row_offset.addWidget(btn_offset_reset)
-
         layout_sync.addLayout(row_offset)
-        layout_m.addWidget(grp_sync)
 
+        # Quick Frame Step Buttons
+        row_steps = QHBoxLayout()
+        row_steps.setSpacing(4)
+        for delta, txt in [(-5, "-5 F"), (-1, "-1 F"), (0, "0"), (1, "+1 F"), (5, "+5 F")]:
+            btn_step = QPushButton(txt)
+            btn_step.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 4px 6px; font-size: 11px; font-weight: 600; color: #cbd5e1;")
+            if delta == 0:
+                btn_step.clicked.connect(lambda chk=False: self.spin_offset.setValue(0))
+            else:
+                btn_step.clicked.connect(lambda chk=False, d=delta: self.adjust_offset_by(d))
+            row_steps.addWidget(btn_step)
+        layout_sync.addLayout(row_steps)
+
+        layout_m.addWidget(grp_sync)
         layout_m.addStretch()
         scroll_m.setWidget(widget_m)
         layout_tab_m.addWidget(scroll_m)
@@ -1908,27 +1859,15 @@ class MainWindow(QMainWindow):
         scroll_layout = QVBoxLayout(scroll_widget)
         scroll_layout.setSpacing(10)
 
-        # AI Auto-Calibration Section
-        grp_ai_calib = QGroupBox("⚡ Automatische KI-Nahtstellen-Kalibrierung")
-        layout_ai_calib = QVBoxLayout(grp_ai_calib)
-        layout_ai_calib.setSpacing(6)
-
-        self.chk_multi_frame_calib = QCheckBox("Multi-Frame Analyse (5 Video-Frames abtasten)")
-        self.chk_multi_frame_calib.setChecked(True)
-        self.chk_multi_frame_calib.setStyleSheet("color: #ddd; margin-bottom: 2px;")
-        layout_ai_calib.addWidget(self.chk_multi_frame_calib)
-
-        self.btn_run_ai_calib = QPushButton("🎯 Nahtstelle jetzt automatisch kalibrieren")
-        self.btn_run_ai_calib.setStyleSheet("background-color: #7c3aed; font-weight: bold; padding: 8px 12px; font-size: 13px; color: white;")
-        self.btn_run_ai_calib.clicked.connect(self.run_auto_stitch_calibration)
-        layout_ai_calib.addWidget(self.btn_run_ai_calib)
-        self.btn_auto_stitch = self.btn_run_ai_calib  # Alias for compatibility
-
-        scroll_layout.addWidget(grp_ai_calib)
-
-        # Lens Preset
-        grp_preset = QGroupBox("📷 Kamera- & Objektiv-Profil")
+        # 1. Kamera-Profil & KI-Kalibrierung Card
+        grp_preset = QGroupBox("📷 Kamera-Profil & KI-Kalibrierung")
         layout_preset = QVBoxLayout(grp_preset)
+        layout_preset.setSpacing(8)
+
+        lbl_profile_sel = QLabel("Objektiv-Profil:")
+        lbl_profile_sel.setStyleSheet("font-weight: 600; color: #f4f4f6; font-size: 11px;")
+        layout_preset.addWidget(lbl_profile_sel)
+
         self.combo_preset = QComboBox()
         self.combo_preset.addItems(list(CAMERA_PRESETS.keys()))
         self.combo_preset.currentTextChanged.connect(self.on_preset_changed)
@@ -1940,7 +1879,7 @@ class MainWindow(QMainWindow):
 
         row_proj = QHBoxLayout()
         lbl_proj = QLabel("Projektions-Typ:")
-        lbl_proj.setStyleSheet("font-weight: 500; color: #ddd; font-size: 11px;")
+        lbl_proj.setStyleSheet("font-weight: 600; color: #f4f4f6; font-size: 11px;")
         self.combo_projection = NoWheelComboBox()
         self.combo_projection.addItem("🌟 Zylindrisch (Standard Panorama)", "cylindrical")
         self.combo_projection.addItem("📐 Pannini (Begradigt Linien & Perspektive)", "pannini")
@@ -1949,11 +1888,71 @@ class MainWindow(QMainWindow):
         row_proj.addWidget(lbl_proj)
         row_proj.addWidget(self.combo_projection, 1)
         layout_preset.addLayout(row_proj)
+
+        line_c1 = QFrame()
+        line_c1.setFrameShape(QFrame.HLine)
+        line_c1.setStyleSheet("color: #232332;")
+        layout_preset.addWidget(line_c1)
+
+        self.btn_run_ai_calib = QPushButton("🎯 Nahtstelle automatisch kalibrieren")
+        self.btn_run_ai_calib.setStyleSheet("background-color: #2563eb; font-weight: bold; padding: 9px 12px; font-size: 12px; color: white; border-radius: 9px;")
+        self.btn_run_ai_calib.clicked.connect(self.run_auto_stitch_calibration)
+        layout_preset.addWidget(self.btn_run_ai_calib)
+        self.btn_auto_stitch = self.btn_run_ai_calib
+
+        self.chk_multi_frame_calib = QCheckBox("Multi-Frame Analyse (5 Video-Frames abtasten)")
+        self.chk_multi_frame_calib.setChecked(True)
+        self.chk_multi_frame_calib.setStyleSheet("color: #cbd5e1; font-size: 11px;")
+        layout_preset.addWidget(self.chk_multi_frame_calib)
+
         scroll_layout.addWidget(grp_preset)
 
-        # Rig Angles
+        # 2. Spielfeld- & Horizont-Begradigung Card
+        grp_level = QGroupBox("🌅 Spielfeld- & Horizont-Begradigung")
+        layout_level = QVBoxLayout(grp_level)
+        layout_level.setSpacing(8)
+
+        self.ctrl_curvature = LabeledSliderSpinBox("Spielfeld-Linien Begradigung (Curvature):", -0.60, 0.60, 0.0, 0.01, "", decimals=2)
+        self.ctrl_curvature.setToolTip("Begradigt den V-förmigen Durchhang der Spielfeldlinien bei nach unten geneigten Kameras und zieht die Seitenlinien plan.")
+        self.ctrl_curvature.valueChanged.connect(self.on_curvature_changed)
+        layout_level.addWidget(self.ctrl_curvature)
+
+        self.ctrl_global_pitch = LabeledSliderSpinBox("Horizont-Ausgleich (+15° Begradigung):", 0.0, 45.0, 15.0, 0.2, "°")
+        self.ctrl_global_pitch.valueChanged.connect(self.on_rig_param_changed)
+        layout_level.addWidget(self.ctrl_global_pitch)
+
+        self.chk_auto_color_match = QCheckBox("🎨 Automatischer Farb- & Belichtungsabgleich (Kamera L ↔ R)")
+        self.chk_auto_color_match.setChecked(True)
+        self.chk_auto_color_match.setStyleSheet("color: #38bdf8; font-weight: bold; margin-top: 2px;")
+        self.chk_auto_color_match.setToolTip("Gleicht Helligkeit, Belichtung und Weißabgleich beider Kameras automatisch an der Nahtstelle ab. Entfernt die sichtbare Kante in der Bildmitte vollständig.")
+        self.chk_auto_color_match.toggled.connect(self.on_auto_color_match_toggled)
+        layout_level.addWidget(self.chk_auto_color_match)
+
+        self.ctrl_color_match_strength = LabeledSliderSpinBox("Farbangleich-Stärke:", 0.0, 100.0, 100.0, 5.0, "%", decimals=0)
+        self.ctrl_color_match_strength.setToolTip("Bestimmt, wie stark die Farben beider Kameras aufeinander abgestimmt werden (100% = vollständiger Abgleich).")
+        self.ctrl_color_match_strength.valueChanged.connect(self.on_color_match_strength_changed)
+        layout_level.addWidget(self.ctrl_color_match_strength)
+
+        self.chk_auto_crop = QCheckBox("✅ LIR Auto-Crop (Schwarze Ränder/Bögen entfernen)")
+        self.chk_auto_crop.setChecked(True)
+        self.chk_auto_crop.setStyleSheet("font-weight: 600; color: #10b981;")
+        self.chk_auto_crop.toggled.connect(self.toggle_auto_crop)
+        layout_level.addWidget(self.chk_auto_crop)
+
+        self.ctrl_safety_margin = LabeledSliderSpinBox("LIR Sicherheitsrand (Puffer):", 0.0, 5.0, 0.5, 0.1, "%", decimals=1)
+        self.ctrl_safety_margin.valueChanged.connect(self.on_safety_margin_changed)
+        layout_level.addWidget(self.ctrl_safety_margin)
+
+        self.ctrl_blend_width = LabeledSliderSpinBox("Nahtstellen-Übergangsbreite (Blending):", 1.0, 30.0, 8.0, 0.5, "°")
+        self.ctrl_blend_width.valueChanged.connect(self.on_rig_param_changed)
+        layout_level.addWidget(self.ctrl_blend_width)
+
+        scroll_layout.addWidget(grp_level)
+
+        # 3. 3D-Gehäuse Ausrichtung (Rig) Card
         grp_rig = QGroupBox("📐 3D-Gehäuse Ausrichtung (Spreizung & Neigung)")
         layout_rig = QVBoxLayout(grp_rig)
+        layout_rig.setSpacing(8)
 
         self.chk_sync_yaw = QCheckBox("Winkel symmetrisch koppeln (± X°)")
         self.chk_sync_yaw.setChecked(True)
@@ -1986,203 +1985,15 @@ class MainWindow(QMainWindow):
 
         scroll_layout.addWidget(grp_rig)
 
-        # Horizon Leveling & Field Curvature Group
-        grp_level = QGroupBox("🌅 Spielfeld- & Horizont-Begradigung")
-        layout_level = QVBoxLayout(grp_level)
-
-        self.ctrl_curvature = LabeledSliderSpinBox("Spielfeld-Linien Begradigung (Curvature):", -0.60, 0.60, 0.0, 0.01, "", decimals=2)
-        self.ctrl_curvature.setToolTip("Begradigt den V-förmigen Durchhang der Spielfeldlinien bei nach unten geneigten Kameras und zieht die Seitenlinien plan.")
-        self.ctrl_curvature.valueChanged.connect(self.on_curvature_changed)
-        layout_level.addWidget(self.ctrl_curvature)
-
-        self.ctrl_global_pitch = LabeledSliderSpinBox("Horizont-Ausgleich (+15° Begradigung):", 0.0, 45.0, 15.0, 0.2, "°")
-        self.ctrl_global_pitch.valueChanged.connect(self.on_rig_param_changed)
-        layout_level.addWidget(self.ctrl_global_pitch)
-
-        self.chk_auto_crop = QCheckBox("✅ LIR Auto-Crop (Schwarze Ränder/Bögen entfernen)")
-        self.chk_auto_crop.setChecked(True)
-        self.chk_auto_crop.setStyleSheet("font-weight: bold; color: #10b981; margin-bottom: 4px;")
-        self.chk_auto_crop.toggled.connect(self.toggle_auto_crop)
-        layout_level.addWidget(self.chk_auto_crop)
-
-        self.ctrl_safety_margin = LabeledSliderSpinBox("LIR Sicherheitsrand (Puffer):", 0.0, 5.0, 0.5, 0.1, "%", decimals=1)
-        self.ctrl_safety_margin.valueChanged.connect(self.on_safety_margin_changed)
-        layout_level.addWidget(self.ctrl_safety_margin)
-
-        self.ctrl_blend_width = LabeledSliderSpinBox("Nahtstellen-Übergangsbreite (Blending):", 1.0, 30.0, 8.0, 0.5, "°")
-        self.ctrl_blend_width.valueChanged.connect(self.on_rig_param_changed)
-        layout_level.addWidget(self.ctrl_blend_width)
-
-        self.chk_auto_color_match = QCheckBox("🎨 Automatischer Farb- & Belichtungsabgleich (Kamera L ↔ R)")
-        self.chk_auto_color_match.setChecked(True)
-        self.chk_auto_color_match.setStyleSheet("color: #10b981; font-weight: bold; margin-top: 4px;")
-        self.chk_auto_color_match.setToolTip("Gleicht Helligkeit, Belichtung und Weißabgleich beider Kameras automatisch an der Nahtstelle ab. Entfernt die sichtbare Kante in der Bildmitte vollständig.")
-        self.chk_auto_color_match.toggled.connect(self.on_auto_color_match_toggled)
-        layout_level.addWidget(self.chk_auto_color_match)
-
-        self.ctrl_color_match_strength = LabeledSliderSpinBox("Farbangleich-Stärke:", 0.0, 100.0, 100.0, 5.0, "%", decimals=0)
-        self.ctrl_color_match_strength.setToolTip("Bestimmt, wie stark die Farben beider Kameras aufeinander abgestimmt werden (100% = vollständiger Abgleich).")
-        self.ctrl_color_match_strength.valueChanged.connect(self.on_color_match_strength_changed)
-        layout_level.addWidget(self.ctrl_color_match_strength)
-
-        scroll_layout.addWidget(grp_level)
-
-        # Corner Pinning Group
-        grp_corner_pin = QGroupBox("📐 Ecken-Verzerrung (Corner Pinning)")
-        layout_cp = QVBoxLayout(grp_corner_pin)
-        layout_cp.setSpacing(6)
-
-        self.btn_corner_pins_side = QPushButton("✨ Ecken interaktiv im Bild verzerren (Drag & Drop)")
-        self.btn_corner_pins_side.setCheckable(True)
-        self.btn_corner_pins_side.setStyleSheet("background-color: #2563eb; font-weight: bold; padding: 7px; color: white;")
-        self.btn_corner_pins_side.setToolTip("Aktivieren Sie diesen Modus, um die 4 Kamera-Ecken direkt im Panorama per Maus zu ziehen.")
-        self.btn_corner_pins_side.toggled.connect(self.on_corner_pins_toggled)
-        layout_cp.addWidget(self.btn_corner_pins_side)
-
-        row_cam_sel = QHBoxLayout()
-        row_cam_sel.addWidget(QLabel("Anzeige:"))
-        self.combo_corner_cam = QComboBox()
-        self.combo_corner_cam.addItem("🌟 Beide Kameras (Cyan = Links, Gold = Rechts)", "both")
-        self.combo_corner_cam.addItem("🟦 Nur Kamera Links (Cyan)", "left")
-        self.combo_corner_cam.addItem("🟧 Nur Kamera Rechts (Gold)", "right")
-        self.combo_corner_cam.currentIndexChanged.connect(self.on_corner_cam_changed)
-        row_cam_sel.addWidget(self.combo_corner_cam, 1)
-        layout_cp.addLayout(row_cam_sel)
-
-        self.tab_corners = QTabWidget()
-        self.tab_corners.setStyleSheet("QTabWidget::pane { border: 1px solid #3d3d3d; background: #161616; border-radius: 4px; }")
-
-        # TAB LEFT CAMERA
-        tab_c_left = QWidget()
-        layout_cl = QVBoxLayout(tab_c_left)
-        layout_cl.setContentsMargins(6, 6, 6, 6)
-        layout_cl.setSpacing(4)
-
-        self.spin_corners_l = []
-        labels_l = [
-            ("Oben-Links (TL):", 0.0, 0.0),
-            ("Oben-Rechts (TR - Nahtstelle):", 100.0, 0.0),
-            ("Unten-Rechts (BR - Nahtstelle):", 100.0, 100.0),
-            ("Unten-Links (BL):", 0.0, 100.0)
-        ]
-        for idx, (lbl_txt, def_x, def_y) in enumerate(labels_l):
-            row_box = QHBoxLayout()
-            lbl = QLabel(lbl_txt)
-            lbl.setStyleSheet("font-size: 11px; color: #00d2d3; font-weight: 500; min-width: 130px;")
-            
-            spin_x = NoWheelDoubleSpinBox()
-            spin_x.setRange(-80.0, 180.0)
-            spin_x.setValue(def_x)
-            spin_x.setSingleStep(0.2)
-            spin_x.setDecimals(1)
-            spin_x.setPrefix("X: ")
-            spin_x.setSuffix("%")
-            spin_x.valueChanged.connect(lambda val, s='left', i=idx: self.on_corner_spin_changed(s, i))
-
-            spin_y = NoWheelDoubleSpinBox()
-            spin_y.setRange(-80.0, 180.0)
-            spin_y.setValue(def_y)
-            spin_y.setSingleStep(0.2)
-            spin_y.setDecimals(1)
-            spin_y.setPrefix("Y: ")
-            spin_y.setSuffix("%")
-            spin_y.valueChanged.connect(lambda val, s='left', i=idx: self.on_corner_spin_changed(s, i))
-
-            btn_res_c = QToolButton()
-            btn_res_c.setText("↺")
-            btn_res_c.setToolTip(f"Diese Ecke auf Standard ({def_x:.0f}%, {def_y:.0f}%) zurücksetzen")
-            btn_res_c.setStyleSheet("background-color: #222; border: 1px solid #444; border-radius: 3px; color: #aaa;")
-            btn_res_c.clicked.connect(lambda checked=False, s='left', i=idx, dx=def_x, dy=def_y: self.reset_single_corner(s, i, dx, dy))
-
-            row_box.addWidget(lbl)
-            row_box.addWidget(spin_x, 1)
-            row_box.addWidget(spin_y, 1)
-            row_box.addWidget(btn_res_c)
-            layout_cl.addLayout(row_box)
-            self.spin_corners_l.append((spin_x, spin_y))
-
-        btn_res_left_all = QPushButton("↺ Kamera Links Ecken zurücksetzen")
-        btn_res_left_all.setStyleSheet("padding: 4px; font-size: 11px; background-color: #222;")
-        btn_res_left_all.clicked.connect(lambda: self.reset_camera_corners('left'))
-        layout_cl.addWidget(btn_res_left_all)
-
-        self.tab_corners.addTab(tab_c_left, "🟦 Kamera Links (Cyan)")
-
-        # TAB RIGHT CAMERA
-        tab_c_right = QWidget()
-        layout_cr = QVBoxLayout(tab_c_right)
-        layout_cr.setContentsMargins(6, 6, 6, 6)
-        layout_cr.setSpacing(4)
-
-        self.spin_corners_r = []
-        labels_r = [
-            ("Oben-Links (TL - Nahtstelle):", 0.0, 0.0),
-            ("Oben-Rechts (TR):", 100.0, 0.0),
-            ("Unten-Rechts (BR):", 100.0, 100.0),
-            ("Unten-Links (BL - Nahtstelle):", 0.0, 100.0)
-        ]
-        for idx, (lbl_txt, def_x, def_y) in enumerate(labels_r):
-            row_box = QHBoxLayout()
-            lbl = QLabel(lbl_txt)
-            lbl.setStyleSheet("font-size: 11px; color: #ff9f43; font-weight: 500; min-width: 130px;")
-            
-            spin_x = NoWheelDoubleSpinBox()
-            spin_x.setRange(-80.0, 180.0)
-            spin_x.setValue(def_x)
-            spin_x.setSingleStep(0.2)
-            spin_x.setDecimals(1)
-            spin_x.setPrefix("X: ")
-            spin_x.setSuffix("%")
-            spin_x.valueChanged.connect(lambda val, s='right', i=idx: self.on_corner_spin_changed(s, i))
-
-            spin_y = NoWheelDoubleSpinBox()
-            spin_y.setRange(-80.0, 180.0)
-            spin_y.setValue(def_y)
-            spin_y.setSingleStep(0.2)
-            spin_y.setDecimals(1)
-            spin_y.setPrefix("Y: ")
-            spin_y.setSuffix("%")
-            spin_y.valueChanged.connect(lambda val, s='right', i=idx: self.on_corner_spin_changed(s, i))
-
-            btn_res_c = QToolButton()
-            btn_res_c.setText("↺")
-            btn_res_c.setToolTip(f"Diese Ecke auf Standard ({def_x:.0f}%, {def_y:.0f}%) zurücksetzen")
-            btn_res_c.setStyleSheet("background-color: #222; border: 1px solid #444; border-radius: 3px; color: #aaa;")
-            btn_res_c.clicked.connect(lambda checked=False, s='right', i=idx, dx=def_x, dy=def_y: self.reset_single_corner(s, i, dx, dy))
-
-            row_box.addWidget(lbl)
-            row_box.addWidget(spin_x, 1)
-            row_box.addWidget(spin_y, 1)
-            row_box.addWidget(btn_res_c)
-            layout_cr.addLayout(row_box)
-            self.spin_corners_r.append((spin_x, spin_y))
-
-        btn_res_right_all = QPushButton("↺ Kamera Rechts Ecken zurücksetzen")
-        btn_res_right_all.setStyleSheet("padding: 4px; font-size: 11px; background-color: #222;")
-        btn_res_right_all.clicked.connect(lambda: self.reset_camera_corners('right'))
-        layout_cr.addWidget(btn_res_right_all)
-
-        self.tab_corners.addTab(tab_c_right, "🟧 Kamera Rechts (Gold)")
-        layout_cp.addWidget(self.tab_corners)
-
-        btn_res_all_corners = QPushButton("↺ Alle 8 Ecken auf Standard zurücksetzen")
-        btn_res_all_corners.setStyleSheet("padding: 5px; font-weight: bold; background-color: #222; border: 1px solid #444;")
-        btn_res_all_corners.clicked.connect(self.reset_all_corners)
-        layout_cp.addWidget(btn_res_all_corners)
-
-        self.ctrl_frame_opacity = LabeledSliderSpinBox("32:9 Rahmen Deckkraft (Abdunklung):", 0.0, 100.0, 50.0, 5.0, "%", decimals=0)
-        self.ctrl_frame_opacity.valueChanged.connect(self.on_frame_opacity_changed)
-        layout_cp.addWidget(self.ctrl_frame_opacity)
-
-        scroll_layout.addWidget(grp_corner_pin)
-
-        # 32:9 Panorama Zentrierung & Bildausschnitt Group
-        grp_pitch_align = QGroupBox("🏟️ 32:9 Panorama Zentrierung & Bildausschnitt")
+        # 4. 32:9 Panorama Zentrierung & Bildausschnitt Card
+        grp_pitch_align = QGroupBox("🏟️ Panorama-Zentrierung & Bildausschnitt")
         layout_pitch = QVBoxLayout(grp_pitch_align)
+        layout_pitch.setSpacing(8)
 
-        self.btn_pick_center_calib = QPushButton("📍 Mittellinie im Bild anklicken (Sofort-Zentrierung)")
+        self.btn_pick_center_calib = QPushButton("🎯 Mittellinie im Bild anklicken (Sofort-Zentrierung)")
         self.btn_pick_center_calib.setCheckable(True)
-        self.btn_pick_center_calib.setStyleSheet("background-color: #0891b2; font-weight: bold; padding: 7px; color: white;")
+        self.btn_pick_center_calib.setStyleSheet("background-color: #1e1e2d; border: 1px solid #3b82f6; font-weight: 600; padding: 7px; color: #60a5fa; border-radius: 8px;")
+        self.btn_pick_center_calib.setToolTip("Klicken Sie direkt im Panorama-Bild auf den Anstoßpunkt oder die Mittellinie, um das Bild sofort perfekt zu zentrieren.")
         self.btn_pick_center_calib.toggled.connect(self.on_pick_center_toggled)
         layout_pitch.addWidget(self.btn_pick_center_calib)
 
@@ -2191,21 +2002,15 @@ class MainWindow(QMainWindow):
         layout_pitch.addWidget(self.ctrl_h_offset)
 
         pan_btn_row = QHBoxLayout()
-        btn_pan_l5 = QPushButton("⏪ -5°")
-        btn_pan_l5.clicked.connect(lambda: self.pan_offset_by(-5.0))
-        btn_pan_l1 = QPushButton("◀ -1°")
-        btn_pan_l1.clicked.connect(lambda: self.pan_offset_by(-1.0))
-        btn_pan_zero = QPushButton("🎯 0°")
-        btn_pan_zero.clicked.connect(lambda: self.ctrl_h_offset.setValue(0.0))
-        btn_pan_r1 = QPushButton("▶ +1°")
-        btn_pan_r1.clicked.connect(lambda: self.pan_offset_by(1.0))
-        btn_pan_r5 = QPushButton("⏩ +5°")
-        btn_pan_r5.clicked.connect(lambda: self.pan_offset_by(5.0))
-        pan_btn_row.addWidget(btn_pan_l5)
-        pan_btn_row.addWidget(btn_pan_l1)
-        pan_btn_row.addWidget(btn_pan_zero)
-        pan_btn_row.addWidget(btn_pan_r1)
-        pan_btn_row.addWidget(btn_pan_r5)
+        pan_btn_row.setSpacing(4)
+        for d_pan, txt in [(-5.0, "⏪ -5°"), (-1.0, "◀ -1°"), (0.0, "🎯 0°"), (1.0, "▶ +1°"), (5.0, "⏩ +5°")]:
+            btn_pan = QPushButton(txt)
+            btn_pan.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 4px; font-size: 11px; font-weight: 600; color: #cbd5e1;")
+            if d_pan == 0.0:
+                btn_pan.clicked.connect(lambda chk=False: self.ctrl_h_offset.setValue(0.0))
+            else:
+                btn_pan.clicked.connect(lambda chk=False, d=d_pan: self.pan_offset_by(d))
+            pan_btn_row.addWidget(btn_pan)
         layout_pitch.addLayout(pan_btn_row)
 
         self.ctrl_v_offset = LabeledSliderSpinBox("Vertikaler Bildausschnitt (Shift):", -2.0, 2.0, 0.12, 0.02, "", decimals=2)
@@ -2241,37 +2046,186 @@ class MainWindow(QMainWindow):
         layout_pitch.addWidget(self.ctrl_squeeze)
 
         btn_full_pitch = QPushButton("🏟️ Ganzes Spielfeld + Beide Tore (145° Preset)")
-        btn_full_pitch.setStyleSheet("background-color: #059669; font-weight: bold; padding: 7px; color: white;")
+        btn_full_pitch.setStyleSheet("background-color: #1e1e2d; border: 1px solid #10b981; font-weight: bold; padding: 7px; color: #34d399; border-radius: 8px;")
         btn_full_pitch.clicked.connect(self.apply_full_pitch_preset)
         layout_pitch.addWidget(btn_full_pitch)
 
         scroll_layout.addWidget(grp_pitch_align)
 
-        # Profiles Management Group
+        # 5. Ecken-Verzerrung (Corner Pinning) Card
+        grp_corner_pin = QGroupBox("📐 Ecken-Verzerrung (Corner Pinning)")
+        layout_cp = QVBoxLayout(grp_corner_pin)
+        layout_cp.setSpacing(8)
+
+        self.btn_corner_pins_side = QPushButton("✨ Ecken interaktiv im Bild verzerren (Drag & Drop)")
+        self.btn_corner_pins_side.setCheckable(True)
+        self.btn_corner_pins_side.setStyleSheet("background-color: #2563eb; font-weight: bold; padding: 8px; color: white; border-radius: 8px;")
+        self.btn_corner_pins_side.setToolTip("Aktivieren Sie diesen Modus, um die 4 Kamera-Ecken direkt im Panorama per Maus zu ziehen.")
+        self.btn_corner_pins_side.toggled.connect(self.on_corner_pins_toggled)
+        layout_cp.addWidget(self.btn_corner_pins_side)
+
+        row_cam_sel = QHBoxLayout()
+        row_cam_sel.addWidget(QLabel("Anzeige:"))
+        self.combo_corner_cam = QComboBox()
+        self.combo_corner_cam.addItem("🌟 Beide Kameras (Cyan = Links, Gold = Rechts)", "both")
+        self.combo_corner_cam.addItem("🟦 Nur Kamera Links (Cyan)", "left")
+        self.combo_corner_cam.addItem("🟧 Nur Kamera Rechts (Gold)", "right")
+        self.combo_corner_cam.currentIndexChanged.connect(self.on_corner_cam_changed)
+        row_cam_sel.addWidget(self.combo_corner_cam, 1)
+        layout_cp.addLayout(row_cam_sel)
+
+        self.ctrl_frame_opacity = LabeledSliderSpinBox("32:9 Rahmen Deckkraft (Abdunklung):", 0.0, 100.0, 50.0, 5.0, "%", decimals=0)
+        self.ctrl_frame_opacity.valueChanged.connect(self.on_frame_opacity_changed)
+        layout_cp.addWidget(self.ctrl_frame_opacity)
+
+        self.tab_corners = QTabWidget()
+        self.tab_corners.setStyleSheet("QTabWidget::pane { border: 1px solid #232332; background: #12121a; border-radius: 8px; } QTabBar::tab { font-size: 11px; padding: 5px 8px; }")
+
+        # TAB LEFT CAMERA
+        tab_c_left = QWidget()
+        layout_cl = QVBoxLayout(tab_c_left)
+        layout_cl.setContentsMargins(6, 6, 6, 6)
+        layout_cl.setSpacing(4)
+
+        self.spin_corners_l = []
+        labels_l = [
+            ("Oben-Links (TL):", 0.0, 0.0),
+            ("Oben-Rechts (TR - Nahtstelle):", 100.0, 0.0),
+            ("Unten-Rechts (BR - Nahtstelle):", 100.0, 100.0),
+            ("Unten-Links (BL):", 0.0, 100.0)
+        ]
+        for idx, (lbl_txt, def_x, def_y) in enumerate(labels_l):
+            row_box = QHBoxLayout()
+            lbl = QLabel(lbl_txt)
+            lbl.setStyleSheet("font-size: 11px; color: #60a5fa; font-weight: 600; min-width: 130px;")
+            
+            spin_x = NoWheelDoubleSpinBox()
+            spin_x.setRange(-80.0, 180.0)
+            spin_x.setValue(def_x)
+            spin_x.setSingleStep(0.2)
+            spin_x.setDecimals(1)
+            spin_x.setPrefix("X: ")
+            spin_x.setSuffix("%")
+            spin_x.valueChanged.connect(lambda val, s='left', i=idx: self.on_corner_spin_changed(s, i))
+
+            spin_y = NoWheelDoubleSpinBox()
+            spin_y.setRange(-80.0, 180.0)
+            spin_y.setValue(def_y)
+            spin_y.setSingleStep(0.2)
+            spin_y.setDecimals(1)
+            spin_y.setPrefix("Y: ")
+            spin_y.setSuffix("%")
+            spin_y.valueChanged.connect(lambda val, s='left', i=idx: self.on_corner_spin_changed(s, i))
+
+            btn_res_c = QToolButton()
+            btn_res_c.setText("↺")
+            btn_res_c.setToolTip(f"Diese Ecke auf Standard ({def_x:.0f}%, {def_y:.0f}%) zurücksetzen")
+            btn_res_c.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 4px; color: #94a3b8; padding: 2px 6px;")
+            btn_res_c.clicked.connect(lambda checked=False, s='left', i=idx, dx=def_x, dy=def_y: self.reset_single_corner(s, i, dx, dy))
+
+            row_box.addWidget(lbl)
+            row_box.addWidget(spin_x, 1)
+            row_box.addWidget(spin_y, 1)
+            row_box.addWidget(btn_res_c)
+            layout_cl.addLayout(row_box)
+            self.spin_corners_l.append((spin_x, spin_y))
+
+        btn_res_left_all = QPushButton("↺ Kamera Links Ecken zurücksetzen")
+        btn_res_left_all.setStyleSheet("padding: 5px; font-size: 11px; background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; color: #94a3b8;")
+        btn_res_left_all.clicked.connect(lambda: self.reset_camera_corners('left'))
+        layout_cl.addWidget(btn_res_left_all)
+
+        self.tab_corners.addTab(tab_c_left, "🟦 Kamera Links (Cyan)")
+
+        # TAB RIGHT CAMERA
+        tab_c_right = QWidget()
+        layout_cr = QVBoxLayout(tab_c_right)
+        layout_cr.setContentsMargins(6, 6, 6, 6)
+        layout_cr.setSpacing(4)
+
+        self.spin_corners_r = []
+        labels_r = [
+            ("Oben-Links (TL - Nahtstelle):", 0.0, 0.0),
+            ("Oben-Rechts (TR):", 100.0, 0.0),
+            ("Unten-Rechts (BR):", 100.0, 100.0),
+            ("Unten-Links (BL - Nahtstelle):", 0.0, 100.0)
+        ]
+        for idx, (lbl_txt, def_x, def_y) in enumerate(labels_r):
+            row_box = QHBoxLayout()
+            lbl = QLabel(lbl_txt)
+            lbl.setStyleSheet("font-size: 11px; color: #fbbf24; font-weight: 600; min-width: 130px;")
+            
+            spin_x = NoWheelDoubleSpinBox()
+            spin_x.setRange(-80.0, 180.0)
+            spin_x.setValue(def_x)
+            spin_x.setSingleStep(0.2)
+            spin_x.setDecimals(1)
+            spin_x.setPrefix("X: ")
+            spin_x.setSuffix("%")
+            spin_x.valueChanged.connect(lambda val, s='right', i=idx: self.on_corner_spin_changed(s, i))
+
+            spin_y = NoWheelDoubleSpinBox()
+            spin_y.setRange(-80.0, 180.0)
+            spin_y.setValue(def_y)
+            spin_y.setSingleStep(0.2)
+            spin_y.setDecimals(1)
+            spin_y.setPrefix("Y: ")
+            spin_y.setSuffix("%")
+            spin_y.valueChanged.connect(lambda val, s='right', i=idx: self.on_corner_spin_changed(s, i))
+
+            btn_res_c = QToolButton()
+            btn_res_c.setText("↺")
+            btn_res_c.setToolTip(f"Diese Ecke auf Standard ({def_x:.0f}%, {def_y:.0f}%) zurücksetzen")
+            btn_res_c.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 4px; color: #94a3b8; padding: 2px 6px;")
+            btn_res_c.clicked.connect(lambda checked=False, s='right', i=idx, dx=def_x, dy=def_y: self.reset_single_corner(s, i, dx, dy))
+
+            row_box.addWidget(lbl)
+            row_box.addWidget(spin_x, 1)
+            row_box.addWidget(spin_y, 1)
+            row_box.addWidget(btn_res_c)
+            layout_cr.addLayout(row_box)
+            self.spin_corners_r.append((spin_x, spin_y))
+
+        btn_res_right_all = QPushButton("↺ Kamera Rechts Ecken zurücksetzen")
+        btn_res_right_all.setStyleSheet("padding: 5px; font-size: 11px; background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; color: #94a3b8;")
+        btn_res_right_all.clicked.connect(lambda: self.reset_camera_corners('right'))
+        layout_cr.addWidget(btn_res_right_all)
+
+        self.tab_corners.addTab(tab_c_right, "🟧 Kamera Rechts (Gold)")
+        layout_cp.addWidget(self.tab_corners)
+
+        btn_res_all_corners = QPushButton("↺ Alle 8 Ecken auf Standard zurücksetzen")
+        btn_res_all_corners.setStyleSheet("padding: 6px; font-weight: 600; background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; color: #cbd5e1;")
+        btn_res_all_corners.clicked.connect(self.reset_all_corners)
+        layout_cp.addWidget(btn_res_all_corners)
+
+        scroll_layout.addWidget(grp_corner_pin)
+
+        # 6. Profile & Standard-Einstellungen Card
         grp_profiles = QGroupBox("💾 Profile & Standard-Einstellungen")
         layout_prof = QVBoxLayout(grp_profiles)
         layout_prof.setSpacing(6)
 
         row_prof_btns = QHBoxLayout()
-        btn_save_full = QPushButton("💾 Als Profil-Datei speichern...")
-        btn_save_full.setStyleSheet("background-color: #059669; font-weight: bold; padding: 6px; color: white;")
+        btn_save_full = QPushButton("💾 Profil speichern...")
+        btn_save_full.setStyleSheet("background-color: #1e1e2d; border: 1px solid #2d2d42; font-weight: 600; padding: 6px; color: #f4f4f6; border-radius: 8px;")
         btn_save_full.clicked.connect(self.save_full_profile_as)
 
-        btn_load_full = QPushButton("📁 Profil-Datei laden...")
-        btn_load_full.setStyleSheet("background-color: #0284c7; font-weight: bold; padding: 6px; color: white;")
+        btn_load_full = QPushButton("📁 Profil laden...")
+        btn_load_full.setStyleSheet("background-color: #1e1e2d; border: 1px solid #2d2d42; font-weight: 600; padding: 6px; color: #f4f4f6; border-radius: 8px;")
         btn_load_full.clicked.connect(self.load_full_profile_from)
 
         row_prof_btns.addWidget(btn_save_full)
         row_prof_btns.addWidget(btn_load_full)
         layout_prof.addLayout(row_prof_btns)
 
-        btn_set_default = QPushButton("⭐ Als Start-Standard festlegen (Autoload)")
-        btn_set_default.setStyleSheet("background-color: #ea580c; font-weight: bold; padding: 7px; color: white; font-size: 12px;")
+        btn_set_default = QPushButton("⭐ Als Start-Standard festlegen")
+        btn_set_default.setStyleSheet("background-color: #2563eb; font-weight: bold; padding: 7px; color: white; font-size: 11px; border-radius: 8px;")
         btn_set_default.clicked.connect(self.save_as_default_settings)
         layout_prof.addWidget(btn_set_default)
 
         btn_reset_defaults = QPushButton("↺ Auf Werkseinstellungen zurücksetzen")
-        btn_reset_defaults.setStyleSheet("background-color: #222; border: 1px solid #444; padding: 4px; font-size: 11px; color: #bbb;")
+        btn_reset_defaults.setStyleSheet("background-color: #161622; border: 1px solid #262638; padding: 5px; font-size: 11px; color: #8e8e9c; border-radius: 8px;")
         btn_reset_defaults.clicked.connect(self.restore_factory_defaults)
         layout_prof.addWidget(btn_reset_defaults)
 
@@ -2283,20 +2237,21 @@ class MainWindow(QMainWindow):
         self.right_pane.addTab(self.tab_calib, "🎯 2. Stitch")
 
         # -------------------------------------------------------------------------
-        # TAB 3: 📐 Taktik & AutoCam
+        # TAB 3: 📐 Taktik & AutoCam (Samsung One UI Style)
         # -------------------------------------------------------------------------
         self.tab_autocam = QWidget()
         autocam_layout = QVBoxLayout(self.tab_autocam)
+        autocam_layout.setContentsMargins(4, 4, 4, 4)
         scroll_area_ac = QScrollArea()
         scroll_area_ac.setWidgetResizable(True)
         scroll_widget_ac = QWidget()
         scroll_layout_ac = QVBoxLayout(scroll_widget_ac)
-        scroll_layout_ac.setSpacing(10)
+        scroll_layout_ac.setSpacing(12)
 
         # 16:9 Tactical Mesh Warp Group (6 Points)
         grp_pitch_roi = QGroupBox("📐 16:9 Taktik-Warp (6-Punkte Video-Entzerrung)")
         layout_pitch_roi = QVBoxLayout(grp_pitch_roi)
-        layout_pitch_roi.setSpacing(6)
+        layout_pitch_roi.setSpacing(8)
 
         # Quick View-Switcher buttons
         row_view_quick = QHBoxLayout()
@@ -2311,31 +2266,31 @@ class MainWindow(QMainWindow):
         layout_pitch_roi.addLayout(row_view_quick)
 
         lbl_roi_desc = QLabel("Verzerren und passen Sie das Panorama-Video an den 6 Außenpunkten frei an das 16:9 Frame an. Die Mittellinien-Punkte (Wölbung Oben/Unten) begradigen gebogene Seitenlinien.")
-        lbl_roi_desc.setStyleSheet("color: #a1a1aa; font-size: 11px;")
+        lbl_roi_desc.setStyleSheet("color: #8e8e9c; font-size: 11px;")
         lbl_roi_desc.setWordWrap(True)
         layout_pitch_roi.addWidget(lbl_roi_desc)
 
-        self.btn_pitch_roi_side = QPushButton("📐 6 Punkte im Bild frei verziehen (Maus Drag & Drop)")
+        self.btn_pitch_roi_side = QPushButton("📐 6 Punkte im Bild frei verziehen (Drag & Drop)")
         self.btn_pitch_roi_side.setCheckable(True)
-        self.btn_pitch_roi_side.setStyleSheet("background-color: #7c3aed; font-weight: bold; padding: 7px; color: white;")
+        self.btn_pitch_roi_side.setStyleSheet("background-color: #2563eb; font-weight: bold; padding: 8px; color: white; border-radius: 8px;")
         self.btn_pitch_roi_side.setToolTip("Aktivieren Sie diesen Modus, um die 6 Punkte direkt im Vorschaubild per Maus zu ziehen.")
         self.btn_pitch_roi_side.toggled.connect(self.on_pitch_roi_toggled)
         layout_pitch_roi.addWidget(self.btn_pitch_roi_side)
 
         self.spin_pitch_corners = []
         labels_pitch = [
-            ("🚩 Video Oben-Links (TL):", 0.0, 0.0, "#e056fd"),
-            ("📍 ↕ Wölbung Oben (TC):", 50.0, 0.0, "#f1c40f"),
-            ("🚩 Video Oben-Rechts (TR):", 100.0, 0.0, "#e056fd"),
-            ("🚩 Video Unten-Rechts (BR):", 100.0, 100.0, "#e056fd"),
-            ("📍 ↕ Wölbung Unten (BC):", 50.0, 100.0, "#f1c40f"),
-            ("🚩 Video Unten-Links (BL):", 0.0, 100.0, "#e056fd")
+            ("🚩 Video Oben-Links (TL):", 0.0, 0.0, "#60a5fa"),
+            ("📍 ↕ Wölbung Oben (TC):", 50.0, 0.0, "#38bdf8"),
+            ("🚩 Video Oben-Rechts (TR):", 100.0, 0.0, "#60a5fa"),
+            ("🚩 Video Unten-Rechts (BR):", 100.0, 100.0, "#60a5fa"),
+            ("📍 ↕ Wölbung Unten (BC):", 50.0, 100.0, "#38bdf8"),
+            ("🚩 Video Unten-Links (BL):", 0.0, 100.0, "#60a5fa")
         ]
 
         for idx, (lbl_txt, def_x, def_y, col) in enumerate(labels_pitch):
             row_box = QHBoxLayout()
             lbl = QLabel(lbl_txt)
-            lbl.setStyleSheet(f"font-size: 11px; color: {col}; font-weight: 500; min-width: 150px;")
+            lbl.setStyleSheet(f"font-size: 11px; color: {col}; font-weight: 600; min-width: 150px;")
 
             spin_x = NoWheelDoubleSpinBox()
             spin_x.setRange(-20.0, 120.0)
@@ -2358,7 +2313,7 @@ class MainWindow(QMainWindow):
             btn_res_c = QToolButton()
             btn_res_c.setText("↺")
             btn_res_c.setToolTip(f"Diesen Punkt auf Standard ({def_x:.0f}%, {def_y:.0f}%) zurücksetzen")
-            btn_res_c.setStyleSheet("background-color: #222; border: 1px solid #444; border-radius: 3px; color: #aaa;")
+            btn_res_c.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 4px; color: #94a3b8; padding: 2px 6px;")
             btn_res_c.clicked.connect(lambda checked=False, i=idx, dx=def_x, dy=def_y: self.reset_single_pitch_corner(i, dx, dy))
 
             row_box.addWidget(lbl)
@@ -2370,12 +2325,12 @@ class MainWindow(QMainWindow):
 
         row_pitch_btns = QHBoxLayout()
         btn_preset_curve = QPushButton("🏟️ Krümmung ausgleichen (Preset)")
-        btn_preset_curve.setStyleSheet("background-color: #059669; font-weight: bold; padding: 5px; color: white;")
+        btn_preset_curve.setStyleSheet("background-color: #1e1e2d; border: 1px solid #2563eb; font-weight: 600; padding: 6px; color: #60a5fa; border-radius: 8px;")
         btn_preset_curve.setToolTip("Setzt typische Entzerrungswerte für Mittellinien-Wölbung, um gebogene Seitenlinien zu begradigen")
         btn_preset_curve.clicked.connect(self.apply_preset_curve_warp)
 
         btn_reset_pitch = QPushButton("↺ 100% Vollbild zurücksetzen")
-        btn_reset_pitch.setStyleSheet("background-color: #222; border: 1px solid #444; padding: 5px; font-size: 11px;")
+        btn_reset_pitch.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; padding: 6px; font-size: 11px; color: #cbd5e1; border-radius: 8px;")
         btn_reset_pitch.clicked.connect(self.apply_preset_fullscreen_warp)
 
         row_pitch_btns.addWidget(btn_preset_curve)
@@ -2392,14 +2347,18 @@ class MainWindow(QMainWindow):
         # 16:9 AutoCam Follow Cam Group
         grp_ac_follow = QGroupBox("🎥 16:9 AutoCam (Automatische TV-Kameraführung)")
         layout_ac_follow = QVBoxLayout(grp_ac_follow)
+        layout_ac_follow.setSpacing(8)
 
         self.chk_ai_yolo = QCheckBox("🤖 Deep Learning Soccer-KI (Spieler-Dichte & Ball)")
         self.chk_ai_yolo.setChecked(True)
-        self.chk_ai_yolo.setStyleSheet("font-weight: bold; color: #10b981; margin-bottom: 4px;")
+        self.chk_ai_yolo.setStyleSheet("font-weight: 600; color: #10b981; margin-bottom: 4px;")
         self.chk_ai_yolo.toggled.connect(self.on_ai_yolo_toggled)
         layout_ac_follow.addWidget(self.chk_ai_yolo)
 
-        layout_ac_follow.addWidget(QLabel("Kameraführungs-Strategie:"))
+        lbl_track_mode = QLabel("Kameraführungs-Strategie:")
+        lbl_track_mode.setStyleSheet("font-weight: 600; color: #f4f4f6; font-size: 11px;")
+        layout_ac_follow.addWidget(lbl_track_mode)
+
         self.combo_ai_model = QComboBox()
         self.combo_ai_model.addItem("🏆 Soccer-Tracker Fusion (Spieler-Dichte + Ball - Empfohlen)", "hybrid_fusion")
         self.combo_ai_model.addItem("👥 Reine Spielerdichte (100% Team-Cluster, absolut stabil)", "player_density")
@@ -2411,10 +2370,11 @@ class MainWindow(QMainWindow):
         # Smart Zoom Group
         grp_zoom = QGroupBox("Kamera-Zoom")
         layout_zoom = QVBoxLayout(grp_zoom)
+        layout_zoom.setSpacing(6)
 
         self.chk_dynamic_zoom = QCheckBox("🔍 Dynamischen Zoom aktivieren (Bei Pässen & Torschüssen)")
         self.chk_dynamic_zoom.setChecked(False)
-        self.chk_dynamic_zoom.setStyleSheet("font-weight: bold; color: #38bdf8; margin-bottom: 4px;")
+        self.chk_dynamic_zoom.setStyleSheet("font-weight: 600; color: #38bdf8; margin-bottom: 4px;")
         self.chk_dynamic_zoom.toggled.connect(self.on_dynamic_zoom_toggled)
         layout_zoom.addWidget(self.chk_dynamic_zoom)
 
@@ -2461,6 +2421,7 @@ class MainWindow(QMainWindow):
 
         grp_scan_speed = QGroupBox("⚡ KI-Berechnungsgeschwindigkeit")
         layout_scan = QVBoxLayout(grp_scan_speed)
+        layout_scan.setSpacing(6)
         self.combo_scan_speed = QComboBox()
         self.combo_scan_speed.addItem("⚡ Ausgewogen (Jeder 5. Frame – Empfohlen)", 5)
         self.combo_scan_speed.addItem("🚀 Turbo-Modus (Jeder 8. Frame – 5x schneller)", 8)
@@ -2471,7 +2432,7 @@ class MainWindow(QMainWindow):
 
         self.chk_fp16 = QCheckBox("🚀 GPU FP16 Tensor-Cores (NVIDIA RTX)")
         self.chk_fp16.setChecked(True)
-        self.chk_fp16.setStyleSheet("color: #10b981; font-weight: bold;")
+        self.chk_fp16.setStyleSheet("color: #10b981; font-weight: 600;")
         self.chk_fp16.toggled.connect(self.on_scan_speed_changed)
         layout_scan.addWidget(self.chk_fp16)
         layout_ac_follow.addWidget(grp_scan_speed)
@@ -2484,37 +2445,39 @@ class MainWindow(QMainWindow):
         self.right_pane.addTab(self.tab_autocam, "📐 3. Taktik")
 
         # -------------------------------------------------------------------------
-        # TAB 4: 🚀 Export
+        # TAB 4: 🚀 Export (Samsung One UI Style)
         # -------------------------------------------------------------------------
         self.tab_export = QWidget()
         layout_tab_exp = QVBoxLayout(self.tab_export)
-        layout_tab_exp.setContentsMargins(6, 6, 6, 6)
+        layout_tab_exp.setContentsMargins(4, 4, 4, 4)
         scroll_exp = QScrollArea()
         scroll_exp.setWidgetResizable(True)
         widget_exp = QWidget()
         export_layout = QVBoxLayout(widget_exp)
-        export_layout.setSpacing(10)
+        export_layout.setSpacing(12)
 
         grp_trim = QGroupBox("✂️ Export-Schnittbereich")
         layout_trim = QVBoxLayout(grp_trim)
+        layout_trim.setSpacing(8)
 
         self.chk_export_trim_only = QCheckBox("Nur ausgewählten In/Out-Schnittbereich exportieren")
         self.chk_export_trim_only.setChecked(True)
-        self.chk_export_trim_only.setStyleSheet("font-weight: bold; color: #10b981; margin-bottom: 4px;")
+        self.chk_export_trim_only.setStyleSheet("font-weight: 600; color: #10b981;")
         self.chk_export_trim_only.toggled.connect(self.on_export_trim_toggled)
         layout_trim.addWidget(self.chk_export_trim_only)
 
         row_in = QHBoxLayout()
         lbl_in = QLabel("Start (In):")
-        lbl_in.setStyleSheet("font-weight: 500; min-width: 60px; color: #ddd;")
+        lbl_in.setStyleSheet("font-weight: 600; min-width: 60px; color: #f4f4f6;")
         self.spin_export_in = NoWheelSpinBox()
         self.spin_export_in.setRange(0, 10000000)
         self.spin_export_in.setValue(0)
         self.spin_export_in.setSuffix(" F")
         self.spin_export_in.valueChanged.connect(self.on_spin_export_in_changed)
         self.lbl_export_in_time = QLabel("00:00:00.00")
-        self.lbl_export_in_time.setStyleSheet("color: #38bdf8; font-weight: bold; min-width: 80px;")
+        self.lbl_export_in_time.setStyleSheet("color: #60a5fa; font-weight: bold; min-width: 80px;")
         self.btn_export_set_in_curr = QPushButton("📍 Playhead")
+        self.btn_export_set_in_curr.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 4px 8px; font-size: 11px;")
         self.btn_export_set_in_curr.clicked.connect(lambda: self.set_in_point())
         row_in.addWidget(lbl_in)
         row_in.addWidget(self.spin_export_in)
@@ -2524,15 +2487,16 @@ class MainWindow(QMainWindow):
 
         row_out = QHBoxLayout()
         lbl_out = QLabel("Ende (Out):")
-        lbl_out.setStyleSheet("font-weight: 500; min-width: 60px; color: #ddd;")
+        lbl_out.setStyleSheet("font-weight: 600; min-width: 60px; color: #f4f4f6;")
         self.spin_export_out = NoWheelSpinBox()
         self.spin_export_out.setRange(0, 10000000)
         self.spin_export_out.setValue(0)
         self.spin_export_out.setSuffix(" F")
         self.spin_export_out.valueChanged.connect(self.on_spin_export_out_changed)
         self.lbl_export_out_time = QLabel("00:00:00.00")
-        self.lbl_export_out_time.setStyleSheet("color: #38bdf8; font-weight: bold; min-width: 80px;")
+        self.lbl_export_out_time.setStyleSheet("color: #60a5fa; font-weight: bold; min-width: 80px;")
         self.btn_export_set_out_curr = QPushButton("📍 Playhead")
+        self.btn_export_set_out_curr.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 4px 8px; font-size: 11px;")
         self.btn_export_set_out_curr.clicked.connect(lambda: self.set_out_point())
         row_out.addWidget(lbl_out)
         row_out.addWidget(self.spin_export_out)
@@ -2542,8 +2506,9 @@ class MainWindow(QMainWindow):
 
         row_dur = QHBoxLayout()
         self.lbl_export_duration_info = QLabel("Render-Dauer: 00:00:00 (0 Frames)")
-        self.lbl_export_duration_info.setStyleSheet("color: #10b981; font-weight: bold; font-size: 11px;")
+        self.lbl_export_duration_info.setStyleSheet("color: #10b981; font-weight: 600; font-size: 11px;")
         btn_reset_export_range = QPushButton("↺ Alles")
+        btn_reset_export_range.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 4px 8px; font-size: 11px;")
         btn_reset_export_range.clicked.connect(self.reset_in_out_points)
         row_dur.addWidget(self.lbl_export_duration_info, 1)
         row_dur.addWidget(btn_reset_export_range)
@@ -2553,6 +2518,7 @@ class MainWindow(QMainWindow):
 
         grp_exp_settings = QGroupBox("⚙️ Render- & Export-Einstellungen")
         exp_form = QVBoxLayout(grp_exp_settings)
+        exp_form.setSpacing(8)
 
         exp_form.addWidget(QLabel("Video-Format:"))
         self.combo_exp_format = QComboBox()
@@ -2593,17 +2559,18 @@ class MainWindow(QMainWindow):
 
         self.chk_lookahead = QCheckBox("🎬 Filmreife Lookahead-Glättung (2-Pass antizipatorische Schwenks)")
         self.chk_lookahead.setChecked(True)
-        self.chk_lookahead.setStyleSheet("font-weight: bold; color: #f59e0b; margin-top: 4px;")
+        self.chk_lookahead.setStyleSheet("font-weight: 600; color: #f59e0b;")
         exp_form.addWidget(self.chk_lookahead)
 
         export_layout.addWidget(grp_exp_settings)
 
         # Batch Export Action
-        grp_render = QGroupBox("🚀 GPU Batch Export")
+        grp_render = QGroupBox("🚀 GPU Video-Export")
         render_box = QVBoxLayout(grp_render)
+        render_box.setSpacing(8)
 
         self.btn_start_render = QPushButton("🚀 Video jetzt Rendern & Exportieren")
-        self.btn_start_render.setStyleSheet("background-color: #047857; font-weight: bold; padding: 12px; font-size: 14px; color: white; border-radius: 6px;")
+        self.btn_start_render.setStyleSheet("background-color: #2563eb; font-weight: bold; padding: 12px; font-size: 14px; color: white; border-radius: 10px;")
         self.btn_start_render.clicked.connect(self.start_video_export)
         render_box.addWidget(self.btn_start_render)
 
@@ -2612,11 +2579,12 @@ class MainWindow(QMainWindow):
         render_box.addWidget(self.progress_bar)
 
         self.lbl_render_stats = QLabel("Bereit zum Exportieren.")
-        self.lbl_render_stats.setStyleSheet("color: #a1a1aa;")
+        self.lbl_render_stats.setStyleSheet("color: #8e8e9c; font-size: 11px;")
         render_box.addWidget(self.lbl_render_stats)
 
         self.btn_cancel_render = QPushButton("Abbrechen")
         self.btn_cancel_render.setEnabled(False)
+        self.btn_cancel_render.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 8px; padding: 6px; font-size: 11px; color: #94a3b8;")
         self.btn_cancel_render.clicked.connect(self.cancel_video_export)
         render_box.addWidget(self.btn_cancel_render)
 
@@ -2638,16 +2606,16 @@ class MainWindow(QMainWindow):
         self.log_viewer = QPlainTextEdit()
         self.log_viewer.setReadOnly(True)
         self.log_viewer.setMaximumBlockCount(1500)
-        self.log_viewer.setMaximumHeight(90)
+        self.log_viewer.setMaximumHeight(85)
         self.log_viewer.setStyleSheet("""
             QPlainTextEdit {
-                background-color: #0f0f13;
-                color: #a1a1aa;
+                background-color: #0b0b10;
+                color: #8e8e9c;
                 font-family: 'Consolas', 'Courier New', monospace;
                 font-size: 11px;
-                border: 1px solid #272730;
-                border-radius: 6px;
-                padding: 4px;
+                border: 1px solid #20202e;
+                border-radius: 10px;
+                padding: 4px 8px;
             }
         """)
         root_layout.addWidget(self.log_viewer)
@@ -2693,111 +2661,187 @@ class MainWindow(QMainWindow):
 
     def apply_dark_theme(self):
         self.setStyleSheet("""
-            QMainWindow { background-color: #0f0f12; }
-            QWidget { color: #f4f4f5; font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif; font-size: 12px; }
+            QMainWindow { background-color: #0b0b10; }
+            QWidget { color: #f4f4f6; font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Roboto', sans-serif; font-size: 12px; }
             
+            /* Samsung One UI Cards */
             QGroupBox {
-                font-weight: bold;
-                border: 1px solid #272730;
-                border-radius: 8px;
-                margin-top: 10px;
-                padding: 12px 8px 8px 8px;
-                background-color: #18181c;
+                font-weight: 700;
+                font-size: 13px;
+                border: 1px solid #232332;
+                border-radius: 14px;
+                margin-top: 14px;
+                padding: 18px 12px 12px 12px;
+                background-color: #15151f;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
-                left: 12px;
-                padding: 0 6px;
-                color: #38bdf8;
+                subcontrol-position: top left;
+                left: 14px;
+                top: 1px;
+                padding: 0 8px;
+                background-color: #15151f;
+                color: #f4f4f6;
                 font-size: 12px;
+                font-weight: 700;
+                border-radius: 4px;
             }
             
+            /* Samsung One UI Buttons */
             QPushButton {
-                background-color: #272730;
-                border: 1px solid #3f3f46;
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-weight: 500;
-                color: #f4f4f5;
+                background-color: #1e1e2b;
+                border: 1px solid #2e2e40;
+                border-radius: 10px;
+                padding: 7px 14px;
+                font-weight: 600;
+                font-size: 12px;
+                color: #f4f4f6;
             }
             QPushButton:hover {
-                background-color: #3f3f46;
-                border-color: #71717a;
+                background-color: #28283a;
+                border-color: #404058;
+                color: #ffffff;
             }
             QPushButton:pressed {
-                background-color: #18181b;
+                background-color: #14141e;
+                border-color: #2563eb;
+            }
+            QPushButton:checked {
+                background-color: #2563eb;
+                border-color: #3b82f6;
+                color: #ffffff;
+                font-weight: bold;
             }
             QPushButton:disabled {
-                background-color: #18181b;
-                color: #52525b;
-                border-color: #272730;
+                background-color: #13131c;
+                color: #484858;
+                border-color: #1e1e2a;
             }
             
-            QSlider::groove:horizontal { height: 6px; background: #272730; border-radius: 3px; }
-            QSlider::sub-page:horizontal { background: #0284c7; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #ffffff; border: 2px solid #0284c7; width: 14px; margin: -4px 0; border-radius: 7px; }
-            QSlider::handle:horizontal:hover { background: #38bdf8; }
+            /* Samsung One UI Sliders */
+            QSlider::groove:horizontal { 
+                height: 6px; 
+                background: #252536; 
+                border-radius: 3px; 
+            }
+            QSlider::sub-page:horizontal { 
+                background: #2563eb; 
+                border-radius: 3px; 
+            }
+            QSlider::handle:horizontal { 
+                background: #ffffff; 
+                border: 2px solid #2563eb; 
+                width: 16px; 
+                height: 16px; 
+                margin: -5px 0; 
+                border-radius: 8px; 
+            }
+            QSlider::handle:horizontal:hover { 
+                background: #93c5fd; 
+                border-color: #3b82f6; 
+            }
             
+            /* Samsung One UI Inputs */
             QComboBox, QSpinBox, QDoubleSpinBox {
-                background-color: #202026;
-                border: 1px solid #3f3f46;
-                border-radius: 5px;
-                padding: 4px 6px;
-                color: #f4f4f5;
+                background-color: #111118;
+                border: 1px solid #282839;
+                border-radius: 8px;
+                padding: 5px 8px;
+                color: #f4f4f6;
+                font-weight: 500;
             }
             QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover {
-                border-color: #0284c7;
+                border-color: #2563eb;
+            }
+            QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+                border-color: #3b82f6;
+                background-color: #13131c;
             }
             QComboBox::drop-down {
                 border: none;
-                width: 20px;
+                width: 22px;
             }
             
+            /* Samsung One UI Segmented Control TabWidget */
+            QTabWidget {
+                background: transparent;
+            }
             QTabWidget::pane {
-                border: 1px solid #272730;
-                background: #141418;
-                border-radius: 8px;
+                border: none;
+                background: transparent;
+                padding-top: 4px;
+            }
+            QTabBar {
+                background-color: #12121a;
+                border: 1px solid #222230;
+                border-radius: 12px;
+                padding: 3px;
+                qproperty-expanding: true;
             }
             QTabBar::tab {
-                background: #1c1c22;
-                color: #a1a1aa;
-                padding: 8px 14px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                margin-right: 2px;
-                font-weight: 500;
+                background: transparent;
+                color: #8e8e9c;
+                border-radius: 9px;
+                padding: 8px 10px;
+                font-weight: 600;
+                font-size: 12px;
+                border: none;
+                margin: 1px;
             }
             QTabBar::tab:selected {
-                background: #141418;
-                color: #38bdf8;
+                background-color: #2563eb;
+                color: #ffffff;
                 font-weight: bold;
-                border-top: 2px solid #38bdf8;
             }
             QTabBar::tab:hover:!selected {
-                background: #272730;
-                color: #e4e4e7;
+                background-color: #1a1a26;
+                color: #ffffff;
             }
             
+            /* Samsung One UI CheckBoxes */
+            QCheckBox {
+                spacing: 8px;
+                font-weight: 500;
+                color: #e4e4e7;
+                font-size: 12px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border-radius: 5px;
+                border: 1px solid #36364a;
+                background-color: #121218;
+            }
+            QCheckBox::indicator:hover {
+                border-color: #2563eb;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #2563eb;
+                border-color: #3b82f6;
+            }
+            
+            /* Samsung One UI Progress Bar */
             QProgressBar {
-                border: 1px solid #272730;
-                border-radius: 6px;
+                border: 1px solid #262638;
+                border-radius: 8px;
                 text-align: center;
-                background: #18181b;
-                color: #f4f4f5;
-                font-weight: bold;
-                height: 20px;
+                background: #121218;
+                color: #ffffff;
+                font-weight: 700;
+                font-size: 11px;
+                height: 22px;
             }
             QProgressBar::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #059669, stop:1 #10b981);
-                border-radius: 5px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1d4ed8, stop:1 #2563eb);
+                border-radius: 7px;
             }
             
             QSplitter::handle {
-                background-color: #1f1f26;
-                width: 6px;
+                background-color: #181822;
+                width: 5px;
             }
             QSplitter::handle:hover {
-                background-color: #0284c7;
+                background-color: #2563eb;
             }
             
             QScrollArea {
@@ -2806,26 +2850,28 @@ class MainWindow(QMainWindow):
             }
             
             QScrollBar:vertical {
-                background: #141418;
-                width: 8px;
-                border-radius: 4px;
+                background: #0f0f15;
+                width: 7px;
+                border-radius: 3px;
+                margin: 2px 0 2px 0;
             }
             QScrollBar::handle:vertical {
-                background: #3f3f46;
-                border-radius: 4px;
-                min-height: 20px;
+                background: #2a2a3b;
+                border-radius: 3px;
+                min-height: 24px;
             }
             QScrollBar::handle:vertical:hover {
-                background: #71717a;
+                background: #3f3f58;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 height: 0px;
             }
             
             QStatusBar {
-                background-color: #121216;
-                color: #a1a1aa;
-                border-top: 1px solid #272730;
+                background-color: #101016;
+                color: #8e8e9c;
+                border-top: 1px solid #1e1e2b;
+                font-size: 11px;
             }
         """)
 
@@ -2838,7 +2884,10 @@ class MainWindow(QMainWindow):
         if file_path:
             self.video_path_l = file_path
             self.lbl_file_left.setText(os.path.basename(file_path))
-            self.lbl_file_left.setStyleSheet("color: #4cd137; font-weight: bold;")
+            self.lbl_file_left.setStyleSheet("color: #60a5fa; font-weight: 600;")
+            if hasattr(self, 'badge_left'):
+                self.badge_left.setText("🟢 Bereit")
+                self.badge_left.setStyleSheet("background: #064e3b; color: #34d399; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600;")
             self._try_init_engine()
 
     def open_right_video(self):
@@ -2846,17 +2895,26 @@ class MainWindow(QMainWindow):
         if file_path:
             self.video_path_r = file_path
             self.lbl_file_right.setText(os.path.basename(file_path))
-            self.lbl_file_right.setStyleSheet("color: #4cd137; font-weight: bold;")
+            self.lbl_file_right.setStyleSheet("color: #60a5fa; font-weight: 600;")
+            if hasattr(self, 'badge_right'):
+                self.badge_right.setText("🟢 Bereit")
+                self.badge_right.setStyleSheet("background: #064e3b; color: #34d399; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600;")
             self._try_init_engine()
 
     def open_panorama_video(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "32:9 Panorama-Mastervideo öffnen", "", "Video Files (*.mp4 *.mov *.mkv *.avi)")
         if file_path:
             self.panorama_path = file_path
-            self.lbl_file_left.setText(f"🎬 32:9: {os.path.basename(file_path)}")
-            self.lbl_file_left.setStyleSheet("color: #2ecc71; font-weight: bold;")
+            self.lbl_file_left.setText(f"🎬 {os.path.basename(file_path)}")
+            self.lbl_file_left.setStyleSheet("color: #34d399; font-weight: 600;")
             self.lbl_file_right.setText("(1-Video Modus)")
-            self.lbl_file_right.setStyleSheet("color: #888; font-style: italic;")
+            self.lbl_file_right.setStyleSheet("color: #8e8e9c; font-style: italic;")
+            if hasattr(self, 'badge_left'):
+                self.badge_left.setText("🎬 Panorama")
+                self.badge_left.setStyleSheet("background: #064e3b; color: #34d399; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600;")
+            if hasattr(self, 'badge_right'):
+                self.badge_right.setText("—")
+                self.badge_right.setStyleSheet("background: #181824; color: #8e8e9c; border-radius: 6px; padding: 2px 8px; font-size: 11px;")
             try:
                 self.engine.load_panorama_video(file_path)
                 self.update_ui_for_mode(is_panorama=True)
@@ -2907,7 +2965,10 @@ class MainWindow(QMainWindow):
             self.setWindowTitle("MatchTrack-Stitcher | 🎬 32:9 Panorama-Modus ➔ 16:9 Follow-Cam Broadcast")
             self.btn_auto_sync.setEnabled(False)
             self.btn_auto_stitch.setEnabled(False)
-            self.btn_corner_pins_tb.setEnabled(False)
+            if getattr(self, 'btn_corner_pins_tb', None) is not None:
+                self.btn_corner_pins_tb.setEnabled(False)
+            if hasattr(self, 'btn_corner_pins_side') and self.btn_corner_pins_side is not None:
+                self.btn_corner_pins_side.setEnabled(False)
             self.chk_show_seam.setEnabled(False)
             self.chk_show_grid.setEnabled(False)
 
@@ -2925,7 +2986,10 @@ class MainWindow(QMainWindow):
             self.setWindowTitle("MatchTrack-Stitcher | 32:9 & 21:10 Panorama & 16:9 Ball-Follow Broadcast (DJI Action 4)")
             self.btn_auto_sync.setEnabled(True)
             self.btn_auto_stitch.setEnabled(True)
-            self.btn_corner_pins_tb.setEnabled(True)
+            if getattr(self, 'btn_corner_pins_tb', None) is not None:
+                self.btn_corner_pins_tb.setEnabled(True)
+            if hasattr(self, 'btn_corner_pins_side') and self.btn_corner_pins_side is not None:
+                self.btn_corner_pins_side.setEnabled(True)
             self.chk_show_seam.setEnabled(True)
             self.chk_show_grid.setEnabled(True)
 
@@ -3063,6 +3127,10 @@ class MainWindow(QMainWindow):
             self.slider_offset.blockSignals(False)
         self.engine.frame_offset_right = val
         self.refresh_preview()
+
+    def adjust_offset_by(self, delta: int):
+        """Fine-adjust the right camera audio/video frame offset by delta (+/- 1F, +/- 5F)."""
+        self.spin_offset.setValue(self.spin_offset.value() + delta)
 
     def format_timecode(self, frame_idx: int) -> str:
         fps = self.engine.get_fps() if self.engine else 30.0
@@ -3422,7 +3490,7 @@ class MainWindow(QMainWindow):
 
     def on_pick_center_toggled(self, checked: bool):
         """Activates interactive click-to-center mode on the panorama preview."""
-        if hasattr(self, 'btn_pick_center_tb') and self.btn_pick_center_tb.isChecked() != checked:
+        if hasattr(self, 'btn_pick_center_tb') and self.btn_pick_center_tb is not None and self.btn_pick_center_tb.isChecked() != checked:
             self.btn_pick_center_tb.blockSignals(True)
             self.btn_pick_center_tb.setChecked(checked)
             self.btn_pick_center_tb.blockSignals(False)
@@ -3557,7 +3625,7 @@ class MainWindow(QMainWindow):
 
     def on_pitch_roi_toggled(self, checked: bool):
         """Toggles interactive pitch ROI boundary editing mode."""
-        if hasattr(self, 'btn_pitch_roi_tb') and self.btn_pitch_roi_tb.isChecked() != checked:
+        if hasattr(self, 'btn_pitch_roi_tb') and self.btn_pitch_roi_tb is not None and self.btn_pitch_roi_tb.isChecked() != checked:
             self.btn_pitch_roi_tb.blockSignals(True)
             self.btn_pitch_roi_tb.setChecked(checked)
             self.btn_pitch_roi_tb.blockSignals(False)
@@ -3569,9 +3637,9 @@ class MainWindow(QMainWindow):
 
         # Mutually exclusive with other interactive overlay modes
         if checked:
-            if hasattr(self, 'btn_corner_pins_tb') and self.btn_corner_pins_tb.isChecked():
+            if hasattr(self, 'btn_corner_pins_tb') and self.btn_corner_pins_tb is not None and self.btn_corner_pins_tb.isChecked():
                 self.btn_corner_pins_tb.setChecked(False)
-            if hasattr(self, 'btn_pick_center_tb') and self.btn_pick_center_tb.isChecked():
+            if hasattr(self, 'btn_pick_center_tb') and self.btn_pick_center_tb is not None and self.btn_pick_center_tb.isChecked():
                 self.btn_pick_center_tb.setChecked(False)
 
         self.viewport.set_pitch_roi_mode(checked)
@@ -4231,7 +4299,7 @@ class MainWindow(QMainWindow):
         self.viewport.set_frame_opacity(val / 100.0)
 
     def on_corner_pins_toggled(self, checked: bool):
-        if hasattr(self, 'btn_corner_pins_tb') and self.btn_corner_pins_tb.isChecked() != checked:
+        if hasattr(self, 'btn_corner_pins_tb') and self.btn_corner_pins_tb is not None and self.btn_corner_pins_tb.isChecked() != checked:
             self.btn_corner_pins_tb.blockSignals(True)
             self.btn_corner_pins_tb.setChecked(checked)
             self.btn_corner_pins_tb.blockSignals(False)
