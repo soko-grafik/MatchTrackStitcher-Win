@@ -127,6 +127,10 @@ class BroadcastConfig:
     enable_dynamic_zoom: bool = False    # Default FALSE: Pure horizontal left-right pan, NO zoom pumping
     fixed_zoom_factor: float = 1.0       # Fixed zoom level (1.0 = Full height 16:9 framing)
     tracking_mode: str = "hybrid_fusion" # 'hybrid_fusion', 'player_density', 'ball_centric', 'smooth_tactic'
+    ball_weight: float = 0.70            # Weight of soccer ball tracking (0.0 to 1.0)
+    players_weight: float = 0.30         # Weight of player cluster (0.0 to 1.0)
+    enable_zone_damping: bool = True     # Dynamic agility near penalty boxes/goals
+    zone_boost_factor: float = 1.80      # Agility boost in penalty box zones (1.0x to 3.0x)
     min_zoom: float = 1.00               # Wide angle zoom
     max_zoom: float = 1.40               # Max zoom
     current_zoom: float = 1.00           # Current zoom level
@@ -490,24 +494,43 @@ class AIBroadcastTracker:
 
         # 7. Action Center Strategy Fusion
         mode = getattr(self.config, "tracking_mode", "hybrid_fusion")
+        cfg_bw = float(getattr(self.config, "ball_weight", 0.70))
+        cfg_pw = float(getattr(self.config, "players_weight", 0.30))
+
+        # Normalize weights if both are set
+        total_w = cfg_bw + cfg_pw
+        if total_w > 1e-4:
+            norm_bw = cfg_bw / total_w
+            norm_pw = cfg_pw / total_w
+        else:
+            norm_bw, norm_pw = 0.70, 0.30
+
+        # Confidence blending factor: ramp up between 0.10 and 0.30 confidence
+        conf_scale = float(np.clip((self.ball_confidence - 0.10) / 0.20, 0.0, 1.0))
 
         if mode == "player_density":
             # 100% stable player density center
             raw_target_x = player_cx
-        elif mode == "ball_centric" and self.ball_confidence > 0.20:
-            # Ball-centric tracking with gentle anticipation
-            lead = np.clip(ball_vx * self.config.anticipation_lead, -0.06, 0.06)
-            raw_target_x = ball_x * 0.85 + player_cx * 0.15 + lead
+        elif mode == "ball_centric" and self.ball_confidence > 0.15:
+            # Ball-centric tracking with anticipation
+            b_ratio = max(norm_bw, 0.85) * conf_scale
+            p_ratio = 1.0 - b_ratio
+            lead = np.clip(ball_vx * self.config.anticipation_lead, -0.06, 0.06) * conf_scale
+            raw_target_x = ball_x * b_ratio + player_cx * p_ratio + lead
         elif mode == "smooth_tactic":
-            # Broad tactical overview
-            raw_target_x = player_cx * 0.70 + (ball_x if self.ball_confidence > 0.2 else player_cx) * 0.30
-        else: # "hybrid_fusion" (Recommended Default)
-            if self.ball_confidence > 0.25:
-                # 60% Ball + 40% Player Cluster + gentle lead (eliminates sudden ball jumps)
-                lead = np.clip(ball_vx * (self.config.anticipation_lead * 0.8), -0.05, 0.05)
-                raw_target_x = ball_x * 0.60 + player_cx * 0.40 + lead
+            # Broad tactical overview (gentle ball presence)
+            b_ratio = min(norm_bw, 0.30) * conf_scale
+            p_ratio = 1.0 - b_ratio
+            raw_target_x = player_cx * p_ratio + (ball_x if conf_scale > 0.2 else player_cx) * b_ratio
+        else: # "hybrid_fusion" (Recommended Default: Target_x = Ball_x * w_ball + Player_x * w_player)
+            if self.ball_confidence > 0.15:
+                # Effective weighted blend scaled with detection confidence
+                eff_bw = norm_bw * conf_scale
+                eff_pw = 1.0 - eff_bw
+                lead = np.clip(ball_vx * (self.config.anticipation_lead * 0.8), -0.05, 0.05) * conf_scale
+                raw_target_x = ball_x * eff_bw + player_cx * eff_pw + lead
             else:
-                # When ball is not clearly tracked, seamlessly stay centered on the action cluster
+                # Seamless fallback to player cluster when ball is obscured / untracked
                 raw_target_x = player_cx
 
         # 8. Pure Horizontal Tracking (Fixed Zoom & Fixed Vertical Height)
@@ -537,12 +560,26 @@ class AIBroadcastTracker:
         else:
             diff_x = diff_x - np.sign(diff_x) * deadband
 
-        # Responsiveness / spring damping
-        responsiveness = 1.0 - np.clip(self.config.smoothing_factor, 0.70, 0.99)
+        # Base responsiveness / spring damping
+        base_responsiveness = 1.0 - np.clip(self.config.smoothing_factor, 0.70, 0.99)
+        max_speed = max(0.005, self.config.max_pan_speed)
+
+        # Dynamic Zone Damping (Strafraum-Dynamik: schnellere Reaktion in Tornähe)
+        if getattr(self.config, "enable_zone_damping", True):
+            boost = max(1.0, float(getattr(self.config, "zone_boost_factor", 1.80)))
+            # Relative Distanz zur Spielfeld-Mitte (0.5)
+            dist_from_center = abs(target_x - 0.5)
+            # Ramping: 0.0 im Mittelfeld (dist <= 0.15) bis 1.0 im Strafraum (dist >= 0.38)
+            zone_proximity = float(np.clip((dist_from_center - 0.15) / 0.23, 0.0, 1.0))
+            zone_multiplier = 1.0 + (boost - 1.0) * (zone_proximity ** 1.5)
+            responsiveness = float(np.clip(base_responsiveness * zone_multiplier, 0.005, 0.40))
+            max_speed = float(np.clip(max_speed * (1.0 + (boost - 1.0) * 0.45 * zone_proximity), 0.005, 0.16))
+        else:
+            responsiveness = base_responsiveness
+
         desired_vx = diff_x * responsiveness
         
         # Strict maximum pan speed clamp
-        max_speed = max(0.005, self.config.max_pan_speed)
         desired_vx = np.clip(desired_vx, -max_speed, max_speed)
 
         # Smooth velocity integration

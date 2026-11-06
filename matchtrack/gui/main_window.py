@@ -2367,6 +2367,17 @@ class MainWindow(QMainWindow):
         self.combo_ai_model.currentIndexChanged.connect(self.on_autocam_param_changed)
         layout_ac_follow.addWidget(self.combo_ai_model)
 
+        # Action Fusion Weights (Ball vs Players)
+        self.ctrl_ball_weight = LabeledSliderSpinBox("⚽ Ball-Gewichtung (w_ball):", 0.0, 1.0, 0.70, 0.05, "", decimals=2)
+        self.ctrl_ball_weight.setToolTip("Bestimmt den Einfluss der Balltrajektorie auf die Kameraführung (0.70 = 70% Fokus auf den Ball)")
+        self.ctrl_ball_weight.valueChanged.connect(self.on_autocam_param_changed)
+        layout_ac_follow.addWidget(self.ctrl_ball_weight)
+
+        self.ctrl_players_weight = LabeledSliderSpinBox("👥 Spieler-Gewichtung (w_spieler):", 0.0, 1.0, 0.30, 0.05, "", decimals=2)
+        self.ctrl_players_weight.setToolTip("Bestimmt den Einfluss des Spielerschwerpunkts (Vorauseilen bei weiten Pässen)")
+        self.ctrl_players_weight.valueChanged.connect(self.on_autocam_param_changed)
+        layout_ac_follow.addWidget(self.ctrl_players_weight)
+
         # Smart Zoom Group
         grp_zoom = QGroupBox("Kamera-Zoom")
         layout_zoom = QVBoxLayout(grp_zoom)
@@ -2418,6 +2429,19 @@ class MainWindow(QMainWindow):
         self.ctrl_ac_vpos = LabeledSliderSpinBox("Vertikale Ausrichtung (Spielfeld-Zentrum):", 0.35, 0.75, 0.50, 0.02, "", decimals=2)
         self.ctrl_ac_vpos.valueChanged.connect(self.on_autocam_param_changed)
         layout_ac_follow.addWidget(self.ctrl_ac_vpos)
+
+        # Dynamic Zone Damping (Strafraum-Dynamik)
+        self.chk_zone_damping = QCheckBox("🏟️ Zonen-Dämpfung (Höhere Agilität im Strafraum)")
+        self.chk_zone_damping.setChecked(True)
+        self.chk_zone_damping.setStyleSheet("font-weight: 600; color: #38bdf8; margin-top: 4px;")
+        self.chk_zone_damping.setToolTip("Erhöht die Kameraschnelligkeit bei Torschüssen und Strafraumszenen automatisch")
+        self.chk_zone_damping.toggled.connect(self.on_autocam_param_changed)
+        layout_ac_follow.addWidget(self.chk_zone_damping)
+
+        self.ctrl_zone_boost = LabeledSliderSpinBox("⚡ Strafraum-Schub (Agilitäts-Multiplikator):", 1.0, 3.0, 1.80, 0.1, "x", decimals=1)
+        self.ctrl_zone_boost.setToolTip("Beschleunigungsfaktor der Kamera in den beiden Strafräumen (1.8x = 80% agilere Reaktion bei Torgefahr)")
+        self.ctrl_zone_boost.valueChanged.connect(self.on_autocam_param_changed)
+        layout_ac_follow.addWidget(self.ctrl_zone_boost)
 
         grp_scan_speed = QGroupBox("⚡ KI-Berechnungsgeschwindigkeit")
         layout_scan = QVBoxLayout(grp_scan_speed)
@@ -3599,6 +3623,10 @@ class MainWindow(QMainWindow):
     def on_autocam_param_changed(self):
         if hasattr(self, 'combo_ai_model'):
             self.engine.ai_broadcast.config.tracking_mode = self.combo_ai_model.currentData()
+        if hasattr(self, 'ctrl_ball_weight'):
+            self.engine.ai_broadcast.config.ball_weight = self.ctrl_ball_weight.value()
+        if hasattr(self, 'ctrl_players_weight'):
+            self.engine.ai_broadcast.config.players_weight = self.ctrl_players_weight.value()
         if hasattr(self, 'chk_dynamic_zoom'):
             self.engine.ai_broadcast.config.enable_dynamic_zoom = self.chk_dynamic_zoom.isChecked()
         if hasattr(self, 'ctrl_fixed_zoom'):
@@ -3619,6 +3647,12 @@ class MainWindow(QMainWindow):
             self.engine.ai_broadcast.config.max_pan_speed = self.ctrl_ac_speed.value()
         if hasattr(self, 'ctrl_ac_vpos'):
             self.engine.ai_broadcast.config.vertical_center_bias = self.ctrl_ac_vpos.value()
+        if hasattr(self, 'chk_zone_damping'):
+            self.engine.ai_broadcast.config.enable_zone_damping = self.chk_zone_damping.isChecked()
+            if hasattr(self, 'ctrl_zone_boost'):
+                self.ctrl_zone_boost.setVisible(self.chk_zone_damping.isChecked())
+        if hasattr(self, 'ctrl_zone_boost'):
+            self.engine.ai_broadcast.config.zone_boost_factor = self.ctrl_zone_boost.value()
         if hasattr(self, 'ctrl_tactical_margin'):
             self.engine.ai_broadcast.config.tactical_margin = self.ctrl_tactical_margin.value()
         self.refresh_preview()
@@ -3862,6 +3896,8 @@ class MainWindow(QMainWindow):
         autocam_dict = {
             "ai_tracking": ac_cfg.ai_tracking,
             "tracking_mode": self.combo_ai_model.currentData() if hasattr(self, 'combo_ai_model') else ac_cfg.tracking_mode,
+            "ball_weight": self.ctrl_ball_weight.value() if hasattr(self, 'ctrl_ball_weight') else getattr(ac_cfg, 'ball_weight', 0.70),
+            "players_weight": self.ctrl_players_weight.value() if hasattr(self, 'ctrl_players_weight') else getattr(ac_cfg, 'players_weight', 0.30),
             "enable_dynamic_zoom": self.chk_dynamic_zoom.isChecked() if hasattr(self, 'chk_dynamic_zoom') else ac_cfg.enable_dynamic_zoom,
             "fixed_zoom_factor": self.ctrl_fixed_zoom.value() if hasattr(self, 'ctrl_fixed_zoom') else ac_cfg.fixed_zoom_factor,
             "min_zoom": self.ctrl_min_zoom.value() if hasattr(self, 'ctrl_min_zoom') else ac_cfg.min_zoom,
@@ -3872,6 +3908,8 @@ class MainWindow(QMainWindow):
             "deadband_width": self.ctrl_ac_deadband.value() if hasattr(self, 'ctrl_ac_deadband') else ac_cfg.deadband_width,
             "max_pan_speed": self.ctrl_ac_speed.value() if hasattr(self, 'ctrl_ac_speed') else ac_cfg.max_pan_speed,
             "vertical_center_bias": self.ctrl_ac_vpos.value() if hasattr(self, 'ctrl_ac_vpos') else ac_cfg.vertical_center_bias,
+            "enable_zone_damping": self.chk_zone_damping.isChecked() if hasattr(self, 'chk_zone_damping') else getattr(ac_cfg, 'enable_zone_damping', True),
+            "zone_boost_factor": self.ctrl_zone_boost.value() if hasattr(self, 'ctrl_zone_boost') else getattr(ac_cfg, 'zone_boost_factor', 1.80),
             "tactical_margin": self.ctrl_tactical_margin.value() if hasattr(self, 'ctrl_tactical_margin') else getattr(ac_cfg, 'tactical_margin', 0.0),
             "pitch_corners": [[sx.value() / 100.0, sy.value() / 100.0] for sx, sy in self.spin_pitch_corners] if hasattr(self, 'spin_pitch_corners') and len(self.spin_pitch_corners) == 6 else getattr(ac_cfg, 'pitch_corners', [[0.0, 0.05], [0.5, 0.05], [1.0, 0.05], [1.0, 0.95], [0.5, 0.95], [0.0, 0.95]]),
             "scan_step": self.combo_scan_speed.currentData() if hasattr(self, 'combo_scan_speed') else ac_cfg.scan_step,
@@ -4009,6 +4047,14 @@ class MainWindow(QMainWindow):
                 if idx >= 0:
                     self.combo_ai_model.setCurrentIndex(idx)
                     self.engine.ai_broadcast.config.tracking_mode = ac["tracking_mode"]
+
+            if hasattr(self, 'ctrl_ball_weight') and "ball_weight" in ac:
+                self.ctrl_ball_weight.setValue(float(ac["ball_weight"]))
+                self.engine.ai_broadcast.config.ball_weight = float(ac["ball_weight"])
+
+            if hasattr(self, 'ctrl_players_weight') and "players_weight" in ac:
+                self.ctrl_players_weight.setValue(float(ac["players_weight"]))
+                self.engine.ai_broadcast.config.players_weight = float(ac["players_weight"])
             
             if hasattr(self, 'chk_dynamic_zoom') and "enable_dynamic_zoom" in ac:
                 self.chk_dynamic_zoom.setChecked(bool(ac["enable_dynamic_zoom"]))
@@ -4049,6 +4095,14 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'ctrl_ac_vpos') and "vertical_center_bias" in ac:
                 self.ctrl_ac_vpos.setValue(float(ac["vertical_center_bias"]))
                 self.engine.ai_broadcast.config.vertical_center_bias = float(ac["vertical_center_bias"])
+
+            if hasattr(self, 'chk_zone_damping') and "enable_zone_damping" in ac:
+                self.chk_zone_damping.setChecked(bool(ac["enable_zone_damping"]))
+                self.engine.ai_broadcast.config.enable_zone_damping = bool(ac["enable_zone_damping"])
+
+            if hasattr(self, 'ctrl_zone_boost') and "zone_boost_factor" in ac:
+                self.ctrl_zone_boost.setValue(float(ac["zone_boost_factor"]))
+                self.engine.ai_broadcast.config.zone_boost_factor = float(ac["zone_boost_factor"])
 
             if hasattr(self, 'ctrl_tactical_margin') and "tactical_margin" in ac:
                 self.ctrl_tactical_margin.setValue(float(ac["tactical_margin"]))
