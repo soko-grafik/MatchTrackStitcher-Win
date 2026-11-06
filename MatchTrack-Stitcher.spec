@@ -14,7 +14,7 @@ datas = [
     ('dji_action4_1080p_2.json', '.'),
 ]
 
-for pt_model in ['yolo11m_football_player.pt', 'yolo11n_football_ball.pt', 'yolo11n.pt', 'yolov8n.pt']:
+for pt_model in ['yolo11m_football_player.pt', 'yolo11n_football_ball.pt', 'yolo11n.pt', 'yolov8n.pt', 'rtdetr-l.pt', 'yolov8n-pose.pt']:
     if os.path.exists(pt_model):
         datas.append((pt_model, '.'))
 

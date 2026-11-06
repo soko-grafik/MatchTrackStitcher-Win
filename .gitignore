@@ -40,6 +40,10 @@ tests/output/
 *.avi
 *.mkv
 
+# Release scripts & secrets
+publish_release.py
+.github_token*
+
 # Large AI Weights
 rtdetr*.pt
 *pose*.pt

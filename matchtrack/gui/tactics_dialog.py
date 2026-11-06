@@ -343,3 +343,4 @@ class TacticsDashboardDialog(QDialog):
                 QMessageBox.information(self, "JSON Gespeichert", f"Taktik-Daten erfolgreich gespeichert als:\n{file_path}")
             else:
                 QMessageBox.critical(self, "Fehler", "JSON konnte nicht gespeichert werden.")
+

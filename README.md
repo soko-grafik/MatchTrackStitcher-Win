@@ -6,7 +6,7 @@
 
 ### Professioneller 32:9 Fußball-Panorama Stitcher & KI-gestützte 16:9 Broadcast Follow-Cam
 
-[![Release](https://img.shields.io/badge/Release-v1.5.1-blue.svg)](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.1)
+[![Release](https://img.shields.io/badge/Release-v1.5.2-blue.svg)](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.2)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-41CD52.svg?logo=qt&logoColor=white)](https://pypi.org/project/PySide6/)
 [![OpenCV](https://img.shields.io/badge/Computer%20Vision-OpenCV-5C3EE8.svg?logo=opencv&logoColor=white)](https://opencv.org/)
@@ -15,7 +15,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6.svg?logo=windows&logoColor=white)](https://github.com/soko-grafik/matchtrack-stitcher/releases)
 [![License](https://img.shields.io/badge/License-Proprietary-red.svg)](#lizenz)
 
-[**Download Windows Installer (v1.5.1)**](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.1) • [**Dokumentation**](#-workflow-anleitung) • [**CLI Reference**](#-cli-batch-modus) • [**Release Notes**](#-release-notes--changelog)
+[**Download Windows Installer (v1.5.2)**](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.2) • [**Dokumentation**](#-workflow-anleitung) • [**CLI Reference**](#-cli-batch-modus) • [**Release Notes**](#-release-notes--changelog)
 
 </div>
 
@@ -115,7 +115,7 @@ Zusätzlich beinhaltet das System eine **KI-gestützte 16:9 Broadcast Follow-Cam
 
 Für Endanwender und Analysten steht ein vorkompilierter Standalone-Installer zur Verfügung, der sämtliche Abhängigkeiten, FFmpeg und KI-Modelle bündelt:
 
-1. Laden Sie die Datei **`MatchTrack-Stitcher-Setup-v1.5.1.exe`** unter [**Releases**](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.1) herunter.
+1. Laden Sie die Datei **`MatchTrack-Stitcher-Setup-v1.5.2.exe`** unter [**Releases**](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.2) herunter.
 2. Führen Sie die Setup-Datei aus und folgen Sie dem Installationsassistenten.
 3. Starten Sie **MatchTrack Stitcher** bequem über das Startmenü oder die Desktop-Verknüpfung.
 
@@ -307,13 +307,28 @@ Das Skript führt folgende Schritte automatisch aus:
 2. Kompilieren aller Python-Module und GUI-Ressourcen mit **PyInstaller**.
 3. Bündeln von `ffmpeg.exe`, `ffprobe.exe` sowie aller **YOLO-KI-Modelle** (`.pt`).
 4. Generierung des signierfähigen Setup-Installers mit **Inno Setup 6**.
-5. Ausgabe der fertigen Datei in `installer_output/MatchTrack-Stitcher-Setup-v1.5.1.exe`.
+5. Ausgabe der fertigen Datei in `installer_output/MatchTrack-Stitcher-Setup-v1.5.2.exe`.
 
 ---
 
 ## 📝 Release Notes / Changelog
 
-### Version 1.5.1 (Aktuell)
+### Version 1.5.2 (Aktuell)
+- **Metrische Taktik-Analytik & Scouting (SkillCorner & Google DeepMind TacticAI-Prinzip):**
+  - **Spielfeld-Homographie:** Nahtlose Umrechnung der 6-Punkt-Panoramakoordinaten in reale metrische FIFA-Spielfeldmaße ($105\text{ m} \times 68\text{ m}$) via Dual-Quad-Homographie.
+  - **Live km/h Speed Badges:** Echtzeitanzeige der Geschwindigkeit für Spieler (`🔥 XX.X km/h` Sprint, `⚡ XX.X km/h` Lauf) und Ball (`⚽ XX.X km/h`) im Live-Viewport.
+  - **Interaktives Taktik-Dashboard:** Modernes One UI Dashboard mit KPI-Karten (Laufdistanz beider Teams, Ballbesitz %, Raumkontrolle %, Top-Speed), interaktiver 2D Heatmap (Team Blau, Team Rot, Ball, Voronoi-Dominanz) und Sprint-Rangliste.
+  - **Scouting-Exporte:** Druckreife A4-Vektor-PDF-Trainingsberichte (300 DPI via `QPdfWriter`), 1080p Infografiken (PNG) und strukturierte Scouting-JSONs.
+- **Pluggable AI-Backends & FIFA VAR-Abseitslinie:**
+  - Beliebiger Modellwechsel während der Laufzeit: **YOLO11 / v8**, **RF-DETR Transformer** (Real-Time Detection Transformer mit Deformable Attention) und **YOLO-Pose** (17-Keypoint Skelettschätzung).
+  - Virtuelle VAR-Abseitslinie mit automatischer Erkennung des vorletzten Verteidigers, millimetergenauen Sprunggelenks-Keypoints und Live-Badge.
+- **ByteTrack Multi-Object Tracking & 2D Taktik-Radar:**
+  - Robustes Tracking über Verdeckungen hinweg mit automatischer Trikot-Farberkennung (Team Blau, Team Rot, Schiedsrichter).
+  - Interaktives 2D Taktik-Radar Overlay mit Live-Kamera-Sichtfeld (FOV-Sektor), flexiblen Positionen, Skalierung, Transparenz und Einbrennfunktion für den Videoexport.
+- **Follow-Cam V2:**
+  - Feinjustierbare Gewichtungsregler für Ball vs. Spielertraube ($w_{\text{ball}}/w_{\text{spieler}}$) sowie dynamische Zonen-Dämpfung für rasante Strafraumszenen und ruhige Mittelfeldfahrten.
+
+### Version 1.5.1
 - **Samsung One UI Design:** Vollständig überarbeitete, moderne Benutzeroberfläche inspiriert vom One UI Design Kit (Segmented Controls, abgerundete Karten, optimierte Abstände und Typografie, One-UI-Farbakzente).
 - **Bereinigte Navigation & Viewport:** Entfernung redundanter Navigationselemente im Header und Entrümpelung der Viewport-Toolbar.
 - **Mouse-Wheel-Schutz für Sidebar-Regler:** Schieberegler (`WheelFilteredSlider`, `WheelFilteredSpinBox`) reagieren nicht mehr versehentlich auf das Scrollrad beim vertikalen Durchscrollen der Seitenleiste.

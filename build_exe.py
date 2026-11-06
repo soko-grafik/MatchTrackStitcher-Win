@@ -94,7 +94,7 @@ def build():
             print("[OK] Bundled C:\\ffmpeg\\bin\\ffprobe.exe into app folder")
 
     # Ensure all AI models are in app folder
-    for pt_model in ["yolo11m_football_player.pt", "yolo11n_football_ball.pt", "yolo11n.pt", "yolov8n.pt"]:
+    for pt_model in ["yolo11m_football_player.pt", "yolo11n_football_ball.pt", "yolo11n.pt", "yolov8n.pt", "rtdetr-l.pt", "yolov8n-pose.pt"]:
         model_src = os.path.join(root_dir, pt_model)
         model_target = os.path.join(dist_app, pt_model)
         if os.path.exists(model_src) and not os.path.exists(model_target):

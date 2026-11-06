@@ -886,3 +886,4 @@ class TacticsReportExporter:
         painter.setPen(team_col)
         painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
         painter.drawText(tag_rect, Qt.AlignCenter, title)
+
