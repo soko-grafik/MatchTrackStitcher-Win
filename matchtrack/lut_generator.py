@@ -241,6 +241,11 @@ def generate_remap_luts(rig: RigConfiguration, out_width: int, out_height: int) 
     y_center = out_height * 0.5 + rig.vertical_crop_offset * (out_height * 0.35)
     h_heights = (grid_y - y_center) / f_pano_v
 
+    # Apply field curvature compensation to straighten ground lines that bend due to downward camera pitch
+    curv = float(getattr(rig, 'field_curvature_correction', 0.0))
+    if abs(curv) > 1e-4:
+        h_heights = h_heights + curv * (1.0 - np.cos(lambda_angles))
+
     if rig.projection_type == "cylindrical":
         Xg = np.sin(lambda_angles)
         Yg = h_heights

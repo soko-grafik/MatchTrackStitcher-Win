@@ -130,6 +130,7 @@ class RigConfiguration:
     # Panorama projection settings
     pano_hfov: float = 145.0              # Horizontal field of view of output 32:9 panorama (in degrees)
     projection_type: str = "cylindrical"  # 'cylindrical', 'pannini', or 'rectilinear'
+    field_curvature_correction: float = 0.0 # Field line curvature compensation (-0.60 to +0.60, levels downward V-sag)
     
     # Overlap blending & Auto-Crop parameters
     blend_width_deg: float = 8.0          # Angular width of seam transition (degrees)
@@ -159,6 +160,7 @@ class RigConfiguration:
             "global_yaw_center": self.global_yaw_center,
             "pano_hfov": self.pano_hfov,
             "projection_type": self.projection_type,
+            "field_curvature_correction": self.field_curvature_correction,
             "blend_width_deg": self.blend_width_deg,
             "vertical_crop_offset": self.vertical_crop_offset,
             "horizontal_squeeze": self.horizontal_squeeze,
@@ -184,6 +186,7 @@ class RigConfiguration:
             global_yaw_center=data.get("global_yaw_center", 0.0),
             pano_hfov=data.get("pano_hfov", 145.0),
             projection_type=data.get("projection_type", "cylindrical"),
+            field_curvature_correction=float(data.get("field_curvature_correction", 0.0)),
             blend_width_deg=data.get("blend_width_deg", 8.0),
             vertical_crop_offset=data.get("vertical_crop_offset", 0.12),
             horizontal_squeeze=data.get("horizontal_squeeze", 1.0),

@@ -1454,6 +1454,49 @@ class MainWindow(QMainWindow):
 
         top_layout.addStretch()
 
+        # Step Workflow Navigation Bar (Always 100% visible, centered in top bar)
+        self.nav_step_btns = []
+        step_items = [
+            ("📁 1. Medien & Sync", 0),
+            ("🎯 2. Stitching & Rig", 1),
+            ("📐 3. Taktik & AutoCam", 2),
+            ("🚀 4. Export", 3)
+        ]
+        for label, idx in step_items:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #1c1c26;
+                    border: 1px solid #323244;
+                    border-radius: 6px;
+                    padding: 6px 14px;
+                    font-weight: 600;
+                    font-size: 12px;
+                    color: #a1a1aa;
+                }
+                QPushButton:hover {
+                    background-color: #272738;
+                    color: #ffffff;
+                    border-color: #4f4f66;
+                }
+                QPushButton:checked {
+                    background-color: #0284c7;
+                    border-color: #38bdf8;
+                    color: #ffffff;
+                    font-weight: bold;
+                }
+            """)
+            btn.clicked.connect(lambda checked=False, i=idx: self.switch_to_step(i))
+            top_layout.addWidget(btn)
+            self.nav_step_btns.append(btn)
+
+        if self.nav_step_btns:
+            self.nav_step_btns[0].setChecked(True)
+
+        top_layout.addStretch()
+
         # Profile / Settings Management Buttons
         self.btn_load_prof_tb = QPushButton("📁 Profil")
         self.btn_load_prof_tb.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; font-size: 11px; padding: 5px 10px; border-radius: 5px; color: #94a3b8;")
@@ -1572,6 +1615,32 @@ class MainWindow(QMainWindow):
         self.btn_pitch_roi_tb.setToolTip("Aktiviert die 6 interaktiven Ziehpunkte zum Entzerren des Videos")
         self.btn_pitch_roi_tb.toggled.connect(self.on_pitch_roi_toggled)
         vp_tool_bar.addWidget(self.btn_pitch_roi_tb)
+
+        self.btn_toggle_tactical_view = QPushButton("📐 16:9 Entzerrt")
+        self.btn_toggle_tactical_view.setCheckable(True)
+        self.btn_toggle_tactical_view.setCursor(Qt.PointingHandCursor)
+        self.btn_toggle_tactical_view.setStyleSheet("""
+            QPushButton {
+                background-color: #064e3b;
+                color: #6ee7b7;
+                border: 1px solid #047857;
+                font-weight: bold;
+                padding: 4px 10px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #047857;
+                color: white;
+            }
+            QPushButton:checked {
+                background-color: #10b981;
+                border-color: #34d399;
+                color: white;
+            }
+        """)
+        self.btn_toggle_tactical_view.setToolTip("Schnellansicht: Schaltet zwischen 32:9 Panorama und dem entzerrten 16:9 Taktik-Spielfeld um")
+        self.btn_toggle_tactical_view.toggled.connect(self.toggle_tactical_view)
+        vp_tool_bar.addWidget(self.btn_toggle_tactical_view)
 
         self.btn_corner_pins_tb = QPushButton("📐 4 Ecken")
         self.btn_corner_pins_tb.setCheckable(True)
@@ -1718,8 +1787,10 @@ class MainWindow(QMainWindow):
         # RIGHT PANE: Clean 4-Step Control Panel (Accordion Style)
         # =========================================================================
         self.right_pane = QTabWidget()
-        self.right_pane.setMinimumWidth(410)
-        self.right_pane.setMaximumWidth(490)
+        self.right_pane.setMinimumWidth(380)
+        self.right_pane.tabBar().setExpanding(True)
+        self.right_pane.setDocumentMode(True)
+        self.right_pane.currentChanged.connect(self._on_tab_changed)
 
         # -------------------------------------------------------------------------
         # TAB 1: 📁 Medien & Sync
@@ -1824,7 +1895,7 @@ class MainWindow(QMainWindow):
         layout_m.addStretch()
         scroll_m.setWidget(widget_m)
         layout_tab_m.addWidget(scroll_m)
-        self.right_pane.addTab(self.tab_media, "📁 1. Medien & Sync")
+        self.right_pane.addTab(self.tab_media, "📁 1. Medien")
 
         # -------------------------------------------------------------------------
         # TAB 2: 🎯 Stitching & Rig
@@ -1866,6 +1937,18 @@ class MainWindow(QMainWindow):
         self.ctrl_cam_fov = LabeledSliderSpinBox("Objektiv-Blickwinkel (HFOV / Brennweite):", 60.0, 140.0, 92.0, 0.2, "°")
         self.ctrl_cam_fov.valueChanged.connect(self.on_cam_fov_changed)
         layout_preset.addWidget(self.ctrl_cam_fov)
+
+        row_proj = QHBoxLayout()
+        lbl_proj = QLabel("Projektions-Typ:")
+        lbl_proj.setStyleSheet("font-weight: 500; color: #ddd; font-size: 11px;")
+        self.combo_projection = NoWheelComboBox()
+        self.combo_projection.addItem("🌟 Zylindrisch (Standard Panorama)", "cylindrical")
+        self.combo_projection.addItem("📐 Pannini (Begradigt Linien & Perspektive)", "pannini")
+        self.combo_projection.addItem("📏 Rektilinear (100% Gerade)", "rectilinear")
+        self.combo_projection.currentIndexChanged.connect(self.on_projection_changed)
+        row_proj.addWidget(lbl_proj)
+        row_proj.addWidget(self.combo_projection, 1)
+        layout_preset.addLayout(row_proj)
         scroll_layout.addWidget(grp_preset)
 
         # Rig Angles
@@ -1903,9 +1986,18 @@ class MainWindow(QMainWindow):
 
         scroll_layout.addWidget(grp_rig)
 
-        # Horizon Leveling & LIR Auto-Crop Group
-        grp_level = QGroupBox("🌅 Horizont-Begradigung & LIR Rand-Entfernung")
+        # Horizon Leveling & Field Curvature Group
+        grp_level = QGroupBox("🌅 Spielfeld- & Horizont-Begradigung")
         layout_level = QVBoxLayout(grp_level)
+
+        self.ctrl_curvature = LabeledSliderSpinBox("Spielfeld-Linien Begradigung (Curvature):", -0.60, 0.60, 0.0, 0.01, "", decimals=2)
+        self.ctrl_curvature.setToolTip("Begradigt den V-förmigen Durchhang der Spielfeldlinien bei nach unten geneigten Kameras und zieht die Seitenlinien plan.")
+        self.ctrl_curvature.valueChanged.connect(self.on_curvature_changed)
+        layout_level.addWidget(self.ctrl_curvature)
+
+        self.ctrl_global_pitch = LabeledSliderSpinBox("Horizont-Ausgleich (+15° Begradigung):", 0.0, 45.0, 15.0, 0.2, "°")
+        self.ctrl_global_pitch.valueChanged.connect(self.on_rig_param_changed)
+        layout_level.addWidget(self.ctrl_global_pitch)
 
         self.chk_auto_crop = QCheckBox("✅ LIR Auto-Crop (Schwarze Ränder/Bögen entfernen)")
         self.chk_auto_crop.setChecked(True)
@@ -1916,10 +2008,6 @@ class MainWindow(QMainWindow):
         self.ctrl_safety_margin = LabeledSliderSpinBox("LIR Sicherheitsrand (Puffer):", 0.0, 5.0, 0.5, 0.1, "%", decimals=1)
         self.ctrl_safety_margin.valueChanged.connect(self.on_safety_margin_changed)
         layout_level.addWidget(self.ctrl_safety_margin)
-
-        self.ctrl_global_pitch = LabeledSliderSpinBox("Horizont-Ausgleich (+15° Begradigung):", 0.0, 45.0, 15.0, 0.2, "°")
-        self.ctrl_global_pitch.valueChanged.connect(self.on_rig_param_changed)
-        layout_level.addWidget(self.ctrl_global_pitch)
 
         self.ctrl_blend_width = LabeledSliderSpinBox("Nahtstellen-Übergangsbreite (Blending):", 1.0, 30.0, 8.0, 0.5, "°")
         self.ctrl_blend_width.valueChanged.connect(self.on_rig_param_changed)
@@ -2076,6 +2164,77 @@ class MainWindow(QMainWindow):
 
         scroll_layout.addWidget(grp_corner_pin)
 
+        # 32:9 Panorama Zentrierung & Bildausschnitt Group
+        grp_pitch_align = QGroupBox("🏟️ 32:9 Panorama Zentrierung & Bildausschnitt")
+        layout_pitch = QVBoxLayout(grp_pitch_align)
+
+        self.btn_pick_center_calib = QPushButton("📍 Mittellinie im Bild anklicken (Sofort-Zentrierung)")
+        self.btn_pick_center_calib.setCheckable(True)
+        self.btn_pick_center_calib.setStyleSheet("background-color: #0891b2; font-weight: bold; padding: 7px; color: white;")
+        self.btn_pick_center_calib.toggled.connect(self.on_pick_center_toggled)
+        layout_pitch.addWidget(self.btn_pick_center_calib)
+
+        self.ctrl_h_offset = LabeledSliderSpinBox("Spielfeld-Mitte Versatz (Links ↔ Rechts Pan):", -60.0, 60.0, 0.0, 0.1, "°", decimals=1)
+        self.ctrl_h_offset.valueChanged.connect(self.on_rig_param_changed)
+        layout_pitch.addWidget(self.ctrl_h_offset)
+
+        pan_btn_row = QHBoxLayout()
+        btn_pan_l5 = QPushButton("⏪ -5°")
+        btn_pan_l5.clicked.connect(lambda: self.pan_offset_by(-5.0))
+        btn_pan_l1 = QPushButton("◀ -1°")
+        btn_pan_l1.clicked.connect(lambda: self.pan_offset_by(-1.0))
+        btn_pan_zero = QPushButton("🎯 0°")
+        btn_pan_zero.clicked.connect(lambda: self.ctrl_h_offset.setValue(0.0))
+        btn_pan_r1 = QPushButton("▶ +1°")
+        btn_pan_r1.clicked.connect(lambda: self.pan_offset_by(1.0))
+        btn_pan_r5 = QPushButton("⏩ +5°")
+        btn_pan_r5.clicked.connect(lambda: self.pan_offset_by(5.0))
+        pan_btn_row.addWidget(btn_pan_l5)
+        pan_btn_row.addWidget(btn_pan_l1)
+        pan_btn_row.addWidget(btn_pan_zero)
+        pan_btn_row.addWidget(btn_pan_r1)
+        pan_btn_row.addWidget(btn_pan_r5)
+        layout_pitch.addLayout(pan_btn_row)
+
+        self.ctrl_v_offset = LabeledSliderSpinBox("Vertikaler Bildausschnitt (Shift):", -2.0, 2.0, 0.12, 0.02, "", decimals=2)
+        self.ctrl_v_offset.valueChanged.connect(self.on_rig_param_changed)
+        layout_pitch.addWidget(self.ctrl_v_offset)
+
+        grp_dpad = QGroupBox("🎮 2D Bildausschnitt Feinjustage")
+        layout_dpad = QGridLayout(grp_dpad)
+        layout_dpad.setSpacing(4)
+        btn_dpad_up = QPushButton("⬆️ Oben")
+        btn_dpad_up.clicked.connect(lambda: self.shift_framing(0.0, -0.05))
+        layout_dpad.addWidget(btn_dpad_up, 0, 1)
+        btn_dpad_left = QPushButton("⬅️ Links")
+        btn_dpad_left.clicked.connect(lambda: self.shift_framing(-1.5, 0.0))
+        layout_dpad.addWidget(btn_dpad_left, 1, 0)
+        btn_dpad_center = QPushButton("🎯 Reset")
+        btn_dpad_center.clicked.connect(self.reset_framing)
+        layout_dpad.addWidget(btn_dpad_center, 1, 1)
+        btn_dpad_right = QPushButton("➡️ Rechts")
+        btn_dpad_right.clicked.connect(lambda: self.shift_framing(1.5, 0.0))
+        layout_dpad.addWidget(btn_dpad_right, 1, 2)
+        btn_dpad_down = QPushButton("⬇️ Unten")
+        btn_dpad_down.clicked.connect(lambda: self.shift_framing(0.0, 0.05))
+        layout_dpad.addWidget(btn_dpad_down, 2, 1)
+        layout_pitch.addWidget(grp_dpad)
+
+        self.ctrl_pano_hfov = LabeledSliderSpinBox("32:9 Panorama Weitwinkel (HFOV):", 90.0, 180.0, 145.0, 0.5, "°")
+        self.ctrl_pano_hfov.valueChanged.connect(self.on_rig_param_changed)
+        layout_pitch.addWidget(self.ctrl_pano_hfov)
+
+        self.ctrl_squeeze = LabeledSliderSpinBox("Gleichmäßige Breiten-Stauchung:", 0.50, 3.00, 1.0, 0.01, "x", decimals=2)
+        self.ctrl_squeeze.valueChanged.connect(self.on_rig_param_changed)
+        layout_pitch.addWidget(self.ctrl_squeeze)
+
+        btn_full_pitch = QPushButton("🏟️ Ganzes Spielfeld + Beide Tore (145° Preset)")
+        btn_full_pitch.setStyleSheet("background-color: #059669; font-weight: bold; padding: 7px; color: white;")
+        btn_full_pitch.clicked.connect(self.apply_full_pitch_preset)
+        layout_pitch.addWidget(btn_full_pitch)
+
+        scroll_layout.addWidget(grp_pitch_align)
+
         # Profiles Management Group
         grp_profiles = QGroupBox("💾 Profile & Standard-Einstellungen")
         layout_prof = QVBoxLayout(grp_profiles)
@@ -2109,7 +2268,7 @@ class MainWindow(QMainWindow):
         scroll_layout.addStretch()
         scroll_area.setWidget(scroll_widget)
         calib_layout.addWidget(scroll_area)
-        self.right_pane.addTab(self.tab_calib, "🎯 2. Stitching & Rig")
+        self.right_pane.addTab(self.tab_calib, "🎯 2. Stitch")
 
         # -------------------------------------------------------------------------
         # TAB 3: 📐 Taktik & AutoCam
@@ -2126,6 +2285,18 @@ class MainWindow(QMainWindow):
         grp_pitch_roi = QGroupBox("📐 16:9 Taktik-Warp (6-Punkte Video-Entzerrung)")
         layout_pitch_roi = QVBoxLayout(grp_pitch_roi)
         layout_pitch_roi.setSpacing(6)
+
+        # Quick View-Switcher buttons
+        row_view_quick = QHBoxLayout()
+        btn_view_pano = QPushButton("🌟 32:9 Panorama")
+        btn_view_pano.setToolTip("Zeigt das vollständige 32:9 Stadion-Panorama")
+        btn_view_pano.clicked.connect(lambda: self.set_view_mode_by_id("32:9"))
+        btn_view_tactical = QPushButton("📐 16:9 Taktik-Warp")
+        btn_view_tactical.setToolTip("Zeigt das entzerrte 16:9 Spielfeld")
+        btn_view_tactical.clicked.connect(lambda: self.set_view_mode_by_id("16:9_tactical"))
+        row_view_quick.addWidget(btn_view_pano)
+        row_view_quick.addWidget(btn_view_tactical)
+        layout_pitch_roi.addLayout(row_view_quick)
 
         lbl_roi_desc = QLabel("Verzerren und passen Sie das Panorama-Video an den 6 Außenpunkten frei an das 16:9 Frame an. Die Mittellinien-Punkte (Wölbung Oben/Unten) begradigen gebogene Seitenlinien.")
         lbl_roi_desc.setStyleSheet("color: #a1a1aa; font-size: 11px;")
@@ -2154,7 +2325,7 @@ class MainWindow(QMainWindow):
             lbl = QLabel(lbl_txt)
             lbl.setStyleSheet(f"font-size: 11px; color: {col}; font-weight: 500; min-width: 150px;")
 
-            spin_x = QDoubleSpinBox()
+            spin_x = NoWheelDoubleSpinBox()
             spin_x.setRange(-20.0, 120.0)
             spin_x.setValue(def_x)
             spin_x.setSingleStep(0.5)
@@ -2163,7 +2334,7 @@ class MainWindow(QMainWindow):
             spin_x.setSuffix("%")
             spin_x.valueChanged.connect(lambda val, i=idx: self.on_pitch_corner_spin_changed(i))
 
-            spin_y = QDoubleSpinBox()
+            spin_y = NoWheelDoubleSpinBox()
             spin_y.setRange(-20.0, 120.0)
             spin_y.setValue(def_y)
             spin_y.setSingleStep(0.5)
@@ -2295,81 +2466,10 @@ class MainWindow(QMainWindow):
 
         scroll_layout_ac.addWidget(grp_ac_follow)
 
-        # 32:9 Pitch Center & Framing Group
-        grp_pitch_align = QGroupBox("🏟️ 32:9 Panorama Zentrierung & Bildausschnitt")
-        layout_pitch = QVBoxLayout(grp_pitch_align)
-
-        self.btn_pick_center_calib = QPushButton("📍 Mittellinie im Bild anklicken (Sofort-Zentrierung)")
-        self.btn_pick_center_calib.setCheckable(True)
-        self.btn_pick_center_calib.setStyleSheet("background-color: #0891b2; font-weight: bold; padding: 7px; color: white;")
-        self.btn_pick_center_calib.toggled.connect(self.on_pick_center_toggled)
-        layout_pitch.addWidget(self.btn_pick_center_calib)
-
-        self.ctrl_h_offset = LabeledSliderSpinBox("Spielfeld-Mitte Versatz (Links ↔ Rechts Pan):", -60.0, 60.0, 0.0, 0.1, "°", decimals=1)
-        self.ctrl_h_offset.valueChanged.connect(self.on_rig_param_changed)
-        layout_pitch.addWidget(self.ctrl_h_offset)
-
-        pan_btn_row = QHBoxLayout()
-        btn_pan_l5 = QPushButton("⏪ -5°")
-        btn_pan_l5.clicked.connect(lambda: self.pan_offset_by(-5.0))
-        btn_pan_l1 = QPushButton("◀ -1°")
-        btn_pan_l1.clicked.connect(lambda: self.pan_offset_by(-1.0))
-        btn_pan_zero = QPushButton("🎯 0°")
-        btn_pan_zero.clicked.connect(lambda: self.ctrl_h_offset.setValue(0.0))
-        btn_pan_r1 = QPushButton("▶ +1°")
-        btn_pan_r1.clicked.connect(lambda: self.pan_offset_by(1.0))
-        btn_pan_r5 = QPushButton("⏩ +5°")
-        btn_pan_r5.clicked.connect(lambda: self.pan_offset_by(5.0))
-        pan_btn_row.addWidget(btn_pan_l5)
-        pan_btn_row.addWidget(btn_pan_l1)
-        pan_btn_row.addWidget(btn_pan_zero)
-        pan_btn_row.addWidget(btn_pan_r1)
-        pan_btn_row.addWidget(btn_pan_r5)
-        layout_pitch.addLayout(pan_btn_row)
-
-        self.ctrl_v_offset = LabeledSliderSpinBox("Vertikaler Bildausschnitt (Shift):", -2.0, 2.0, 0.12, 0.02, "", decimals=2)
-        self.ctrl_v_offset.valueChanged.connect(self.on_rig_param_changed)
-        layout_pitch.addWidget(self.ctrl_v_offset)
-
-        grp_dpad = QGroupBox("🎮 2D Bildausschnitt Feinjustage")
-        layout_dpad = QGridLayout(grp_dpad)
-        layout_dpad.setSpacing(4)
-        btn_dpad_up = QPushButton("⬆️ Oben")
-        btn_dpad_up.clicked.connect(lambda: self.shift_framing(0.0, -0.05))
-        layout_dpad.addWidget(btn_dpad_up, 0, 1)
-        btn_dpad_left = QPushButton("⬅️ Links")
-        btn_dpad_left.clicked.connect(lambda: self.shift_framing(-1.5, 0.0))
-        layout_dpad.addWidget(btn_dpad_left, 1, 0)
-        btn_dpad_center = QPushButton("🎯 Reset")
-        btn_dpad_center.clicked.connect(self.reset_framing)
-        layout_dpad.addWidget(btn_dpad_center, 1, 1)
-        btn_dpad_right = QPushButton("➡️ Rechts")
-        btn_dpad_right.clicked.connect(lambda: self.shift_framing(1.5, 0.0))
-        layout_dpad.addWidget(btn_dpad_right, 1, 2)
-        btn_dpad_down = QPushButton("⬇️ Unten")
-        btn_dpad_down.clicked.connect(lambda: self.shift_framing(0.0, 0.05))
-        layout_dpad.addWidget(btn_dpad_down, 2, 1)
-        layout_pitch.addWidget(grp_dpad)
-
-        self.ctrl_pano_hfov = LabeledSliderSpinBox("32:9 Panorama Weitwinkel (HFOV):", 90.0, 180.0, 145.0, 0.5, "°")
-        self.ctrl_pano_hfov.valueChanged.connect(self.on_rig_param_changed)
-        layout_pitch.addWidget(self.ctrl_pano_hfov)
-
-        self.ctrl_squeeze = LabeledSliderSpinBox("Gleichmäßige Breiten-Stauchung:", 0.50, 3.00, 1.0, 0.01, "x", decimals=2)
-        self.ctrl_squeeze.valueChanged.connect(self.on_rig_param_changed)
-        layout_pitch.addWidget(self.ctrl_squeeze)
-
-        btn_full_pitch = QPushButton("🏟️ Ganzes Spielfeld + Beide Tore (145° Preset)")
-        btn_full_pitch.setStyleSheet("background-color: #059669; font-weight: bold; padding: 7px; color: white;")
-        btn_full_pitch.clicked.connect(self.apply_full_pitch_preset)
-        layout_pitch.addWidget(btn_full_pitch)
-
-        scroll_layout_ac.addWidget(grp_pitch_align)
-
         scroll_layout_ac.addStretch()
         scroll_area_ac.setWidget(scroll_widget_ac)
         autocam_layout.addWidget(scroll_area_ac)
-        self.right_pane.addTab(self.tab_autocam, "📐 3. Taktik & AutoCam")
+        self.right_pane.addTab(self.tab_autocam, "📐 3. Taktik")
 
         # -------------------------------------------------------------------------
         # TAB 4: 🚀 Export
@@ -3137,9 +3237,48 @@ class MainWindow(QMainWindow):
         self.engine.autocam.config.follow_ball = checked
         self.refresh_preview()
 
+    def switch_to_step(self, index: int):
+        """Switches the right sidebar tab to the designated workflow step and synchronizes step navigation."""
+        if hasattr(self, 'right_pane') and 0 <= index < self.right_pane.count():
+            self.right_pane.setCurrentIndex(index)
+        self._sync_nav_step_buttons(index)
+
+    def _on_tab_changed(self, index: int):
+        """Handles sidebar tab switching and updates top step navigation pills."""
+        self._sync_nav_step_buttons(index)
+
+    def _sync_nav_step_buttons(self, active_index: int):
+        """Synchronizes top bar step buttons with the active tab index."""
+        if not hasattr(self, 'nav_step_btns'):
+            return
+        for i, btn in enumerate(self.nav_step_btns):
+            btn.blockSignals(True)
+            btn.setChecked(i == active_index)
+            btn.blockSignals(False)
+
+    def set_view_mode_by_id(self, mode_id: str):
+        """Switches the viewport presentation mode by identifier (e.g. '32:9', '16:9_tactical', '16:9')."""
+        if not hasattr(self, 'combo_view_mode'):
+            return
+        idx = self.combo_view_mode.findData(mode_id)
+        if idx >= 0:
+            if self.combo_view_mode.currentIndex() != idx:
+                self.combo_view_mode.setCurrentIndex(idx)
+            else:
+                self.on_view_mode_changed()
+
+    def toggle_tactical_view(self, checked: bool):
+        """Quick 1-click toggle between 32:9 panorama overview and rectified 16:9 tactical field view."""
+        target_mode = "16:9_tactical" if checked else "32:9"
+        self.set_view_mode_by_id(target_mode)
+
     def on_view_mode_changed(self):
         mode = self.combo_view_mode.currentData()
         self.viewport.view_mode = mode
+        if hasattr(self, 'btn_toggle_tactical_view') and self.btn_toggle_tactical_view is not None:
+            self.btn_toggle_tactical_view.blockSignals(True)
+            self.btn_toggle_tactical_view.setChecked(mode == "16:9_tactical")
+            self.btn_toggle_tactical_view.blockSignals(False)
         if mode == "16:9_tactical":
             self.status_bar.showMessage("📐 16:9 Taktik-Warp aktiv: Ziehen Sie die 4 Ecken & 2 Mittellinien-Punkte direkt im Bild, um das Video live zu verzerren!")
         self.refresh_preview()
@@ -3209,6 +3348,21 @@ class MainWindow(QMainWindow):
             self.engine.invalidate_luts()
             self.refresh_preview()
 
+    def on_curvature_changed(self, val: float):
+        """Adjusts the field line curvature compensation to straighten ground lines."""
+        self.rig.field_curvature_correction = float(val)
+        self.engine.invalidate_luts()
+        self.trigger_smooth_preview()
+
+    def on_projection_changed(self, idx: int):
+        """Switches panorama projection between cylindrical, pannini, and rectilinear."""
+        if hasattr(self, 'combo_projection'):
+            proj = self.combo_projection.currentData()
+            if proj:
+                self.rig.projection_type = proj
+                self.engine.invalidate_luts()
+                self.trigger_smooth_preview()
+
     def on_rig_param_changed(self):
         self.rig.left_pose.pitch = self.ctrl_cam_pitch.value()
         self.rig.right_pose.pitch = self.ctrl_cam_pitch.value()
@@ -3221,6 +3375,12 @@ class MainWindow(QMainWindow):
         self.rig.vertical_crop_offset = self.ctrl_v_offset.value()
         self.rig.horizontal_squeeze = self.ctrl_squeeze.value()
         self.rig.blend_width_deg = self.ctrl_blend_width.value()
+        if hasattr(self, 'ctrl_curvature'):
+            self.rig.field_curvature_correction = self.ctrl_curvature.value()
+        if hasattr(self, 'combo_projection'):
+            proj = self.combo_projection.currentData()
+            if proj:
+                self.rig.projection_type = proj
 
         self.engine.invalidate_luts()
         self.trigger_smooth_preview()
@@ -3675,6 +3835,19 @@ class MainWindow(QMainWindow):
             self.ctrl_cam_fov.setValue(self.rig.left_camera.hfov_deg)
             self.ctrl_safety_margin.setValue(self.rig.lir_safety_margin * 100.0)
             self.chk_auto_crop.setChecked(self.rig.auto_crop_lir)
+
+            if hasattr(self, 'ctrl_curvature'):
+                self.ctrl_curvature.blockSignals(True)
+                self.ctrl_curvature.setValue(getattr(self.rig, 'field_curvature_correction', 0.0))
+                self.ctrl_curvature.blockSignals(False)
+
+            if hasattr(self, 'combo_projection'):
+                self.combo_projection.blockSignals(True)
+                proj = getattr(self.rig, 'projection_type', 'cylindrical')
+                idx = self.combo_projection.findData(proj)
+                if idx >= 0:
+                    self.combo_projection.setCurrentIndex(idx)
+                self.combo_projection.blockSignals(False)
 
             for ctrl in [
                 self.ctrl_left_yaw, self.ctrl_right_yaw, self.ctrl_master_yaw,
