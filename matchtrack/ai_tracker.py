@@ -5,6 +5,7 @@ Delivers broadcast-quality pure horizontal camera panning (Left-Right Follow Cam
 from dataclasses import dataclass, field
 import os
 import time
+import math
 import numpy as np
 import cv2
 from typing import Tuple, Optional, List, Dict, Any, Callable
@@ -19,6 +20,14 @@ from .ai_detector import (
     OffsideAnalyzer,
     SKELETON_CONNECTIONS
 )
+from .tactics_metrics import (
+    TacticsMetricsEngine,
+    TacticsReportExporter,
+    MatchTacticsSummary
+)
+from .logger import get_logger
+
+logger = get_logger("ai_tracker")
 
 try:
     import torch
@@ -182,6 +191,10 @@ class BroadcastConfig:
     enable_offside_line: bool = True     # Automatic VAR Virtual Offside Line
     enable_skeletons: bool = False       # Display player 17-keypoint skeletons & body orientation
 
+    # Phase D: Metric Analytics & Scouting (SkillCorner & TacticAI)
+    enable_speed_badges: bool = False    # Display player/ball real-time speed in km/h
+    enable_tactical_heatmap: bool = False # Display tactical density heatmap on radar/canvas
+
 
 class AIBroadcastTracker:
     """
@@ -229,6 +242,7 @@ class AIBroadcastTracker:
         self.detector_backend: Optional[BaseDetectorBackend] = None
         self.current_detections: List[DetectionBox] = []
         self._current_offside_line: Optional[Tuple[float, int, str]] = None
+        self.tactics_engine = TacticsMetricsEngine(self.config.pitch_corners)
 
         # AI Models Legacy
         self.model: Optional[Any] = None
@@ -302,6 +316,29 @@ class AIBroadcastTracker:
         self.prev_gray = None
         self.precomputed_trajectory.clear()
 
+    def set_pitch_corners(self, corners: List[List[float]]):
+        """Updates pitch polygon corners in both config and metric homography."""
+        self.config.pitch_corners = corners
+        if hasattr(self, 'tactics_engine') and self.tactics_engine is not None:
+            self.tactics_engine.set_pitch_corners(corners)
+
+    def get_tactics_summary(self) -> MatchTacticsSummary:
+        """Returns comprehensive tactical match metrics and heatmaps."""
+        return self.tactics_engine.get_summary()
+
+    def get_player_speed(self, track_id: int) -> float:
+        """Returns speed in km/h for given player track ID."""
+        return self.tactics_engine.get_player_speed(track_id)
+
+    def get_ball_speed(self) -> float:
+        """Returns instantaneous ball speed in km/h."""
+        return self.tactics_engine.get_ball_speed()
+
+    def reset_tactics(self):
+        """Resets accumulated tactical statistics."""
+        if hasattr(self, 'tactics_engine') and self.tactics_engine is not None:
+            self.tactics_engine.reset()
+
     def _compute_player_density_centroid(self, player_positions: List[Tuple[float, float]]) -> float:
         """
         Computes Kernel Density Estimation (KDE) weighted center of the players.
@@ -340,7 +377,7 @@ class AIBroadcastTracker:
 
         return float(density_centroid)
 
-    def detect_action(self, pano_frame_bgr: np.ndarray) -> Tuple[float, float, float, bool, Optional[Tuple[int, int]]]:
+    def detect_action(self, pano_frame_bgr: np.ndarray, frame_index: Optional[int] = None) -> Tuple[float, float, float, bool, Optional[Tuple[int, int]]]:
         """
         Runs AI Action Detection on the stitched panorama.
         Calculates:
@@ -350,6 +387,8 @@ class AIBroadcastTracker:
         Returns: (target_x, target_y, target_zoom, is_ball_found, (ball_px_x, ball_px_y))
         """
         h, w = pano_frame_bgr.shape[:2]
+        f_idx = frame_index if frame_index is not None else self.frame_counter
+        self.frame_counter += 1
         
         # 1. Kalman Ball Prediction
         pred_bx, pred_by = self.kalman.predict(dt=1.0)
@@ -611,6 +650,28 @@ class AIBroadcastTracker:
         self.target_x = self.target_x * 0.50 + raw_target_x * 0.50
         self.target_y = self.config.vertical_center_bias
         self.target_zoom = desired_zoom
+
+        # 9. Update Real-Time Tactical Metrics (SkillCorner & TacticAI Engine)
+        if hasattr(self, 'tactics_engine') and self.tactics_engine is not None:
+            try:
+                players_tactics = [(cx, cy, tid, trk_id) for (trk_id, cx, cy, _, _, tid) in active_tracks]
+                b_norm = (verified_ball[0], verified_ball[1]) if (ball_found and verified_ball is not None) else None
+                self.tactics_engine.update_frame(players_tactics, b_norm, f_idx, fps=30.0)
+
+                # Match velocities and track IDs to current_detections
+                for det in self.current_detections:
+                    best_d = 0.08
+                    best_id = None
+                    for (trk_id, cx, cy, _, _, tid) in active_tracks:
+                        d = math.hypot(det.center[0] - cx, det.center[1] - cy)
+                        if d < best_d:
+                            best_d = d
+                            best_id = trk_id
+                    if best_id is not None:
+                        det.track_id = best_id
+                        det.speed_kmh = round(self.tactics_engine.get_player_speed(best_id), 1)
+            except Exception as e:
+                logger.warning(f"Fehler bei Taktik-Metrik-Berechnung: {e}")
 
         return self.target_x, self.target_y, self.target_zoom, ball_found, ball_px
 

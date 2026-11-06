@@ -56,6 +56,8 @@ class DetectionBox:
     team_id: int = 0                         # 0 = Team A (blue), 1 = Team B (red), 2 = Referee
     keypoints: Optional[np.ndarray] = None   # Shape (17, 3): [norm_x, norm_y, conf]
     heading_deg: Optional[float] = None      # Estimated body orientation in degrees (0 = right, 90 = down, etc.)
+    track_id: Optional[int] = None           # Continuous Multi-Object Tracking ID
+    speed_kmh: Optional[float] = None        # Metric speed in km/h from TacticsMetricsEngine
 
     @property
     def center(self) -> Tuple[float, float]:
@@ -568,3 +570,4 @@ class OffsideAnalyzer:
             offside_x = float(get_effective_min_x(second_last))
             team_str = "Team Rot" if defending_team == 1 else "Team Blau"
             return (offside_x, defending_team, f"🚩 Abseitslinie ({team_str})")
+

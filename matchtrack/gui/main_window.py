@@ -39,6 +39,7 @@ from ..radar_minimap import SoccerRadarRenderer
 from ..ai_detector import SKELETON_CONNECTIONS
 from ..logger import get_logger, get_gui_handler, GuiLogRecord, setup_logging, install_crash_handlers
 from ..paths import get_log_file_path, get_default_settings_path, get_resource_path
+from .tactics_dialog import TacticsDashboardDialog
 
 logger = get_logger("gui")
 
@@ -518,8 +519,10 @@ class InteractivePanoramaViewport(QWidget):
         # Tactical VAR Offside Line & Player Skeletons
         self.show_offside_line = True
         self.show_skeletons = False
+        self.show_speed = False
         self.current_offside_line: Optional[Tuple[float, int, str]] = None
         self.current_detections: List[Any] = []
+        self.ball_speed_kmh: Optional[float] = None
         
         # Semi-transparent 32:9 Frame Overlay
         self.show_transparent_frame = True
@@ -652,6 +655,11 @@ class InteractivePanoramaViewport(QWidget):
         self.show_skeletons = enabled
         self.update()
 
+    def set_speed_badges_enabled(self, enabled: bool):
+        """Toggles player and ball real-time metric speed badges."""
+        self.show_speed = enabled
+        self.update()
+
     def set_frame(self, 
                   frame_bgr: np.ndarray, 
                   autocam_box: Optional[Tuple[int, int, int, int]] = None, 
@@ -661,14 +669,16 @@ class InteractivePanoramaViewport(QWidget):
                   ball_norm: Optional[Tuple[float, float]] = None,
                   cam_span: Optional[Tuple[float, float]] = None,
                   offside_line: Optional[Tuple[float, int, str]] = None,
-                  detections: Optional[List[Any]] = None):
-        """Updates the displayed frame, broadcast box, ball reticle, 2D tactical radar, offside line, and detections."""
+                  detections: Optional[List[Any]] = None,
+                  ball_speed_kmh: Optional[float] = None):
+        """Updates the displayed frame, broadcast box, ball reticle, 2D tactical radar, offside line, detections, and speeds."""
         self.current_frame_bgr = frame_bgr
         self.autocam_box = autocam_box
         self.ball_px = ball_px
         self.dynamic_zoom = dynamic_zoom
         self.current_offside_line = offside_line
         self.current_detections = detections if detections is not None else []
+        self.ball_speed_kmh = ball_speed_kmh
 
         if players is not None:
             self.radar_players = players
@@ -973,7 +983,10 @@ class InteractivePanoramaViewport(QWidget):
 
                 painter.setPen(QColor(46, 204, 113))
                 painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
-                painter.drawText(int(screen_bx + 16), int(screen_by - 6), "⚽ Ball")
+                ball_txt = "⚽ Ball"
+                if self.show_speed and getattr(self, 'ball_speed_kmh', None) is not None and self.ball_speed_kmh > 4.0:
+                    ball_txt = f"⚽ {self.ball_speed_kmh:.1f} km/h"
+                painter.drawText(int(screen_bx + 16), int(screen_by - 6), ball_txt)
 
             # 3b. Player Skeletons & Extremities (YOLO-Pose / Tactical Analysis)
             if self.show_skeletons and self.current_detections:
@@ -1038,6 +1051,27 @@ class InteractivePanoramaViewport(QWidget):
                     painter.drawRect(badge_rect)
                     painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
                     painter.drawText(badge_rect, Qt.AlignCenter, off_label)
+
+            # 3d. Real-Time Player Metric Speed Badges (SkillCorner / TacticAI)
+            if self.show_speed and self.current_detections:
+                for det in self.current_detections:
+                    spd = getattr(det, 'speed_kmh', None)
+                    if spd is not None and spd > 1.5:
+                        cx = target_rect.left() + det.center[0] * target_rect.width()
+                        head_y = target_rect.top() + det.bbox[1] * target_rect.height() - 15.0
+                        
+                        is_sprint = (spd >= 25.2)
+                        badge_txt = f"🔥 {spd:.1f} km/h" if is_sprint else f"⚡ {spd:.1f} km/h"
+                        bw = 78.0 if is_sprint else 68.0
+                        bh = 17.0
+                        rect_badge = QRectF(cx - bw * 0.5, head_y, bw, bh)
+                        
+                        bg_col = QColor(185, 28, 28, 220) if is_sprint else QColor(15, 23, 42, 210)
+                        painter.fillRect(rect_badge, bg_col)
+                        painter.setPen(QColor(239, 68, 68) if is_sprint else QColor(56, 189, 248))
+                        painter.drawRect(rect_badge)
+                        painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
+                        painter.drawText(rect_badge, Qt.AlignCenter, badge_txt)
 
         # 4. Photoshop-style Corner Pinning Handles & Wireframes
         if self.corner_pin_mode:
@@ -1721,6 +1755,13 @@ class MainWindow(QMainWindow):
         act_skeletons = QWidgetAction(self)
         act_skeletons.setDefaultWidget(self.chk_show_skeletons_menu)
         menu_overlays.addAction(act_skeletons)
+
+        self.chk_show_speed_menu = QCheckBox("⚡ Live-Geschwindigkeit (km/h)")
+        self.chk_show_speed_menu.setChecked(False)
+        self.chk_show_speed_menu.toggled.connect(self.toggle_speed_badges)
+        act_speed = QWidgetAction(self)
+        act_speed.setDefaultWidget(self.chk_show_speed_menu)
+        menu_overlays.addAction(act_speed)
 
         self.btn_overlays_menu.setMenu(menu_overlays)
         vp_tool_bar.addWidget(self.btn_overlays_menu)
@@ -2667,6 +2708,29 @@ class MainWindow(QMainWindow):
         layout_var.addWidget(self.chk_show_skeletons)
 
         scroll_layout_ac.addWidget(grp_var)
+
+        # Scouting & Tactical Metrics Group (SkillCorner & TacticAI)
+        grp_scouting = QGroupBox("📊 Metrische Taktik-Analytik & Scouting")
+        layout_scouting = QVBoxLayout(grp_scouting)
+        layout_scouting.setSpacing(8)
+
+        self.chk_show_speed = QCheckBox("⚡ Live-Geschwindigkeit (km/h) an Spielern einblenden")
+        self.chk_show_speed.setChecked(False)
+        self.chk_show_speed.setStyleSheet("font-weight: 600; color: #38bdf8;")
+        self.chk_show_speed.setToolTip("Zeigt die metrische Momentangeschwindigkeit jedes Spielers und Balls in km/h sowie Sprint-Indikatoren (>25.2 km/h).")
+        self.chk_show_speed.toggled.connect(self.toggle_speed_badges)
+        layout_scouting.addWidget(self.chk_show_speed)
+
+        btn_open_tactics = QPushButton("📊 Taktik- & Scouting-Dashboard öffnen")
+        btn_open_tactics.setStyleSheet("""
+            QPushButton { background-color: #2563eb; color: #ffffff; font-weight: 700; padding: 10px 14px; border-radius: 8px; font-size: 12px; }
+            QPushButton:hover { background-color: #1d4ed8; }
+        """)
+        btn_open_tactics.setToolTip("Öffnet das interaktive Taktik-Dashboard mit 2D-Heatmaps, Pitch Control (Dominanz), Zonenverteilung und PDF/PNG-Export.")
+        btn_open_tactics.clicked.connect(self.open_tactics_dashboard)
+        layout_scouting.addWidget(btn_open_tactics)
+
+        scroll_layout_ac.addWidget(grp_scouting)
 
         # 2D Tactical Radar Group (FIFA Pitch Mini-Map)
         grp_radar = QGroupBox("🗺️ 2D Taktik-Radar (Mini-Map)")
@@ -3658,6 +3722,33 @@ class MainWindow(QMainWindow):
             cfg.enable_skeletons = checked
         self.viewport.update()
 
+    def toggle_speed_badges(self, checked: bool):
+        if hasattr(self.viewport, 'set_speed_badges_enabled'):
+            self.viewport.set_speed_badges_enabled(checked)
+        if hasattr(self, 'chk_show_speed'):
+            self.chk_show_speed.blockSignals(True)
+            self.chk_show_speed.setChecked(checked)
+            self.chk_show_speed.blockSignals(False)
+        if hasattr(self, 'chk_show_speed_menu'):
+            self.chk_show_speed_menu.blockSignals(True)
+            self.chk_show_speed_menu.setChecked(checked)
+            self.chk_show_speed_menu.blockSignals(False)
+        cfg = getattr(self.engine.ai_broadcast, 'config', None)
+        if cfg:
+            cfg.enable_speed_badges = checked
+        self.viewport.update()
+
+    def open_tactics_dashboard(self):
+        """Opens the full interactive tactics and scouting dashboard."""
+        ai_tracker = getattr(self.engine, 'ai_broadcast', None)
+        if not ai_tracker or not hasattr(ai_tracker, 'get_tactics_summary'):
+            QMessageBox.warning(self, "Taktik-Dashboard", "Keine KI-Tracking-Daten verfügbar.")
+            return
+
+        summary = ai_tracker.get_tactics_summary()
+        dlg = TacticsDashboardDialog(summary, parent=self)
+        dlg.exec()
+
     def on_burn_radar_toggled(self, checked: bool):
         if hasattr(self, 'chk_burn_radar'):
             self.chk_burn_radar.blockSignals(True)
@@ -4200,7 +4291,8 @@ class MainWindow(QMainWindow):
         cam_span = ai_tracker.get_camera_span() if ai_tracker else None
         offside_line = getattr(ai_tracker, 'current_offside_line', None) if ai_tracker else None
         detections = getattr(ai_tracker, 'active_detections', None) if ai_tracker else None
-        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span, offside_line=offside_line, detections=detections)
+        ball_spd = ai_tracker.get_ball_speed() if hasattr(ai_tracker, 'get_ball_speed') else None
+        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span, offside_line=offside_line, detections=detections, ball_speed_kmh=ball_spd)
         self.hq_preview_timer.start()
 
     def render_high_res_preview(self):
@@ -4220,7 +4312,8 @@ class MainWindow(QMainWindow):
         cam_span = ai_tracker.get_camera_span() if ai_tracker else None
         offside_line = getattr(ai_tracker, 'current_offside_line', None) if ai_tracker else None
         detections = getattr(ai_tracker, 'active_detections', None) if ai_tracker else None
-        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span, offside_line=offside_line, detections=detections)
+        ball_spd = ai_tracker.get_ball_speed() if hasattr(ai_tracker, 'get_ball_speed') else None
+        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span, offside_line=offside_line, detections=detections, ball_speed_kmh=ball_spd)
 
     def refresh_preview(self):
         if not self.has_active_video():
@@ -4238,7 +4331,8 @@ class MainWindow(QMainWindow):
         cam_span = ai_tracker.get_camera_span() if ai_tracker else None
         offside_line = getattr(ai_tracker, 'current_offside_line', None) if ai_tracker else None
         detections = getattr(ai_tracker, 'active_detections', None) if ai_tracker else None
-        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span, offside_line=offside_line, detections=detections)
+        ball_spd = ai_tracker.get_ball_speed() if hasattr(ai_tracker, 'get_ball_speed') else None
+        self.viewport.set_frame(frame, autocam_box, ball_px, cur_zoom, players=players, ball_norm=ball_norm, cam_span=cam_span, offside_line=offside_line, detections=detections, ball_speed_kmh=ball_spd)
 
     def get_current_settings_dict(self) -> dict:
         """Serializes all rig, camera, AI autocam, export, and UI settings into a dictionary."""
@@ -4283,7 +4377,8 @@ class MainWindow(QMainWindow):
             "burn_radar_in_export": self.chk_burn_radar.isChecked() if hasattr(self, 'chk_burn_radar') else getattr(ac_cfg, 'burn_radar_in_export', False),
             "ai_backend": self.combo_ai_engine.currentData() if hasattr(self, 'combo_ai_engine') else getattr(ac_cfg, 'ai_backend', 'yolo11'),
             "enable_offside_line": self.chk_show_offside.isChecked() if hasattr(self, 'chk_show_offside') else getattr(ac_cfg, 'enable_offside_line', True),
-            "enable_skeletons": self.chk_show_skeletons.isChecked() if hasattr(self, 'chk_show_skeletons') else getattr(ac_cfg, 'enable_skeletons', False)
+            "enable_skeletons": self.chk_show_skeletons.isChecked() if hasattr(self, 'chk_show_skeletons') else getattr(ac_cfg, 'enable_skeletons', False),
+            "enable_speed_badges": self.chk_show_speed.isChecked() if hasattr(self, 'chk_show_speed') else getattr(ac_cfg, 'enable_speed_badges', False)
         }
 
         # UI preferences
@@ -4297,6 +4392,7 @@ class MainWindow(QMainWindow):
             "show_radar": self.chk_show_radar.isChecked() if hasattr(self, 'chk_show_radar') else True,
             "show_offside_line": self.chk_show_offside.isChecked() if hasattr(self, 'chk_show_offside') else True,
             "show_skeletons": self.chk_show_skeletons.isChecked() if hasattr(self, 'chk_show_skeletons') else False,
+            "show_speed": self.chk_show_speed.isChecked() if hasattr(self, 'chk_show_speed') else False,
             "show_seam": self.chk_show_seam.isChecked() if hasattr(self, 'chk_show_seam') else True,
             "show_grid": self.chk_show_grid.isChecked() if hasattr(self, 'chk_show_grid') else True,
             "sync_angles": getattr(self, 'sync_angles', True),
@@ -4554,6 +4650,9 @@ class MainWindow(QMainWindow):
             if "enable_skeletons" in ac:
                 self.toggle_skeletons(bool(ac["enable_skeletons"]))
 
+            if "enable_speed_badges" in ac:
+                self.toggle_speed_badges(bool(ac["enable_speed_badges"]))
+
         # 4. Export Settings
         if "export" in data and isinstance(data["export"], dict):
             exp = data["export"]
@@ -4613,6 +4712,8 @@ class MainWindow(QMainWindow):
                 self.toggle_offside_line(bool(ui["show_offside_line"]))
             if "show_skeletons" in ui:
                 self.toggle_skeletons(bool(ui["show_skeletons"]))
+            if "show_speed" in ui:
+                self.toggle_speed_badges(bool(ui["show_speed"]))
             if hasattr(self, 'chk_show_seam') and "show_seam" in ui:
                 self.chk_show_seam.setChecked(bool(ui["show_seam"]))
             if hasattr(self, 'chk_show_grid') and "show_grid" in ui:
