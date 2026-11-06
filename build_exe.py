@@ -48,10 +48,11 @@ def build():
     os.chdir(root_dir)
 
     # 1. Clean previous builds
-    for d in ["build", "dist", "installer_output"]:
+    for d in ["build", "dist"]:
         if os.path.exists(d):
             print(f"Cleaning {d}/ directory...")
             shutil.rmtree(d, ignore_errors=True)
+    os.makedirs("installer_output", exist_ok=True)
 
     # 2. Run PyInstaller
     print("\n[Step 1/2] Compiling standalone application with PyInstaller...")
@@ -122,7 +123,11 @@ def build():
         print("\n[ERROR] Inno Setup compilation failed.")
         sys.exit(1)
 
-    setup_exes = glob.glob(os.path.join(root_dir, "installer_output", "MatchTrack-Stitcher-Setup-*.exe"))
+    setup_exes = sorted(
+        glob.glob(os.path.join(root_dir, "installer_output", "MatchTrack-Stitcher-Setup-*.exe")),
+        key=os.path.getmtime,
+        reverse=True
+    )
     if not setup_exes:
         print(f"\n[ERROR] Expected setup installer not found in installer_output")
         sys.exit(1)

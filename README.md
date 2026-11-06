@@ -6,7 +6,7 @@
 
 ### Professioneller 32:9 Fußball-Panorama Stitcher & KI-gestützte 16:9 Broadcast Follow-Cam
 
-[![Release](https://img.shields.io/badge/Release-v1.5.0-blue.svg)](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.0)
+[![Release](https://img.shields.io/badge/Release-v1.5.1-blue.svg)](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.1)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-41CD52.svg?logo=qt&logoColor=white)](https://pypi.org/project/PySide6/)
 [![OpenCV](https://img.shields.io/badge/Computer%20Vision-OpenCV-5C3EE8.svg?logo=opencv&logoColor=white)](https://opencv.org/)
@@ -15,7 +15,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6.svg?logo=windows&logoColor=white)](https://github.com/soko-grafik/matchtrack-stitcher/releases)
 [![License](https://img.shields.io/badge/License-Proprietary-red.svg)](#lizenz)
 
-[**Download Windows Installer (v1.5.0)**](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.0) • [**Dokumentation**](#-workflow-anleitung) • [**CLI Reference**](#-cli-batch-modus) • [**Release Notes**](#-release-notes--changelog)
+[**Download Windows Installer (v1.5.1)**](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.1) • [**Dokumentation**](#-workflow-anleitung) • [**CLI Reference**](#-cli-batch-modus) • [**Release Notes**](#-release-notes--changelog)
 
 </div>
 
@@ -115,7 +115,7 @@ Zusätzlich beinhaltet das System eine **KI-gestützte 16:9 Broadcast Follow-Cam
 
 Für Endanwender und Analysten steht ein vorkompilierter Standalone-Installer zur Verfügung, der sämtliche Abhängigkeiten, FFmpeg und KI-Modelle bündelt:
 
-1. Laden Sie die Datei **`MatchTrack-Stitcher-Setup-v1.5.0.exe`** unter [**Releases**](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.0) herunter.
+1. Laden Sie die Datei **`MatchTrack-Stitcher-Setup-v1.5.1.exe`** unter [**Releases**](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.1) herunter.
 2. Führen Sie die Setup-Datei aus und folgen Sie dem Installationsassistenten.
 3. Starten Sie **MatchTrack Stitcher** bequem über das Startmenü oder die Desktop-Verknüpfung.
 
@@ -307,13 +307,22 @@ Das Skript führt folgende Schritte automatisch aus:
 2. Kompilieren aller Python-Module und GUI-Ressourcen mit **PyInstaller**.
 3. Bündeln von `ffmpeg.exe`, `ffprobe.exe` sowie aller **YOLO-KI-Modelle** (`.pt`).
 4. Generierung des signierfähigen Setup-Installers mit **Inno Setup 6**.
-5. Ausgabe der fertigen Datei in `installer_output/MatchTrack-Stitcher-Setup-v1.5.0.exe`.
+5. Ausgabe der fertigen Datei in `installer_output/MatchTrack-Stitcher-Setup-v1.5.1.exe`.
 
 ---
 
 ## 📝 Release Notes / Changelog
 
-### Version 1.5.0 (Aktuell)
+### Version 1.5.1 (Aktuell)
+- **Samsung One UI Design:** Vollständig überarbeitete, moderne Benutzeroberfläche inspiriert vom One UI Design Kit (Segmented Controls, abgerundete Karten, optimierte Abstände und Typografie, One-UI-Farbakzente).
+- **Bereinigte Navigation & Viewport:** Entfernung redundanter Navigationselemente im Header und Entrümpelung der Viewport-Toolbar.
+- **Mouse-Wheel-Schutz für Sidebar-Regler:** Schieberegler (`WheelFilteredSlider`, `WheelFilteredSpinBox`) reagieren nicht mehr versehentlich auf das Scrollrad beim vertikalen Durchscrollen der Seitenleiste.
+- **Schritt-Buttons für Feineinstellungen:** Zusätzliche One-Click-Buttons (`-1`, `+1`) für sekundenschnelles Justieren von Audio-Offset und horizontaler Zentrierung.
+- **Automatischer Farbabgleich (Auto Color Matching):** Glättung von Helligkeits- und Farbunterschieden (Histogramm- und LAB-Angleich) zwischen linker und rechter Kamera zur Eliminierung sichtbarer Schnittkanten in der Bildmitte.
+- **720p HD Export-Presets:** Schnelle, ressourcenschonende Rendering-Presets für 720p (32:9 Panorama, 16:9 Broadcast und 21:10 Squeezed).
+- **Thread-sicheres Logging & Crash-Watchdog:** Hintergrund-Logging auf sichere Qt-Signale umgestellt sowie automatischer Faulthandler zur Vermeidung nativer Abstürze bei langen Render-Vorgängen.
+
+### Version 1.5.0
 - **UI/UX Reorganisation:** Vollständige Entrümpelung der Oberfläche und Umstrukturierung in den intuitiven **4-Schritte-Workflow** (*Medien & Sync*, *Stitching & Rig*, *Taktik & AutoCam*, *Export*).
 - **YOLO11 Integration:** Aktualisierte neuronale Netze für präzisere Fußball- und Spielererkennung bei schwierigen Lichtverhältnissen.
 - **16:9 Tactical Field Warp:** Piecewise Dual-Quad Homographie mit 6 Ankerpunkten zur planaren Entzerrung gekrümmter Spielfelder.
