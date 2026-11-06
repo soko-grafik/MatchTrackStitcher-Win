@@ -134,6 +134,8 @@ class RigConfiguration:
     
     # Overlap blending & Auto-Crop parameters
     blend_width_deg: float = 8.0          # Angular width of seam transition (degrees)
+    auto_color_match: bool = True         # Automatic color & exposure matching across cameras
+    color_match_strength: float = 1.0     # 0.0 (off) to 1.0 (100% match)
     vertical_crop_offset: float = 0.12    # -2.0 (top) to +2.0 (bottom) vertical shift (0.12 gives optimal near-field corner coverage)
     horizontal_squeeze: float = 1.0       # 0.60 to 1.60x uniform anamorphic width squeeze factor (brings corners into view)
     auto_crop_lir: bool = True            # Largest Interior Rectangle (removes black curved borders)
@@ -162,6 +164,8 @@ class RigConfiguration:
             "projection_type": self.projection_type,
             "field_curvature_correction": self.field_curvature_correction,
             "blend_width_deg": self.blend_width_deg,
+            "auto_color_match": self.auto_color_match,
+            "color_match_strength": self.color_match_strength,
             "vertical_crop_offset": self.vertical_crop_offset,
             "horizontal_squeeze": self.horizontal_squeeze,
             "auto_crop_lir": self.auto_crop_lir,
@@ -188,6 +192,8 @@ class RigConfiguration:
             projection_type=data.get("projection_type", "cylindrical"),
             field_curvature_correction=float(data.get("field_curvature_correction", 0.0)),
             blend_width_deg=data.get("blend_width_deg", 8.0),
+            auto_color_match=bool(data.get("auto_color_match", True)),
+            color_match_strength=float(data.get("color_match_strength", 1.0)),
             vertical_crop_offset=data.get("vertical_crop_offset", 0.12),
             horizontal_squeeze=data.get("horizontal_squeeze", 1.0),
             auto_crop_lir=data.get("auto_crop_lir", True),

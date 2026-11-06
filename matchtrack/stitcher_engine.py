@@ -239,7 +239,9 @@ class StitcherEngine:
             frame_r = np.zeros((self.video_left.height, self.video_left.width, 3), dtype=np.uint8)
 
         luts = self.update_luts(preview_width, preview_height)
-        stitched = apply_stitch(frame_l, frame_r, luts)
+        self.color_matcher.enabled = getattr(self.rig, 'auto_color_match', True)
+        self.color_matcher.set_strength(getattr(self.rig, 'color_match_strength', 1.0))
+        stitched = apply_stitch(frame_l, frame_r, luts, color_matcher=self.color_matcher)
 
         # AI Ball & Player Detection + Dynamic Auto-Zoom
         tx, ty, tz, ball_found, ball_px = self.ai_broadcast.detect_action(stitched)
@@ -372,6 +374,9 @@ class StitcherEngine:
         else:
             luts = self.update_luts(out_width, out_height)
 
+        self.color_matcher.enabled = getattr(self.rig, 'auto_color_match', True)
+        self.color_matcher.set_strength(getattr(self.rig, 'color_match_strength', 1.0))
+
         # Get hardware profile encoder flags
         codec_flags = get_encoder_flags(codec, bitrate_mbps)
 
@@ -471,12 +476,12 @@ class StitcherEngine:
                         stitched = np.zeros((luts.out_height, luts.out_width, 3), dtype=np.uint8)
                     elif fl is None:
                         fl = np.zeros((self.video_right.height, self.video_right.width, 3), dtype=np.uint8)
-                        stitched = apply_stitch(fl, fr, luts)
+                        stitched = apply_stitch(fl, fr, luts, color_matcher=self.color_matcher)
                     elif fr is None:
                         fr = np.zeros((self.video_left.height, self.video_left.width, 3), dtype=np.uint8)
-                        stitched = apply_stitch(fl, fr, luts)
+                        stitched = apply_stitch(fl, fr, luts, color_matcher=self.color_matcher)
                     else:
-                        stitched = apply_stitch(fl, fr, luts)
+                        stitched = apply_stitch(fl, fr, luts, color_matcher=self.color_matcher)
                 except Exception as e:
                     logger.error(f"Fehler beim Stitchen von Frame {f_idx} (Worker {worker_id}): {e}", exc_info=True)
                     stitched = np.zeros((luts.out_height, luts.out_width, 3), dtype=np.uint8)
@@ -1344,6 +1349,11 @@ class StitcherEngine:
         Stage 1: Stitches 2 raw cameras into a master 32:9 panorama video.
         Stage 2: Generates the 16:9 broadcast follow-cam video from the 32:9 master with lookahead smoothing.
         """
+        # Dynamically scale 32:9 master height to match 16:9 target resolution if left at default
+        if out_32x9_height == 1080 and out_16x9_height != 1080:
+            out_32x9_height = out_16x9_height
+            out_32x9_width = int(round(out_16x9_height * (32.0 / 9.0)))
+
         if not output_32x9_filepath:
             base, ext = os.path.splitext(output_16x9_filepath)
             output_32x9_filepath = f"{base}_master_32x9{ext}"

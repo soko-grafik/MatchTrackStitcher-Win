@@ -2013,6 +2013,18 @@ class MainWindow(QMainWindow):
         self.ctrl_blend_width.valueChanged.connect(self.on_rig_param_changed)
         layout_level.addWidget(self.ctrl_blend_width)
 
+        self.chk_auto_color_match = QCheckBox("🎨 Automatischer Farb- & Belichtungsabgleich (Kamera L ↔ R)")
+        self.chk_auto_color_match.setChecked(True)
+        self.chk_auto_color_match.setStyleSheet("color: #10b981; font-weight: bold; margin-top: 4px;")
+        self.chk_auto_color_match.setToolTip("Gleicht Helligkeit, Belichtung und Weißabgleich beider Kameras automatisch an der Nahtstelle ab. Entfernt die sichtbare Kante in der Bildmitte vollständig.")
+        self.chk_auto_color_match.toggled.connect(self.on_auto_color_match_toggled)
+        layout_level.addWidget(self.chk_auto_color_match)
+
+        self.ctrl_color_match_strength = LabeledSliderSpinBox("Farbangleich-Stärke:", 0.0, 100.0, 100.0, 5.0, "%", decimals=0)
+        self.ctrl_color_match_strength.setToolTip("Bestimmt, wie stark die Farben beider Kameras aufeinander abgestimmt werden (100% = vollständiger Abgleich).")
+        self.ctrl_color_match_strength.valueChanged.connect(self.on_color_match_strength_changed)
+        layout_level.addWidget(self.ctrl_color_match_strength)
+
         scroll_layout.addWidget(grp_level)
 
         # Corner Pinning Group
@@ -3363,6 +3375,23 @@ class MainWindow(QMainWindow):
                 self.engine.invalidate_luts()
                 self.trigger_smooth_preview()
 
+    def on_auto_color_match_toggled(self, checked: bool):
+        """Toggles automated color and white-balance matching between left and right cameras."""
+        self.rig.auto_color_match = checked
+        if hasattr(self, 'engine'):
+            self.engine.color_matcher.enabled = checked
+            if not checked:
+                self.engine.color_matcher.reset()
+        self.trigger_smooth_preview()
+
+    def on_color_match_strength_changed(self, val: float):
+        """Adjusts the intensity of the automatic color matching (0% = none, 100% = full)."""
+        strength = float(val) / 100.0
+        self.rig.color_match_strength = strength
+        if hasattr(self, 'engine'):
+            self.engine.color_matcher.set_strength(strength)
+        self.trigger_smooth_preview()
+
     def on_rig_param_changed(self):
         self.rig.left_pose.pitch = self.ctrl_cam_pitch.value()
         self.rig.right_pose.pitch = self.ctrl_cam_pitch.value()
@@ -3375,6 +3404,12 @@ class MainWindow(QMainWindow):
         self.rig.vertical_crop_offset = self.ctrl_v_offset.value()
         self.rig.horizontal_squeeze = self.ctrl_squeeze.value()
         self.rig.blend_width_deg = self.ctrl_blend_width.value()
+        if hasattr(self, 'chk_auto_color_match'):
+            self.rig.auto_color_match = self.chk_auto_color_match.isChecked()
+            self.engine.color_matcher.enabled = self.rig.auto_color_match
+        if hasattr(self, 'ctrl_color_match_strength'):
+            self.rig.color_match_strength = self.ctrl_color_match_strength.value() / 100.0
+            self.engine.color_matcher.set_strength(self.rig.color_match_strength)
         if hasattr(self, 'ctrl_curvature'):
             self.rig.field_curvature_correction = self.ctrl_curvature.value()
         if hasattr(self, 'combo_projection'):
@@ -3682,16 +3717,24 @@ class MainWindow(QMainWindow):
         fmt = self.combo_exp_format.currentData()
         if fmt in ("16:9_autocam", "16:9_tactical"):
             self.combo_resolution.addItem("1920 x 1080 (Full HD 1080p - Standard 16:9)", (1920, 1080))
+            self.combo_resolution.addItem("1280 x 720 (HD 720p - Schnell / Kompakt)", (1280, 720))
             self.combo_resolution.addItem("2560 x 1440 (2K QHD 1440p - Hohe Schärfe)", (2560, 1440))
             self.combo_resolution.addItem("3840 x 2160 (4K UHD 2160p - Maximale Details)", (3840, 2160))
         elif fmt == "21:10":
             self.combo_resolution.addItem("3360 x 1600 (1600p 21:10 - Hohe Schärfe / Empfohlen)", (3360, 1600))
             self.combo_resolution.addItem("2520 x 1200 (1200p 21:10 - Standard / Hohe FPS)", (2520, 1200))
+            self.combo_resolution.addItem("1512 x 720 (720p 21:10 - Schnell / Kompakt)", (1512, 720))
             self.combo_resolution.addItem("4200 x 2000 (2K/4K 21:10 - Maximale Details)", (4200, 2000))
             self.combo_resolution.addItem("2100 x 1000 (1000p 21:10 - Schnell)", (2100, 1000))
-        else: # 32:9 or both
+        elif fmt == "both":
+            self.combo_resolution.addItem("1920 x 1080 (1080p Broadcast + 3840x1080 Master)", (1920, 1080))
+            self.combo_resolution.addItem("1280 x 720 (720p Broadcast + 2560x720 Master - Schnell)", (1280, 720))
+            self.combo_resolution.addItem("2560 x 1440 (1440p Broadcast + 5120x1440 Master)", (2560, 1440))
+            self.combo_resolution.addItem("3840 x 2160 (4K Broadcast + 7680x2160 Master)", (3840, 2160))
+        else: # 32:9
             self.combo_resolution.addItem("5120 x 1440 (1440p 32:9 Panorama - Empfohlen)", (5120, 1440))
-            self.combo_resolution.addItem("3840 x 1080 (1080p 32:9 Panorama - Schnell)", (3840, 1080))
+            self.combo_resolution.addItem("3840 x 1080 (1080p 32:9 Panorama - Standard)", (3840, 1080))
+            self.combo_resolution.addItem("2560 x 720 (720p 32:9 Panorama - Schnell / Kompakt)", (2560, 720))
             self.combo_resolution.addItem("7680 x 2160 (4K 32:9 Panorama - Maximale Qualität)", (7680, 2160))
 
     def trigger_smooth_preview(self):
@@ -3848,6 +3891,22 @@ class MainWindow(QMainWindow):
                 if idx >= 0:
                     self.combo_projection.setCurrentIndex(idx)
                 self.combo_projection.blockSignals(False)
+
+            if hasattr(self, 'chk_auto_color_match'):
+                self.chk_auto_color_match.blockSignals(True)
+                val_acm = getattr(self.rig, 'auto_color_match', True)
+                self.chk_auto_color_match.setChecked(val_acm)
+                if hasattr(self, 'engine'):
+                    self.engine.color_matcher.enabled = val_acm
+                self.chk_auto_color_match.blockSignals(False)
+
+            if hasattr(self, 'ctrl_color_match_strength'):
+                self.ctrl_color_match_strength.blockSignals(True)
+                val_cms = getattr(self.rig, 'color_match_strength', 1.0)
+                self.ctrl_color_match_strength.setValue(val_cms * 100.0)
+                if hasattr(self, 'engine'):
+                    self.engine.color_matcher.set_strength(val_cms)
+                self.ctrl_color_match_strength.blockSignals(False)
 
             for ctrl in [
                 self.ctrl_left_yaw, self.ctrl_right_yaw, self.ctrl_master_yaw,

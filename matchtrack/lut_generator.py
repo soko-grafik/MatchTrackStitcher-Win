@@ -395,10 +395,11 @@ def generate_remap_luts(rig: RigConfiguration, out_width: int, out_height: int) 
     )
 
 
-def apply_stitch(frame_left: np.ndarray, frame_right: np.ndarray, luts: RemapLUTs) -> np.ndarray:
+def apply_stitch(frame_left: np.ndarray, frame_right: np.ndarray, luts: RemapLUTs, color_matcher: Optional[Any] = None) -> np.ndarray:
     """
     Applies the precalculated LUTs and blends two camera frames into the final 32:9 panorama.
     Uses high-speed partitioned sub-region remapping to maximize memory bandwidth & CPU throughput.
+    Optionally applies automatic color and exposure matching to eliminate the center seam line.
     """
     if luts.seam_x_start is not None and luts.seam_x_end is not None:
         x0 = luts.seam_x_start
@@ -420,6 +421,11 @@ def apply_stitch(frame_left: np.ndarray, frame_right: np.ndarray, luts: RemapLUT
             borderMode=cv2.BORDER_REPLICATE
         )
         
+        # Apply automatic color and white-balance matching to eliminate seam edge
+        if color_matcher is not None and getattr(color_matcher, 'enabled', False):
+            color_matcher.update_gains_from_sub(rem_l_sub, rem_r_sub, luts)
+            rem_l_sub, rem_r_sub = color_matcher.apply_match(rem_l_sub, rem_r_sub)
+
         out = np.empty((luts.out_height, luts.out_width, 3), dtype=np.uint8)
         out[:, :x0] = rem_l_sub[:, :x0]
         out[:, x1:] = rem_r_sub[:, (x1 - x0):]
@@ -444,6 +450,11 @@ def apply_stitch(frame_left: np.ndarray, frame_right: np.ndarray, luts: RemapLUT
             interpolation=cv2.INTER_LINEAR, 
             borderMode=cv2.BORDER_REPLICATE
         )
+
+        # Apply automatic color and white-balance matching to eliminate seam edge
+        if color_matcher is not None and getattr(color_matcher, 'enabled', False):
+            color_matcher.update_gains_from_full(remapped_left, remapped_right, luts)
+            remapped_left, remapped_right = color_matcher.apply_match(remapped_left, remapped_right)
 
         blended = (remapped_left.astype(np.float32) * luts.weight_left + 
                    remapped_right.astype(np.float32) * luts.weight_right)
