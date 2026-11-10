@@ -5371,6 +5371,14 @@ class MainWindow(QMainWindow):
         new_val = max(0, self.current_frame_idx + step)
         self.slider_timeline.setValue(new_val)
 
+    def seek_frame(self, frame_idx: int):
+        """Seeks the video playhead to the given frame index."""
+        new_val = max(0, int(frame_idx))
+        if hasattr(self, 'slider_timeline'):
+            self.slider_timeline.setValue(new_val)
+        else:
+            self.on_slider_seek(new_val)
+
     def toggle_playback(self):
         if self.is_playing:
             self.playback_timer.stop()
