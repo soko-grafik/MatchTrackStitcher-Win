@@ -6,7 +6,7 @@
 
 ### Professioneller 32:9 Fußball-Panorama Stitcher & KI-gestützte 16:9 Broadcast Follow-Cam
 
-[![Release](https://img.shields.io/badge/Release-v1.5.4-blue.svg)](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.4)
+[![Release](https://img.shields.io/badge/Release-v1.5.5-blue.svg)](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.5)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-41CD52.svg?logo=qt&logoColor=white)](https://pypi.org/project/PySide6/)
 [![OpenCV](https://img.shields.io/badge/Computer%20Vision-OpenCV-5C3EE8.svg?logo=opencv&logoColor=white)](https://opencv.org/)
@@ -15,7 +15,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6.svg?logo=windows&logoColor=white)](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases)
 [![License](https://img.shields.io/badge/License-Proprietary-red.svg)](#lizenz)
 
-[**Download Windows Installer (v1.5.4)**](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.4) • [**Dokumentation**](#-workflow-anleitung) • [**CLI Reference**](#-cli-batch-modus) • [**Release Notes**](#-release-notes--changelog)
+[**Download Windows Installer (v1.5.5)**](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.5) • [**Dokumentation**](#-workflow-anleitung) • [**CLI Reference**](#-cli-batch-modus) • [**Release Notes**](#-release-notes--changelog)
 
 </div>
 
@@ -115,7 +115,7 @@ Zusätzlich beinhaltet das System eine **KI-gestützte 16:9 Broadcast Follow-Cam
 
 Für Endanwender und Analysten steht ein vorkompilierter Standalone-Installer zur Verfügung, der sämtliche Abhängigkeiten, FFmpeg und KI-Modelle bündelt:
 
-1. Laden Sie die Datei **`MatchTrack-Stitcher-Setup-v1.5.4.exe`** unter [**Releases**](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.4) herunter.
+1. Laden Sie die Datei **`MatchTrack-Stitcher-Setup-v1.5.5.exe`** unter [**Releases**](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.5) herunter.
 2. Führen Sie die Setup-Datei aus und folgen Sie dem Installationsassistenten.
 3. Starten Sie **MatchTrack Stitcher** bequem über das Startmenü oder die Desktop-Verknüpfung.
 
@@ -307,13 +307,24 @@ Das Skript führt folgende Schritte automatisch aus:
 2. Kompilieren aller Python-Module und GUI-Ressourcen mit **PyInstaller**.
 3. Bündeln von `ffmpeg.exe`, `ffprobe.exe` sowie aller **YOLO-KI-Modelle** (`.pt`).
 4. Generierung des signierfähigen Setup-Installers mit **Inno Setup 6**.
-5. Ausgabe der fertigen Datei in `installer_output/MatchTrack-Stitcher-Setup-v1.5.4.exe`.
+5. Ausgabe der fertigen Datei in `installer_output/MatchTrack-Stitcher-Setup-v1.5.5.exe`.
 
 ---
 
 ## 📝 Release Notes / Changelog
 
-### Version 1.5.4 (Aktuell)
+### Version 1.5.5 (Aktuell)
+- **DJI Osmo Action 4 (155° Ultrawide) Begradigung & Spielfeld-Trapez:**
+  - **Optische Fisheye-Begradigung:** Mathematisches Entzerrungsmodell (Kannala-Brandt / Äquidistant) für extreme Weitwinkelaufnahmen (155° FOV) eines einzelnen stationären 4m-Stativs.
+  - **Interaktive 4-Punkt Kalibrierung im Viewport:** Geführter 4-Klick Assistent (TL ➔ TR ➔ BR ➔ BL) zum punktgenauen Setzen der Eckfahnen im Videobild.
+  - **Präzisions-Lupe (2.5x Zoom):** Kreisrundes Lupen-Callout mit Fadenkreuz beim Platzieren und Ziehen jedes Eckpunkts.
+  - **Symmetrisches Spielfeld-Trapezoid:** Transformiert die Auslinien so, dass Seiten- und Torauslinien auf dem Video ein mathematisch fluchtendes, waagerechtes Trapez bilden (oder optional eine FIFA 105×68 m Planar-Aufsicht).
+  - **Single-Pass Remap LUT:** Kombiniert Linsenbegradigung und Perspektivtransformation in einer 32-Bit Float-Lookup-Table (< 1.0 ms pro Frame für 60+ FPS Echtzeit-Vorschau).
+  - **Flexibles Zielformat:** Frei wählbar zwischen 16:9 Broadcast (1080p / 4K), 21:9 UltraWide Cinema, 32:9 SuperWide Panorama, 4:3 Vollsensor oder benutzerdefinierten Auflösungen.
+  - **Neuer Arbeitsbereich `📐 2. Weitwinkel`:** Eigener Tab mit Optik-Reglern (Stärke, HFOV, Zoom, Tilt, Roll, Offset), Trapezoid-Feineinstellung, Preset-Manager (`DJI Action 4`, `Action 3/5 Pro`, `GoPro`, `Generisch`) und Schnelltaste `Ctrl+2`.
+  - **Standalone Video-Export:** Hardwarebeschleunigter Export (`render_wide_angle_video`) via NVIDIA NVENC / Intel QSV / CPU auch für Einzelkameras ohne Dual-Cam-Zwang.
+
+### Version 1.5.4
 - **1:1 OBS Studio Ausgabe- & Kodierer-Engine:**
   - Komplette OBS-Studio Ausgabe- und Kodierereinstellungen (Erweitert & Einfach) mit originalgetreuem Layout.
   - Volle Unterstützung für Hardware-Encoder (**NVIDIA NVENC H.264 / HEVC**, **Intel QuickSync QSV**) sowie **x264 Software CPU**.

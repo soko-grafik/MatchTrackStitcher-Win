@@ -7,11 +7,11 @@
             "name": "DJI Action 4 1080p 4:3 Dewarp (RockSteady ON, 30fps)",
             "sensor_width": 9.6,
             "sensor_height": 7.2,
-            "image_width": 2560,
+            "image_width": 1280,
             "image_height": 720,
-            "fx": 1236.0816317530546,
-            "fy": 1236.0816317530546,
-            "cx": 1280.0,
+            "fx": 618.0408158765273,
+            "fy": 618.0408158765273,
+            "cx": 640.0,
             "cy": 360.0,
             "k1": 0.0,
             "k2": 0.0,
@@ -233,32 +233,32 @@
     },
     "wide_angle": {
         "camera_name": "DJI Action 4 Ultrawide (155° FOV)",
-        "fisheye_strength": 0.82,
-        "hfov_deg": 136.0,
+        "fisheye_strength": 0.85,
+        "hfov_deg": 138.0,
         "zoom_factor": 1.05,
         "horizon_tilt_deg": 0.0,
         "vertical_shift": 0.0,
         "pitch_corners": [
             [
-                0.15,
-                0.25
+                0.3296671084828711,
+                0.37867047308319735
             ],
             [
-                0.85,
-                0.25
+                0.6060996125611746,
+                0.39498368678629686
             ],
             [
-                0.95,
-                0.88
+                0.9536475326264274,
+                0.7171696574225123
             ],
             [
-                0.05,
-                0.88
+                0.022264987765089644,
+                0.6886215334420881
             ]
         ],
         "geometry_mode": "trapezoid",
         "trapezoid_top_width_ratio": 0.72,
-        "margin_percent": 6.0,
+        "margin_percent": 8.0,
         "target_format": "16:9",
         "target_width": 1920,
         "target_height": 1080
