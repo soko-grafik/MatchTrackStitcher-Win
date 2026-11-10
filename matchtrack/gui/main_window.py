@@ -1035,6 +1035,13 @@ class InteractivePanoramaViewport(QWidget):
 
         self.update()
 
+    def update_preview_image(self, 
+                             frame_bgr: np.ndarray, 
+                             autocam_box: Optional[Tuple[int, int, int, int]] = None, 
+                             ball_px: Optional[Tuple[int, int]] = None):
+        """Helper / alias to update the preview frame from live-streaming or capture engines."""
+        self.set_frame(frame_bgr, autocam_box=autocam_box, ball_px=ball_px)
+
     def reset_zoom(self):
         self.zoom_level = 1.0
         self.pan_offset = QPoint(0, 0)
@@ -7619,9 +7626,15 @@ class MainWindow(QMainWindow):
 
         # Update viewport preview
         vm = self.view_mode
-        display_frame = bcast_frame if (bcast_frame is not None and vm.startswith("16:9")) else pano_frame
+        if vm.startswith("16:9") and bcast_frame is not None:
+            display_frame = bcast_frame
+            box = None
+        else:
+            display_frame = pano_frame
+            box = crop_box
+
         if display_frame is not None and hasattr(self, 'viewport') and self.viewport is not None:
-            self.viewport.update_preview_image(display_frame)
+            self.viewport.update_preview_image(display_frame, autocam_box=box)
 
     def _on_ble_scan_clicked(self):
         self.btn_ble_scan.setEnabled(False)
