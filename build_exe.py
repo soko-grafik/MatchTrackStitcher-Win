@@ -102,7 +102,7 @@ def build():
             print(f"[OK] Bundled {pt_model} into app folder")
 
     # Ensure JSON configs are in app folder
-    for json_file in ["default_rig_action4_80deg.json", "dji_action4_1080p_dewarp_rig.json", "user_default_settings.json", "dji_action4_1080p_2.json"]:
+    for json_file in ["default_rig_action4_80deg.json", "dji_action4_1080p_dewarp_rig.json", "dji_action4_1080p_4x3_dewarp_rocksteady.json", "user_default_settings.json", "dji_action4_1080p_2.json"]:
         src_json = os.path.join(root_dir, json_file)
         dst_json = os.path.join(dist_app, json_file)
         if os.path.exists(src_json) and not os.path.exists(dst_json):

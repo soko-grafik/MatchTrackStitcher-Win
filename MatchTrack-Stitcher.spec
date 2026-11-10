@@ -10,6 +10,7 @@ datas = [
     ('matchtrack/assets', 'matchtrack/assets'),
     ('default_rig_action4_80deg.json', '.'),
     ('dji_action4_1080p_dewarp_rig.json', '.'),
+    ('dji_action4_1080p_4x3_dewarp_rocksteady.json', '.'),
     ('user_default_settings.json', '.'),
     ('dji_action4_1080p_2.json', '.'),
 ]
@@ -45,6 +46,8 @@ hiddenimports = [
     'numpy',
     'PIL',
     'PIL.Image',
+    'requests',
+    'certifi',
 ]
 hiddenimports += collect_submodules('matchtrack')
 

@@ -140,3 +140,16 @@ def get_default_settings_path() -> str:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(root, "user_default_settings.json")
 
+
+def get_cloud_credentials_path() -> str:
+    """Returns the absolute path to the DPAPI-encrypted cloud_credentials.dat file."""
+    local_app = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+    cfg_dir = os.path.join(local_app, "MatchTrack")
+    try:
+        os.makedirs(cfg_dir, exist_ok=True)
+        return os.path.join(cfg_dir, "cloud_credentials.dat")
+    except Exception:
+        settings_dir = os.path.dirname(os.path.abspath(get_default_settings_path()))
+        return os.path.join(settings_dir, "cloud_credentials.dat")
+
+

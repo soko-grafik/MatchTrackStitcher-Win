@@ -10,18 +10,20 @@ from typing import Optional, Tuple, List, Dict, Any
 import cv2
 import numpy as np
 
-from PySide6.QtCore import Qt, QTimer, QThread, Signal, Slot, QPoint, QPointF, QRectF, QObject, QEvent
-from PySide6.QtGui import QImage, QPixmap, QIcon, QFont, QColor, QPainter, QPen, QWheelEvent, QMouseEvent, QPolygonF
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, Slot, QPoint, QPointF, QRectF, QObject, QEvent, QDate, QUrl
+from PySide6.QtGui import QImage, QPixmap, QIcon, QFont, QColor, QPainter, QPen, QWheelEvent, QMouseEvent, QPolygonF, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QSlider, QSpinBox, QDoubleSpinBox, QComboBox, QAbstractSpinBox,
     QFileDialog, QProgressBar, QGroupBox, QTabWidget, QSplitter,
     QCheckBox, QMessageBox, QFrame, QScrollArea, QStatusBar, QToolButton,
-    QPlainTextEdit, QMenu, QWidgetAction
+    QPlainTextEdit, QMenu, QWidgetAction, QLineEdit, QDateEdit, QDialog
 )
 
 
 import json
+import threading
+from datetime import datetime
 from ..camera_model import CAMERA_PRESETS, CameraIntrinsics
 from ..rig_geometry import RigConfiguration, CameraPose
 from ..lut_generator import generate_remap_luts, RemapLUTs, apply_stitch
@@ -39,6 +41,7 @@ from ..radar_minimap import SoccerRadarRenderer
 from ..ai_detector import SKELETON_CONNECTIONS
 from ..logger import get_logger, get_gui_handler, GuiLogRecord, setup_logging, install_crash_handlers
 from ..paths import get_log_file_path, get_default_settings_path, get_resource_path
+from ..cloud_uploader import MatchTrackOnlineClient
 from .tactics_dialog import TacticsDashboardDialog
 
 logger = get_logger("gui")
@@ -364,6 +367,8 @@ class RenderWorker(QThread):
         self.end_frame = end_frame
         self.audio_source = audio_source
         self.use_lookahead = use_lookahead
+        self.rendered_16x9_path: Optional[str] = None
+        self.rendered_32x9_path: Optional[str] = None
 
     def run(self):
         try:
@@ -372,6 +377,7 @@ class RenderWorker(QThread):
 
             if self.engine.is_panorama_mode():
                 if self.mode == "21:10":
+                    self.rendered_32x9_path = self.out_path
                     success = self.engine.convert_panorama_to_21x10(
                         output_filepath=self.out_path,
                         out_width=self.width,
@@ -382,7 +388,20 @@ class RenderWorker(QThread):
                         end_frame=self.end_frame,
                         progress_callback=callback
                     )
+                elif self.mode == "16:9_tactical":
+                    self.rendered_16x9_path = self.out_path
+                    success = self.engine.convert_panorama_to_16x9_tactical(
+                        output_filepath=self.out_path,
+                        out_width=self.width,
+                        out_height=self.height,
+                        codec=self.codec,
+                        bitrate_mbps=self.bitrate,
+                        start_frame=self.start_frame,
+                        end_frame=self.end_frame,
+                        progress_callback=callback
+                    )
                 elif self.mode == "16:9_autocam":
+                    self.rendered_16x9_path = self.out_path
                     success = self.engine.render_broadcast_from_panorama(
                         output_filepath=self.out_path,
                         out_width=self.width,
@@ -395,6 +414,7 @@ class RenderWorker(QThread):
                         progress_callback=callback
                     )
                 else:
+                    self.rendered_32x9_path = self.out_path
                     success = self.engine.convert_panorama_to_21x10(
                         output_filepath=self.out_path,
                         out_width=self.width,
@@ -406,8 +426,14 @@ class RenderWorker(QThread):
                         progress_callback=callback
                     )
             elif self.mode == "both":
+                base, ext = os.path.splitext(self.out_path)
+                tag = "8x3" if (hasattr(self.engine, 'is_4_3_mode') and self.engine.is_4_3_mode()) else "32x9"
+                pano_master_path = f"{base}_master_{tag}{ext}"
+                self.rendered_16x9_path = self.out_path
+                self.rendered_32x9_path = pano_master_path
                 success = self.engine.render_two_stage_broadcast(
                     output_16x9_filepath=self.out_path,
+                    output_32x9_filepath=pano_master_path,
                     out_16x9_width=self.width,
                     out_16x9_height=self.height,
                     codec=self.codec,
@@ -420,6 +446,7 @@ class RenderWorker(QThread):
                     progress_callback=callback
                 )
             elif self.mode == "16:9_autocam":
+                self.rendered_16x9_path = self.out_path
                 success = self.engine.render_two_stage_broadcast(
                     output_16x9_filepath=self.out_path,
                     out_16x9_width=self.width,
@@ -433,7 +460,25 @@ class RenderWorker(QThread):
                     keep_32x9=False,
                     progress_callback=callback
                 )
+            elif self.mode == "16:9_tactical":
+                self.rendered_16x9_path = self.out_path
+                def cb_tact(proc, total, fps, eta):
+                    self.progress_signal.emit(proc, total, fps, eta, "16:9 Taktik-Warp Rendering...")
+
+                success = self.engine.render_video_to_file(
+                    output_filepath=self.out_path,
+                    out_width=self.width,
+                    out_height=self.height,
+                    mode="16:9_tactical",
+                    codec=self.codec,
+                    bitrate_mbps=self.bitrate,
+                    start_frame=self.start_frame,
+                    end_frame=self.end_frame,
+                    audio_source=self.audio_source,
+                    progress_callback=cb_tact
+                )
             elif self.mode == "21:10":
+                self.rendered_32x9_path = self.out_path
                 def cb_2110(proc, total, fps, eta):
                     self.progress_signal.emit(proc, total, fps, eta, "21:10 Panorama Rendering...")
 
@@ -450,6 +495,7 @@ class RenderWorker(QThread):
                     progress_callback=cb_2110
                 )
             else: # Panorama (8:3 or 32:9)
+                self.rendered_32x9_path = self.out_path
                 is_8x3 = hasattr(self.engine, 'is_4_3_mode') and self.engine.is_4_3_mode()
                 pano_title = "8:3 Panorama" if is_8x3 else "32:9 Panorama"
                 def cb_pano(proc, total, fps, eta):
@@ -475,6 +521,150 @@ class RenderWorker(QThread):
         except Exception as e:
             logger.critical(f"Kritischer Ausnahmefehler im RenderWorker: {e}", exc_info=True)
             self.finished_signal.emit(False, f"Schwerwiegender interner Fehler: {e}")
+
+
+class CloudUploadWorker(QThread):
+    """Background worker for resumable chunked HTTPS upload to MatchTrack Online."""
+    progress_signal = Signal(object, object, float, float, str)
+    finished_signal = Signal(bool, str, dict)
+
+    def __init__(self, client: MatchTrackOnlineClient, upload_kwargs: Dict[str, Any]):
+        super().__init__()
+        self.client = client
+        self.upload_kwargs = upload_kwargs
+        self.stop_event = threading.Event()
+
+    def cancel(self):
+        self.stop_event.set()
+
+    def run(self):
+        try:
+            def cb(sent_b, total_b, speed_mb_s, eta_s, msg):
+                self.progress_signal.emit(sent_b, total_b, speed_mb_s, eta_s, msg)
+
+            res = self.client.upload_match(
+                stop_event=self.stop_event,
+                progress_callback=cb,
+                **self.upload_kwargs
+            )
+            self.finished_signal.emit(True, res.get("message", "Upload erfolgreich abgeschlossen!"), res)
+        except InterruptedError as ie:
+            self.finished_signal.emit(False, str(ie), {})
+        except Exception as e:
+            logger.error(f"CloudUploadWorker Fehler: {e}", exc_info=True)
+            self.finished_signal.emit(False, str(e), {})
+
+
+class CloudLoginDialog(QDialog):
+    """Secure login dialog for connecting MatchTrack-Stitcher to MatchTrack Online."""
+    def __init__(self, client: MatchTrackOnlineClient, initial_url: str = "", parent=None):
+        super().__init__(parent)
+        self.client = client
+        self.setWindowTitle("☁️ Mit MatchTrack Online verbinden")
+        self.setMinimumWidth(440)
+        self.setStyleSheet("""
+            QDialog { background-color: #12121a; color: #f4f4f6; }
+            QLabel { color: #e4e4e7; font-size: 12px; }
+            QLineEdit {
+                background-color: #0b0b10;
+                border: 1px solid #2e2e40;
+                border-radius: 8px;
+                padding: 8px 10px;
+                color: #ffffff;
+                font-size: 12px;
+            }
+            QLineEdit:focus { border-color: #3b82f6; }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(18, 18, 18, 18)
+
+        lbl_header = QLabel("🔑 Anmeldung bei MatchTrack Online")
+        lbl_header.setStyleSheet("font-size: 15px; font-weight: bold; color: #60a5fa;")
+        layout.addWidget(lbl_header)
+
+        lbl_sub = QLabel(
+            "Melde dich mit deinem Trainer- oder Admin-Konto an. "
+            "Das Zugangs-Token wird lokal über die Windows-DPAPI verschlüsselt gespeichert."
+        )
+        lbl_sub.setStyleSheet("color: #9ca3af; font-size: 11px;")
+        lbl_sub.setWordWrap(True)
+        layout.addWidget(lbl_sub)
+
+        layout.addWidget(QLabel("Server-URL (HTTPS):"))
+        self.txt_url = QLineEdit()
+        self.txt_url.setPlaceholderText("https://analyse.dein-verein.de")
+        self.txt_url.setText(initial_url or client.server_url or "")
+        layout.addWidget(self.txt_url)
+
+        layout.addWidget(QLabel("Benutzername:"))
+        self.txt_user = QLineEdit()
+        self.txt_user.setPlaceholderText("Benutzername eingeben...")
+        self.txt_user.setText(client.username or "")
+        layout.addWidget(self.txt_user)
+
+        layout.addWidget(QLabel("Passwort:"))
+        pw_row = QHBoxLayout()
+        self.txt_pass = QLineEdit()
+        self.txt_pass.setEchoMode(QLineEdit.Password)
+        self.txt_pass.setPlaceholderText("Passwort eingeben...")
+        btn_toggle_pw = QPushButton("👁")
+        btn_toggle_pw.setCheckable(True)
+        btn_toggle_pw.setFixedWidth(38)
+        btn_toggle_pw.setToolTip("Passwort ein-/ausblenden")
+        btn_toggle_pw.toggled.connect(
+            lambda checked: self.txt_pass.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+        )
+        pw_row.addWidget(self.txt_pass, 1)
+        pw_row.addWidget(btn_toggle_pw)
+        layout.addLayout(pw_row)
+
+        self.chk_remember = QCheckBox("🔒 Sitzung sicher über Windows-DPAPI auf diesem PC speichern")
+        self.chk_remember.setChecked(True)
+        self.chk_remember.setStyleSheet("color: #10b981; font-weight: 600; margin-top: 4px;")
+        layout.addWidget(self.chk_remember)
+
+        self.lbl_error = QLabel("")
+        self.lbl_error.setStyleSheet("color: #ef4444; font-size: 11px; font-weight: 600;")
+        self.lbl_error.setWordWrap(True)
+        self.lbl_error.setVisible(False)
+        layout.addWidget(self.lbl_error)
+
+        btn_row = QHBoxLayout()
+        btn_cancel = QPushButton("Abbrechen")
+        btn_cancel.clicked.connect(self.reject)
+        self.btn_login = QPushButton("☁️ Sicher verbinden")
+        self.btn_login.setStyleSheet(
+            "background-color: #2563eb; color: white; font-weight: bold; padding: 8px 16px; border-radius: 8px;"
+        )
+        self.btn_login.setDefault(True)
+        self.btn_login.clicked.connect(self._do_login)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(self.btn_login)
+        layout.addLayout(btn_row)
+
+    def _do_login(self):
+        self.lbl_error.setVisible(False)
+        self.btn_login.setEnabled(False)
+        self.btn_login.setText("Verbinde...")
+        QApplication.processEvents()
+        try:
+            self.client.login(
+                server_url=self.txt_url.text(),
+                username=self.txt_user.text(),
+                password=self.txt_pass.text(),
+                remember=self.chk_remember.isChecked()
+            )
+            self.accept()
+        except Exception as e:
+            self.lbl_error.setText(f"❌ {e}")
+            self.lbl_error.setVisible(True)
+        finally:
+            self.btn_login.setEnabled(True)
+            self.btn_login.setText("☁️ Sicher verbinden")
+
 
 
 class InteractivePanoramaViewport(QWidget):
@@ -1568,6 +1758,11 @@ class MainWindow(QMainWindow):
         self.rig = RigConfiguration()
         self.engine = StitcherEngine(self.rig)
         self.render_worker: Optional[RenderWorker] = None
+        self.cloud_client = MatchTrackOnlineClient()
+        self.cloud_upload_worker: Optional[CloudUploadWorker] = None
+        self.last_uploaded_match_url: str = ""
+        self.saved_cloud_server_url: str = ""
+        self.saved_cloud_team_id: str = ""
 
         # Playback timer
         self.playback_timer = QTimer(self)
@@ -1596,6 +1791,7 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.apply_dark_theme()
         self.load_default_startup_settings()
+        QTimer.singleShot(400, self.restore_cloud_session_on_startup)
 
     def init_ui(self):
         central_widget = QWidget()
@@ -3010,6 +3206,180 @@ class MainWindow(QMainWindow):
         render_box.addWidget(self.btn_cancel_render)
 
         export_layout.addWidget(grp_render)
+
+        # -------------------------------------------------------------------------
+        # Cloud Upload to MatchTrack Online
+        # -------------------------------------------------------------------------
+        grp_cloud = QGroupBox("☁️ MatchTrack Online – Direkt-Upload")
+        cloud_box = QVBoxLayout(grp_cloud)
+        cloud_box.setSpacing(8)
+
+        # Connection Status Row
+        conn_row = QHBoxLayout()
+        self.lbl_cloud_status = QLabel("🔴 Nicht verbunden")
+        self.lbl_cloud_status.setStyleSheet(
+            "background-color: #1a1520; color: #f87171; border: 1px solid #3f202b; "
+            "border-radius: 8px; padding: 5px 10px; font-size: 11px; font-weight: 600;"
+        )
+        self.btn_cloud_login = QPushButton("🔑 Verbinden")
+        self.btn_cloud_login.setStyleSheet(
+            "background-color: #1e293b; border: 1px solid #3b82f6; color: #60a5fa; "
+            "font-weight: bold; padding: 5px 10px; border-radius: 8px; font-size: 11px;"
+        )
+        self.btn_cloud_login.clicked.connect(self.open_cloud_login_dialog)
+
+        self.btn_cloud_refresh = QToolButton()
+        self.btn_cloud_refresh.setText("🔄")
+        self.btn_cloud_refresh.setToolTip("Mannschaften & Spieleliste vom Server neu laden")
+        self.btn_cloud_refresh.setStyleSheet(
+            "background-color: #1a1a26; border: 1px solid #28283a; border-radius: 8px; padding: 5px 8px;"
+        )
+        self.btn_cloud_refresh.setEnabled(False)
+        self.btn_cloud_refresh.clicked.connect(self.refresh_cloud_teams_and_matches)
+
+        self.btn_cloud_logout = QPushButton("Abmelden")
+        self.btn_cloud_logout.setStyleSheet(
+            "background-color: #1a1a26; border: 1px solid #28283a; color: #94a3b8; "
+            "padding: 5px 8px; border-radius: 8px; font-size: 11px;"
+        )
+        self.btn_cloud_logout.setVisible(False)
+        self.btn_cloud_logout.clicked.connect(self.logout_cloud_session)
+
+        conn_row.addWidget(self.lbl_cloud_status, 1)
+        conn_row.addWidget(self.btn_cloud_login)
+        conn_row.addWidget(self.btn_cloud_refresh)
+        conn_row.addWidget(self.btn_cloud_logout)
+        cloud_box.addLayout(conn_row)
+
+        # Target Mode: New Match vs Existing Match
+        cloud_box.addWidget(QLabel("Ziel auf Plattform:"))
+        self.combo_cloud_target_mode = NoWheelComboBox()
+        self.combo_cloud_target_mode.addItem("✨ Neues Spiel auf MatchTrack Online anlegen", "new")
+        self.combo_cloud_target_mode.addItem("➕ Zu bestehendem Spiel hinzufügen / Perspektive ergänzen", "existing")
+        self.combo_cloud_target_mode.currentIndexChanged.connect(self.on_cloud_target_mode_changed)
+        cloud_box.addWidget(self.combo_cloud_target_mode)
+
+        self.lbl_cloud_existing = QLabel("Bestehendes Spiel auswählen:")
+        self.lbl_cloud_existing.setVisible(False)
+        cloud_box.addWidget(self.lbl_cloud_existing)
+
+        self.combo_cloud_existing_match = NoWheelComboBox()
+        self.combo_cloud_existing_match.setVisible(False)
+        self.combo_cloud_existing_match.currentIndexChanged.connect(self.on_cloud_existing_match_selected)
+        cloud_box.addWidget(self.combo_cloud_existing_match)
+
+        # Match Title
+        cloud_box.addWidget(QLabel("Spielname / Begegnung:"))
+        self.txt_cloud_match_name = QLineEdit()
+        self.txt_cloud_match_name.setPlaceholderText("z.B. SG Musterstadt vs. FC Beispiel")
+        self.txt_cloud_match_name.setStyleSheet(
+            "background-color: #111118; border: 1px solid #282839; border-radius: 8px; padding: 6px 10px; color: #f4f4f6;"
+        )
+        cloud_box.addWidget(self.txt_cloud_match_name)
+
+        # Team & Category Row
+        row_team_cat = QHBoxLayout()
+        col_team = QVBoxLayout()
+        col_team.addWidget(QLabel("Mannschaft:"))
+        self.combo_cloud_team = NoWheelComboBox()
+        self.combo_cloud_team.addItem("— Bitte erst verbinden —", "")
+        col_team.addWidget(self.combo_cloud_team)
+
+        col_cat = QVBoxLayout()
+        col_cat.addWidget(QLabel("Kategorie:"))
+        self.combo_cloud_category = NoWheelComboBox()
+        for cat_name in ["Punktspiel", "Testspiel", "Pokalspiel", "Turnier", "Training", "Trainingslager"]:
+            self.combo_cloud_category.addItem(cat_name, cat_name)
+        col_cat.addWidget(self.combo_cloud_category)
+
+        row_team_cat.addLayout(col_team, 3)
+        row_team_cat.addLayout(col_cat, 2)
+        cloud_box.addLayout(row_team_cat)
+
+        # Recording Date Row
+        row_rec_date = QHBoxLayout()
+        row_rec_date.addWidget(QLabel("Spieltag / Aufnahmedatum:"))
+        self.date_cloud_recording = QDateEdit()
+        self.date_cloud_recording.setCalendarPopup(True)
+        self.date_cloud_recording.setDisplayFormat("dd.MM.yyyy")
+        self.date_cloud_recording.setDate(QDate.currentDate())
+        self.date_cloud_recording.setStyleSheet(
+            "background-color: #111118; border: 1px solid #282839; border-radius: 8px; padding: 5px 8px; color: #f4f4f6;"
+        )
+        row_rec_date.addWidget(self.date_cloud_recording, 1)
+        cloud_box.addLayout(row_rec_date)
+
+        # Upload Options Checkboxes
+        self.chk_cloud_auto_upload = QCheckBox("🚀 Nach dem Rendern automatisch zu MatchTrack Online hochladen")
+        self.chk_cloud_auto_upload.setChecked(False)
+        self.chk_cloud_auto_upload.setStyleSheet("font-weight: 700; color: #10b981; margin-top: 4px;")
+        cloud_box.addWidget(self.chk_cloud_auto_upload)
+
+        self.chk_cloud_notify = QCheckBox("🔔 Mannschaftsmitglieder nach Upload benachrichtigen")
+        self.chk_cloud_notify.setChecked(True)
+        self.chk_cloud_notify.setStyleSheet("color: #cbd5e1;")
+        cloud_box.addWidget(self.chk_cloud_notify)
+
+        self.chk_cloud_fast_hls = QCheckBox("⚡ Schnelle Web-Bereitstellung (Direktes HLS ohne Re-Encode falls H.264)")
+        self.chk_cloud_fast_hls.setChecked(False)
+        self.chk_cloud_fast_hls.setStyleSheet("color: #38bdf8;")
+        self.chk_cloud_fast_hls.setToolTip(
+            "Wenn aktiviert, überspringt der Server die erneute H.264-Umkodierung vor der HLS-Segmentierung."
+        )
+        cloud_box.addWidget(self.chk_cloud_fast_hls)
+
+        # Password protection option
+        pw_prot_row = QHBoxLayout()
+        self.chk_cloud_password = QCheckBox("🔒 Spiel mit Passwort schützen:")
+        self.chk_cloud_password.setStyleSheet("color: #f59e0b; font-weight: 600;")
+        self.txt_cloud_password = QLineEdit()
+        self.txt_cloud_password.setPlaceholderText("Spiel-Passwort...")
+        self.txt_cloud_password.setVisible(False)
+        self.txt_cloud_password.setStyleSheet(
+            "background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6;"
+        )
+        self.chk_cloud_password.toggled.connect(self.txt_cloud_password.setVisible)
+        pw_prot_row.addWidget(self.chk_cloud_password)
+        pw_prot_row.addWidget(self.txt_cloud_password, 1)
+        cloud_box.addLayout(pw_prot_row)
+
+        # Manual Upload Action Button
+        self.btn_cloud_upload_now = QPushButton("☁️ Bereits gerendertes Video jetzt auswählen & hochladen...")
+        self.btn_cloud_upload_now.setStyleSheet(
+            "background-color: #059669; font-weight: bold; padding: 10px; font-size: 12px; color: white; border-radius: 10px;"
+        )
+        self.btn_cloud_upload_now.clicked.connect(self.start_manual_cloud_upload_dialog)
+        cloud_box.addWidget(self.btn_cloud_upload_now)
+
+        self.cloud_progress_bar = QProgressBar()
+        self.cloud_progress_bar.setValue(0)
+        cloud_box.addWidget(self.cloud_progress_bar)
+
+        self.lbl_cloud_upload_stats = QLabel("Bereit für Cloud-Upload.")
+        self.lbl_cloud_upload_stats.setStyleSheet("color: #8e8e9c; font-size: 11px;")
+        self.lbl_cloud_upload_stats.setWordWrap(True)
+        cloud_box.addWidget(self.lbl_cloud_upload_stats)
+
+        cloud_btn_bottom = QHBoxLayout()
+        self.btn_cloud_cancel = QPushButton("Upload abbrechen")
+        self.btn_cloud_cancel.setEnabled(False)
+        self.btn_cloud_cancel.setStyleSheet(
+            "background-color: #1a1a26; border: 1px solid #28283a; border-radius: 8px; padding: 6px; font-size: 11px; color: #94a3b8;"
+        )
+        self.btn_cloud_cancel.clicked.connect(self.cancel_cloud_upload)
+
+        self.btn_cloud_open_browser = QPushButton("🌐 Spiel im Browser öffnen")
+        self.btn_cloud_open_browser.setEnabled(False)
+        self.btn_cloud_open_browser.setStyleSheet(
+            "background-color: #1e293b; border: 1px solid #3b82f6; border-radius: 8px; padding: 6px; font-size: 11px; color: #60a5fa; font-weight: bold;"
+        )
+        self.btn_cloud_open_browser.clicked.connect(self.open_last_uploaded_match_in_browser)
+
+        cloud_btn_bottom.addWidget(self.btn_cloud_cancel)
+        cloud_btn_bottom.addWidget(self.btn_cloud_open_browser)
+        cloud_box.addLayout(cloud_btn_bottom)
+
+        export_layout.addWidget(grp_cloud)
         export_layout.addStretch()
 
         scroll_exp.setWidget(widget_exp)
@@ -4722,6 +5092,14 @@ class MainWindow(QMainWindow):
                 "trim_only": trim_only,
                 "audio_source": audio_src
             },
+            "cloud": {
+                "server_url": self.cloud_client.server_url or self.saved_cloud_server_url,
+                "team_id": self.combo_cloud_team.currentData() if hasattr(self, 'combo_cloud_team') else self.saved_cloud_team_id,
+                "category": self.combo_cloud_category.currentData() if hasattr(self, 'combo_cloud_category') else "Punktspiel",
+                "auto_upload": self.chk_cloud_auto_upload.isChecked() if hasattr(self, 'chk_cloud_auto_upload') else False,
+                "notify_team": self.chk_cloud_notify.isChecked() if hasattr(self, 'chk_cloud_notify') else True,
+                "fast_hls": self.chk_cloud_fast_hls.isChecked() if hasattr(self, 'chk_cloud_fast_hls') else False
+            },
             "ui_view": ui_dict
         }
 
@@ -5030,6 +5408,24 @@ class MainWindow(QMainWindow):
                 idx = self.combo_audio_source.findData(exp["audio_source"])
                 if idx >= 0:
                     self.combo_audio_source.setCurrentIndex(idx)
+
+        # 4b. Cloud Settings (Non-sensitive preferences only)
+        if "cloud" in data and isinstance(data["cloud"], dict):
+            cld = data["cloud"]
+            if "server_url" in cld and cld["server_url"]:
+                self.saved_cloud_server_url = str(cld["server_url"])
+            if "team_id" in cld and cld["team_id"]:
+                self.saved_cloud_team_id = str(cld["team_id"])
+            if hasattr(self, 'combo_cloud_category') and "category" in cld:
+                idx = self.combo_cloud_category.findData(cld["category"])
+                if idx >= 0:
+                    self.combo_cloud_category.setCurrentIndex(idx)
+            if hasattr(self, 'chk_cloud_auto_upload') and "auto_upload" in cld:
+                self.chk_cloud_auto_upload.setChecked(bool(cld["auto_upload"]))
+            if hasattr(self, 'chk_cloud_notify') and "notify_team" in cld:
+                self.chk_cloud_notify.setChecked(bool(cld["notify_team"]))
+            if hasattr(self, 'chk_cloud_fast_hls') and "fast_hls" in cld:
+                self.chk_cloud_fast_hls.setChecked(bool(cld["fast_hls"]))
 
         # 5. UI Preferences & Overlays
         if "ui_view" in data and isinstance(data["ui_view"], dict):
@@ -5449,7 +5845,13 @@ class MainWindow(QMainWindow):
             self.progress_bar.setValue(100)
             self.lbl_render_stats.setText("Export erfolgreich abgeschlossen! 🎉")
             logger.info("Video-Export erfolgreich beendet.")
-            QMessageBox.information(self, "Export fertig", message)
+            if hasattr(self, 'chk_cloud_auto_upload') and self.chk_cloud_auto_upload.isChecked():
+                r_16x9 = getattr(self.render_worker, 'rendered_16x9_path', None)
+                r_32x9 = getattr(self.render_worker, 'rendered_32x9_path', None)
+                logger.info("Starte automatischen Cloud-Upload zu MatchTrack Online nach erfolgreichem Rendering...")
+                self._start_cloud_upload(video_16x9_path=r_16x9, video_32x9_path=r_32x9)
+            else:
+                QMessageBox.information(self, "Export fertig", message)
         else:
             self.lbl_render_stats.setText("Export abgebrochen / Fehler aufgetreten (siehe Log).")
             logger.warning(f"Video-Export nicht erfolgreich: {message}")
@@ -5475,6 +5877,297 @@ class MainWindow(QMainWindow):
             logger.info("Benutzer hat Export-Abbruch angefordert.")
             self.engine.cancel_render()
             self.lbl_render_stats.setText("Abbruch wird ausgeführt...")
+
+    # =========================================================================
+    # MatchTrack Online Cloud Upload Integration
+    # =========================================================================
+
+    def restore_cloud_session_on_startup(self):
+        """Silently restores DPAPI-encrypted session if present."""
+        try:
+            profile = self.cloud_client.restore_saved_session()
+            if profile:
+                self._update_cloud_ui_connected(profile)
+                self.refresh_cloud_teams_and_matches()
+        except Exception as e:
+            logger.debug(f"Cloud-Auto-Restore übersprungen: {e}")
+
+    def _update_cloud_ui_connected(self, profile: Dict[str, Any]):
+        username = profile.get("username") or self.cloud_client.username
+        role = profile.get("role", "TRAINER")
+        host = self.cloud_client.server_url.replace("https://", "").replace("http://", "")
+        self.lbl_cloud_status.setText(f"🟢 {username} ({role}) @ {host}")
+        self.lbl_cloud_status.setStyleSheet(
+            "background-color: #0d2818; color: #34d399; border: 1px solid #059669; "
+            "border-radius: 8px; padding: 5px 10px; font-size: 11px; font-weight: 700;"
+        )
+        self.btn_cloud_login.setText("🔑 Konto")
+        self.btn_cloud_refresh.setEnabled(True)
+        self.btn_cloud_logout.setVisible(True)
+        self.saved_cloud_server_url = self.cloud_client.server_url
+
+    def _update_cloud_ui_disconnected(self):
+        self.lbl_cloud_status.setText("🔴 Nicht verbunden")
+        self.lbl_cloud_status.setStyleSheet(
+            "background-color: #1a1520; color: #f87171; border: 1px solid #3f202b; "
+            "border-radius: 8px; padding: 5px 10px; font-size: 11px; font-weight: 600;"
+        )
+        self.btn_cloud_login.setText("🔑 Verbinden")
+        self.btn_cloud_refresh.setEnabled(False)
+        self.btn_cloud_logout.setVisible(False)
+        self.combo_cloud_team.clear()
+        self.combo_cloud_team.addItem("— Bitte erst verbinden —", "")
+        self.combo_cloud_existing_match.clear()
+
+    def open_cloud_login_dialog(self):
+        dlg = CloudLoginDialog(
+            self.cloud_client,
+            initial_url=self.cloud_client.server_url or self.saved_cloud_server_url,
+            parent=self
+        )
+        if dlg.exec() == QDialog.Accepted and self.cloud_client.is_authenticated:
+            self._update_cloud_ui_connected(self.cloud_client.user_info)
+            self.refresh_cloud_teams_and_matches()
+            self.status_bar.showMessage(f"☁️ Verbunden mit MatchTrack Online ({self.cloud_client.server_url})")
+
+    def logout_cloud_session(self):
+        self.cloud_client.logout()
+        self._update_cloud_ui_disconnected()
+        self.status_bar.showMessage("☁️ Von MatchTrack Online abgemeldet.")
+
+    def refresh_cloud_teams_and_matches(self):
+        if not self.cloud_client.is_authenticated:
+            return
+        try:
+            teams = self.cloud_client.fetch_teams()
+            prev_tid = self.combo_cloud_team.currentData() or self.saved_cloud_team_id
+            self.combo_cloud_team.blockSignals(True)
+            self.combo_cloud_team.clear()
+            self.combo_cloud_team.addItem("— Keine Mannschaft / Allgemein —", "")
+            restored_idx = 0
+            for idx, t in enumerate(teams, start=1):
+                t_id = t.get("id", "")
+                t_name = t.get("name", "Mannschaft")
+                age = t.get("age_group")
+                label = f"{t_name} ({age})" if age else t_name
+                self.combo_cloud_team.addItem(label, t_id)
+                if prev_tid and t_id == prev_tid:
+                    restored_idx = idx
+            if restored_idx == 0 and len(teams) == 1:
+                restored_idx = 1
+            self.combo_cloud_team.setCurrentIndex(restored_idx)
+            self.combo_cloud_team.blockSignals(False)
+
+            matches = self.cloud_client.fetch_recent_matches(limit=30)
+            self.combo_cloud_existing_match.blockSignals(True)
+            self.combo_cloud_existing_match.clear()
+            for m in matches:
+                m_id = m.get("id", "")
+                m_name = m.get("name", m_id)
+                m_team = m.get("team_name") or ""
+                v_type = m.get("video_type") or ""
+                badge = f" [{v_type}]" if v_type else ""
+                team_str = f" ({m_team})" if m_team else ""
+                self.combo_cloud_existing_match.addItem(f"{m_name}{team_str}{badge}", m)
+            self.combo_cloud_existing_match.blockSignals(False)
+        except Exception as e:
+            logger.warning(f"Fehler beim Aktualisieren der Cloud-Daten: {e}")
+
+    def on_cloud_target_mode_changed(self):
+        is_existing = (self.combo_cloud_target_mode.currentData() == "existing")
+        self.lbl_cloud_existing.setVisible(is_existing)
+        self.combo_cloud_existing_match.setVisible(is_existing)
+        if is_existing:
+            self.on_cloud_existing_match_selected()
+
+    def on_cloud_existing_match_selected(self):
+        if self.combo_cloud_target_mode.currentData() != "existing":
+            return
+        m_data = self.combo_cloud_existing_match.currentData()
+        if isinstance(m_data, dict):
+            if m_data.get("name"):
+                self.txt_cloud_match_name.setText(str(m_data["name"]))
+            if m_data.get("team_id"):
+                idx = self.combo_cloud_team.findData(m_data["team_id"])
+                if idx >= 0:
+                    self.combo_cloud_team.setCurrentIndex(idx)
+            if m_data.get("category"):
+                idx = self.combo_cloud_category.findData(m_data["category"])
+                if idx >= 0:
+                    self.combo_cloud_category.setCurrentIndex(idx)
+
+    def _suggest_default_match_name(self, sample_filepath: Optional[str] = None) -> str:
+        current = self.txt_cloud_match_name.text().strip()
+        if current:
+            return current
+        if sample_filepath:
+            folder_name = os.path.basename(os.path.dirname(os.path.abspath(sample_filepath)))
+            base_name = os.path.splitext(os.path.basename(sample_filepath))[0]
+            if folder_name and folder_name.lower() not in ("videos", "export", "output", "desktop", "downloads"):
+                return folder_name
+            return base_name
+        return f"Spiel vom {self.date_cloud_recording.date().toString('dd.MM.yyyy')}"
+
+    def start_manual_cloud_upload_dialog(self):
+        """Lets the user pick already rendered MP4 file(s) from disk and upload them directly."""
+        if not self.cloud_client.is_authenticated:
+            self.open_cloud_login_dialog()
+            if not self.cloud_client.is_authenticated:
+                return
+
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Gerenderte Videodatei(en) für MatchTrack Online auswählen (16:9 und/oder Panorama)",
+            "",
+            "MP4 Video (*.mp4 *.m4v *.mov)"
+        )
+        if not files:
+            return
+
+        video_16x9 = None
+        video_32x9 = None
+
+        for fp in files:
+            low = os.path.basename(fp).lower()
+            # Probe aspect ratio via OpenCV to classify Panorama vs 16:9 automatically
+            is_pano_file = any(t in low for t in ("32x9", "8x3", "21x10", "pano", "master"))
+            if not is_pano_file:
+                try:
+                    cap = cv2.VideoCapture(fp)
+                    if cap.isOpened():
+                        vw = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                        vh = max(1.0, cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                        if (vw / vh) >= 2.0:
+                            is_pano_file = True
+                    cap.release()
+                except Exception:
+                    pass
+
+            if is_pano_file and not video_32x9:
+                video_32x9 = fp
+            elif not is_pano_file and not video_16x9:
+                video_16x9 = fp
+            elif not video_32x9:
+                video_32x9 = fp
+            elif not video_16x9:
+                video_16x9 = fp
+
+        if not self.txt_cloud_match_name.text().strip():
+            self.txt_cloud_match_name.setText(self._suggest_default_match_name(files[0]))
+
+        self._start_cloud_upload(video_16x9_path=video_16x9, video_32x9_path=video_32x9)
+
+    def _start_cloud_upload(self, video_16x9_path: Optional[str] = None, video_32x9_path: Optional[str] = None):
+        if self.cloud_upload_worker and self.cloud_upload_worker.isRunning():
+            QMessageBox.information(self, "Cloud-Upload", "Ein Cloud-Upload läuft bereits im Hintergrund.")
+            return
+
+        if not self.cloud_client.is_authenticated:
+            self.open_cloud_login_dialog()
+            if not self.cloud_client.is_authenticated:
+                return
+
+        sample_file = video_16x9_path or video_32x9_path
+        match_name = self._suggest_default_match_name(sample_file)
+        self.txt_cloud_match_name.setText(match_name)
+
+        team_id = self.combo_cloud_team.currentData() or None
+        user_role = str(self.cloud_client.user_info.get("role", "")).upper()
+        if user_role != "ADMIN" and not team_id:
+            QMessageBox.warning(
+                self,
+                "Mannschaft erforderlich",
+                "Bitte wähle im Dropdown 'Mannschaft' eine dir zugewiesene Mannschaft für den Upload aus."
+            )
+            return
+
+        target_match_id = None
+        if self.combo_cloud_target_mode.currentData() == "existing":
+            m_data = self.combo_cloud_existing_match.currentData()
+            if isinstance(m_data, dict) and m_data.get("id"):
+                target_match_id = m_data["id"]
+
+        res_data = self.combo_resolution.currentData()
+        h_px = res_data[1] if isinstance(res_data, (tuple, list)) and len(res_data) == 2 else 1080
+        video_quality = f"{h_px}p"
+
+        rec_date_str = self.date_cloud_recording.date().toString("yyyy-MM-dd")
+        is_pw = self.chk_cloud_password.isChecked() and bool(self.txt_cloud_password.text().strip())
+        pw_val = self.txt_cloud_password.text().strip() if is_pw else None
+
+        upload_kwargs = {
+            "name": match_name,
+            "team_id": team_id,
+            "category": self.combo_cloud_category.currentData() or "Punktspiel",
+            "recording_date": rec_date_str,
+            "video_quality": video_quality,
+            "match_id": target_match_id,
+            "video_16x9_path": video_16x9_path,
+            "video_32x9_path": video_32x9_path,
+            "is_password_protected": is_pw,
+            "password": pw_val,
+            "skip_conversion": self.chk_cloud_fast_hls.isChecked(),
+            "notify_team_members": self.chk_cloud_notify.isChecked()
+        }
+
+        self.btn_cloud_upload_now.setEnabled(False)
+        self.btn_cloud_cancel.setEnabled(True)
+        self.btn_cloud_open_browser.setEnabled(False)
+        self.cloud_progress_bar.setValue(0)
+        self.lbl_cloud_upload_stats.setText("☁️ Verbinde mit MatchTrack Online & starte Upload...")
+
+        self.cloud_upload_worker = CloudUploadWorker(self.cloud_client, upload_kwargs)
+        self.cloud_upload_worker.progress_signal.connect(self.on_cloud_upload_progress)
+        self.cloud_upload_worker.finished_signal.connect(self.on_cloud_upload_finished)
+        self.cloud_upload_worker.start()
+
+    def on_cloud_upload_progress(self, sent_bytes: int, total_bytes: int, speed_mb_s: float, eta_sec: float, status_text: str):
+        pct = int((sent_bytes / max(total_bytes, 1)) * 100)
+        self.cloud_progress_bar.setValue(pct)
+        if speed_mb_s > 0.01:
+            m, s = divmod(int(eta_sec), 60)
+            self.lbl_cloud_upload_stats.setText(f"{status_text} | {speed_mb_s:.1f} MB/s | Restzeit: {m:02d}:{s:02d}")
+        else:
+            self.lbl_cloud_upload_stats.setText(status_text)
+
+    def on_cloud_upload_finished(self, success: bool, message: str, result: dict):
+        self.btn_cloud_upload_now.setEnabled(True)
+        self.btn_cloud_cancel.setEnabled(False)
+        if success:
+            self.cloud_progress_bar.setValue(100)
+            match_url = result.get("match_url", "")
+            self.last_uploaded_match_url = match_url
+            self.btn_cloud_open_browser.setEnabled(bool(match_url))
+            self.lbl_cloud_upload_stats.setText(f"✅ Upload abgeschlossen: {message}")
+            self.status_bar.showMessage("☁️ Spiel erfolgreich auf MatchTrack Online veröffentlicht!")
+            self.refresh_cloud_teams_and_matches()
+
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Information)
+            msg_box.setWindowTitle("☁️ MatchTrack Online Upload erfolgreich")
+            msg_box.setText(
+                f"🎉 Das Spiel wurde erfolgreich zu MatchTrack Online hochgeladen und angelegt!\n\n"
+                f"Spiel: {result.get('match_name', self.txt_cloud_match_name.text())}\n"
+                f"URL: {match_url}"
+            )
+            btn_open = msg_box.addButton("🌐 Jetzt im Browser öffnen", QMessageBox.AcceptRole)
+            msg_box.addButton("Schließen", QMessageBox.RejectRole)
+            msg_box.exec()
+            if msg_box.clickedButton() == btn_open and match_url:
+                QDesktopServices.openUrl(QUrl(match_url))
+        else:
+            self.lbl_cloud_upload_stats.setText(f"❌ Upload fehlgeschlagen: {message}")
+            QMessageBox.warning(self, "Cloud-Upload fehlgeschlagen", f"Der Upload zu MatchTrack Online konnte nicht abgeschlossen werden:\n\n{message}")
+
+    def cancel_cloud_upload(self):
+        if self.cloud_upload_worker and self.cloud_upload_worker.isRunning():
+            logger.info("Benutzer hat Abbruch des Cloud-Uploads angefordert.")
+            self.cloud_upload_worker.cancel()
+            self.lbl_cloud_upload_stats.setText("Upload-Abbruch wird ausgeführt...")
+
+    def open_last_uploaded_match_in_browser(self):
+        if self.last_uploaded_match_url:
+            QDesktopServices.openUrl(QUrl(self.last_uploaded_match_url))
 
 
 def launch_gui():
