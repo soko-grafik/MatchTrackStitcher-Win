@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, Slot, QPoint, QPointF, QRectF, QObject, QEvent, QDate, QUrl
-from PySide6.QtGui import QImage, QPixmap, QIcon, QFont, QColor, QPainter, QPen, QWheelEvent, QMouseEvent, QPolygonF, QDesktopServices
+from PySide6.QtGui import QImage, QPixmap, QIcon, QFont, QColor, QPainter, QPen, QWheelEvent, QMouseEvent, QPolygonF, QDesktopServices, QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QSlider, QSpinBox, QDoubleSpinBox, QComboBox, QAbstractSpinBox,
@@ -2010,7 +2010,6 @@ class MainWindow(QMainWindow):
 
         self.btn_nav_home = QPushButton("🏠 Zentrale")
         self.btn_nav_stitch = QPushButton("🧵 Stitching")
-        self.btn_nav_calib = QPushButton("🎨 Naht & Farbe")
         self.btn_nav_ai = QPushButton("🎯 KI-Broadcast")
         self.btn_nav_export = QPushButton("🚀 Export")
         self.btn_nav_live = QPushButton("🔴 Live-Stream")
@@ -2018,52 +2017,26 @@ class MainWindow(QMainWindow):
 
         self.btn_nav_home.clicked.connect(self.show_landing_page)
         self.btn_nav_stitch.clicked.connect(lambda: self.show_workspace(0))
-        self.btn_nav_calib.clicked.connect(lambda: self.show_workspace(1))
-        self.btn_nav_ai.clicked.connect(lambda: self.show_workspace(2))
-        self.btn_nav_export.clicked.connect(lambda: self.show_workspace(3))
-        self.btn_nav_live.clicked.connect(lambda: self.show_workspace(4))
-        self.btn_nav_cloud.clicked.connect(lambda: self.show_workspace(5))
+        self.btn_nav_ai.clicked.connect(lambda: self.show_workspace(1))
+        self.btn_nav_export.clicked.connect(lambda: self.show_workspace(2))
+        self.btn_nav_live.clicked.connect(lambda: self.show_workspace(3))
+        self.btn_nav_cloud.clicked.connect(lambda: self.show_workspace(4))
 
-        for btn in [self.btn_nav_home, self.btn_nav_stitch, self.btn_nav_calib, self.btn_nav_ai, self.btn_nav_export, self.btn_nav_live, self.btn_nav_cloud]:
-            btn.setStyleSheet("background-color: transparent; border: none; border-radius: 6px; font-weight: 700; font-size: 11px; padding: 5px 11px; color: #94a3b8;")
+        for btn in [self.btn_nav_home, self.btn_nav_stitch, self.btn_nav_ai, self.btn_nav_export, self.btn_nav_live, self.btn_nav_cloud]:
+            btn.setStyleSheet("background-color: transparent; border: none; border-radius: 6px; font-weight: 700; font-size: 11px; padding: 5px 12px; color: #94a3b8;")
             nav_layout.addWidget(btn)
 
         top_layout.addWidget(nav_frame)
         top_layout.addStretch()
 
-        # Bereiche Menu Bar
-        menubar = self.menuBar()
-        menu_areas = menubar.addMenu("🧭 &Bereiche")
-        
-        act_home = menu_areas.addAction("🏠 Start-Zentrale (Landingpage)")
-        act_home.setShortcut("Ctrl+H")
-        act_home.triggered.connect(self.show_landing_page)
-        
-        menu_areas.addSeparator()
-        
-        act_stitch = menu_areas.addAction("🧵 1. Video-Stitching & Medien")
-        act_stitch.setShortcut("Ctrl+1")
-        act_stitch.triggered.connect(lambda: self.show_workspace(0))
-
-        act_calib = menu_areas.addAction("🎨 2. Naht & Farbe (Kalibrierung)")
-        act_calib.setShortcut("Ctrl+2")
-        act_calib.triggered.connect(lambda: self.show_workspace(1))
-        
-        act_ai = menu_areas.addAction("🎯 3. KI-Broadcast & Follow-Cam")
-        act_ai.setShortcut("Ctrl+3")
-        act_ai.triggered.connect(lambda: self.show_workspace(2))
-        
-        act_export = menu_areas.addAction("🚀 4. Video-Export")
-        act_export.setShortcut("Ctrl+4")
-        act_export.triggered.connect(lambda: self.show_workspace(3))
-        
-        act_live = menu_areas.addAction("🔴 5. Live-Streaming (OBS-Studio)")
-        act_live.setShortcut("Ctrl+5")
-        act_live.triggered.connect(lambda: self.show_workspace(4))
-        
-        act_cloud = menu_areas.addAction("☁️ 6. MatchTrack Cloud-Upload")
-        act_cloud.setShortcut("Ctrl+6")
-        act_cloud.triggered.connect(lambda: self.show_workspace(5))
+        # Hide native menubar and use clean global shortcuts
+        self.menuBar().setVisible(False)
+        QShortcut(QKeySequence("Ctrl+H"), self, self.show_landing_page)
+        QShortcut(QKeySequence("Ctrl+1"), self, lambda: self.show_workspace(0))
+        QShortcut(QKeySequence("Ctrl+2"), self, lambda: self.show_workspace(1))
+        QShortcut(QKeySequence("Ctrl+3"), self, lambda: self.show_workspace(2))
+        QShortcut(QKeySequence("Ctrl+4"), self, lambda: self.show_workspace(3))
+        QShortcut(QKeySequence("Ctrl+5"), self, lambda: self.show_workspace(4))
 
         # Profile / Settings Management Buttons
         self.btn_load_prof_tb = QPushButton("📁 Profil")
@@ -2358,16 +2331,13 @@ class MainWindow(QMainWindow):
         self.right_pane.currentChanged.connect(self._on_tab_changed)
 
         # -------------------------------------------------------------------------
-        # TAB 1: 📁 Medien
+        # TAB 1: 🧵 STITCHING (Quellformat, Videos, Sync & Naht-/Farbkalibrierung)
         # -------------------------------------------------------------------------
-        self.tab_media = QWidget()
-        layout_tab_m = QVBoxLayout(self.tab_media)
-        layout_tab_m.setContentsMargins(4, 4, 4, 4)
-        scroll_m = QScrollArea()
-        scroll_m.setWidgetResizable(True)
-        widget_m = QWidget()
-        layout_m = QVBoxLayout(widget_m)
-        layout_m.setSpacing(12)
+        self.tab_stitching = QWidget()
+        self.tab_media = self.tab_stitching  # alias for backwards compatibility
+        layout_tab_stitch = QVBoxLayout(self.tab_stitching)
+        layout_tab_stitch.setContentsMargins(4, 4, 4, 4)
+        layout_tab_stitch.setSpacing(6)
 
         # ---------------------------------------------------------------------
         # Card: Kamera-Quellformat & Stitching-Profil (4:3 vs 16:9)
@@ -2396,7 +2366,33 @@ class MainWindow(QMainWindow):
         self.lbl_src_format_desc.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 600;")
         layout_sf.addWidget(self.lbl_src_format_desc)
 
-        layout_m.addWidget(grp_src_format)
+        layout_tab_stitch.addWidget(grp_src_format)
+
+        # Sub-Navigation Toggle: [ 🎥 Videos & Synchronisation ]  [ 🎨 Naht, Winkel & Farbe ]
+        sub_nav_frame = QFrame()
+        sub_nav_frame.setStyleSheet("QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 8px; padding: 2px; }")
+        sub_layout = QHBoxLayout(sub_nav_frame)
+        sub_layout.setContentsMargins(2, 2, 2, 2)
+        sub_layout.setSpacing(4)
+
+        self.btn_stitch_sub_media = QPushButton("🎥 Videos & Synchronisation")
+        self.btn_stitch_sub_calib = QPushButton("🎨 Naht, Winkel & Farbe")
+
+        self.btn_stitch_sub_media.clicked.connect(lambda: self.set_stitching_subpage(0))
+        self.btn_stitch_sub_calib.clicked.connect(lambda: self.set_stitching_subpage(1))
+
+        sub_layout.addWidget(self.btn_stitch_sub_media)
+        sub_layout.addWidget(self.btn_stitch_sub_calib)
+        layout_tab_stitch.addWidget(sub_nav_frame)
+
+        self.stitch_sub_stack = QStackedWidget()
+
+        # Sub-Page 0: Media & Sync
+        scroll_m = QScrollArea()
+        scroll_m.setWidgetResizable(True)
+        widget_m = QWidget()
+        layout_m = QVBoxLayout(widget_m)
+        layout_m.setSpacing(12)
 
         # Card: Video Inputs
         grp_inputs = QGroupBox("🎥 Kamera-Eingänge (Dual-Rig / Panorama)")
@@ -2528,14 +2524,11 @@ class MainWindow(QMainWindow):
         layout_m.addWidget(grp_sync)
         layout_m.addStretch()
         scroll_m.setWidget(widget_m)
-        layout_tab_m.addWidget(scroll_m)
-        self.right_pane.addTab(self.tab_media, "🧵 1. Stitching")
+        self.stitch_sub_stack.addWidget(scroll_m)
 
         # -------------------------------------------------------------------------
-        # TAB 2: 🎯 Stitching & Rig
+        # Sub-Page 1: 🎨 Naht, Winkel & Farbe (Kalibrierung & Geometrie)
         # -------------------------------------------------------------------------
-        self.tab_calib = QWidget()
-        calib_layout = QVBoxLayout(self.tab_calib)
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_widget = QWidget()
@@ -2931,11 +2924,16 @@ class MainWindow(QMainWindow):
 
         scroll_layout.addStretch()
         scroll_area.setWidget(scroll_widget)
-        calib_layout.addWidget(scroll_area)
-        self.right_pane.addTab(self.tab_calib, "🎨 2. Naht & Farbe")
+        self.stitch_sub_stack.addWidget(scroll_area)
+
+        layout_tab_stitch.addWidget(self.stitch_sub_stack, 1)
+        self.tab_calib = scroll_area
+        self.set_stitching_subpage(0)
+
+        self.right_pane.addTab(self.tab_stitching, "🧵 1. Stitching")
 
         # -------------------------------------------------------------------------
-        # TAB 3: 📐 Taktik & AutoCam (Samsung One UI Style)
+        # TAB 2: 🎯 KI-Broadcast & Follow-Cam (Samsung One UI Style)
         # -------------------------------------------------------------------------
         self.tab_autocam = QWidget()
         autocam_layout = QVBoxLayout(self.tab_autocam)
@@ -3314,10 +3312,10 @@ class MainWindow(QMainWindow):
         scroll_layout_ac.addStretch()
         scroll_area_ac.setWidget(scroll_widget_ac)
         autocam_layout.addWidget(scroll_area_ac)
-        self.right_pane.addTab(self.tab_autocam, "🎯 3. KI-Broadcast")
+        self.right_pane.addTab(self.tab_autocam, "🎯 2. KI-Broadcast")
 
         # -------------------------------------------------------------------------
-        # TAB 4: 🚀 Export (Samsung One UI Style)
+        # TAB 3: 🚀 Export (Samsung One UI Style)
         # -------------------------------------------------------------------------
         self.tab_export = QWidget()
         layout_tab_exp = QVBoxLayout(self.tab_export)
@@ -3474,19 +3472,19 @@ class MainWindow(QMainWindow):
         scroll_exp.setWidget(widget_exp)
         layout_tab_exp.addWidget(scroll_exp)
 
-        self.right_pane.addTab(self.tab_export, "🚀 4. Export")
+        self.right_pane.addTab(self.tab_export, "🚀 3. Export")
 
         # -------------------------------------------------------------------------
-        # TAB 5: OBS-STYLE RTMP LIVE-STREAMING & CAMERA DIRECT CONNECT
+        # TAB 4: OBS-STYLE RTMP LIVE-STREAMING & CAMERA DIRECT CONNECT
         # -------------------------------------------------------------------------
         self._init_livestream_tab()
-        self.right_pane.addTab(self.tab_livestream, "🔴 5. Live-Stream")
+        self.right_pane.addTab(self.tab_livestream, "🔴 4. Live-Stream")
 
         # -------------------------------------------------------------------------
-        # TAB 6: MATCHTRACK ONLINE CLOUD-UPLOAD
+        # TAB 5: MATCHTRACK ONLINE CLOUD-UPLOAD
         # -------------------------------------------------------------------------
         self._init_cloud_tab()
-        self.right_pane.addTab(self.tab_cloud, "☁️ 6. Cloud-Upload")
+        self.right_pane.addTab(self.tab_cloud, "☁️ 5. Cloud-Upload")
 
         splitter.addWidget(self.right_pane)
 
@@ -4411,7 +4409,19 @@ class MainWindow(QMainWindow):
             self.main_stack.setCurrentIndex(0)
         self._update_nav_highlight("home")
         if hasattr(self, 'status_bar'):
-            self.status_bar.showMessage("Start-Zentrale: Wählen Sie einen Bereich oder starten Sie ein Projekt.")
+            self.status_bar.clearMessage()
+
+    def set_stitching_subpage(self, index: int):
+        """Switches between Media/Sync and Calibration inside the combined Stitching tab."""
+        if hasattr(self, 'stitch_sub_stack'):
+            self.stitch_sub_stack.setCurrentIndex(index)
+        if hasattr(self, 'btn_stitch_sub_media') and hasattr(self, 'btn_stitch_sub_calib'):
+            if index == 0:
+                self.btn_stitch_sub_media.setStyleSheet("background-color: #2563eb; color: #ffffff; font-weight: 700; font-size: 11px; padding: 6px 12px; border-radius: 6px; border: none;")
+                self.btn_stitch_sub_calib.setStyleSheet("background-color: transparent; color: #94a3b8; font-weight: 600; font-size: 11px; padding: 6px 12px; border-radius: 6px; border: none;")
+            else:
+                self.btn_stitch_sub_media.setStyleSheet("background-color: transparent; color: #94a3b8; font-weight: 600; font-size: 11px; padding: 6px 12px; border-radius: 6px; border: none;")
+                self.btn_stitch_sub_calib.setStyleSheet("background-color: #2563eb; color: #ffffff; font-weight: 700; font-size: 11px; padding: 6px 12px; border-radius: 6px; border: none;")
 
     def show_workspace(self, tab_idx: int = 0):
         """Switches to the interactive workspace and activates designated workflow tab."""
@@ -4429,11 +4439,10 @@ class MainWindow(QMainWindow):
         """Handles sidebar tab switching and updates top step navigation pills."""
         tab_key_map = {
             0: "stitch",
-            1: "calib",
-            2: "ai",
-            3: "export",
-            4: "live",
-            5: "cloud",
+            1: "ai",
+            2: "export",
+            3: "live",
+            4: "cloud",
         }
         self._update_nav_highlight(tab_key_map.get(index, "stitch"))
 
@@ -4442,7 +4451,6 @@ class MainWindow(QMainWindow):
         pills = {
             "home": getattr(self, "btn_nav_home", None),
             "stitch": getattr(self, "btn_nav_stitch", None),
-            "calib": getattr(self, "btn_nav_calib", None),
             "ai": getattr(self, "btn_nav_ai", None),
             "export": getattr(self, "btn_nav_export", None),
             "live": getattr(self, "btn_nav_live", None),
@@ -7170,52 +7178,7 @@ class MainWindow(QMainWindow):
         layout_main.setSpacing(20)
 
         # -------------------------------------------------------------
-        # 1. Header Hero Banner
-        # -------------------------------------------------------------
-        header_frame = QFrame()
-        header_frame.setStyleSheet("""
-            QFrame {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #131322, stop:0.5 #18182e, stop:1 #11111d);
-                border: 1px solid #23233a;
-                border-radius: 14px;
-                padding: 18px 24px;
-            }
-        """)
-        header_layout = QVBoxLayout(header_frame)
-        header_layout.setSpacing(6)
-
-        badge_row = QHBoxLayout()
-        lbl_badge = QLabel("⚽ MATCHTRACK STITCHER PRO v1.5.3  •  WORKFLOW-ZENTRALE")
-        lbl_badge.setStyleSheet("""
-            background-color: #1e1b4b;
-            color: #818cf8;
-            border: 1px solid #3730a3;
-            border-radius: 6px;
-            font-size: 10px;
-            font-weight: 800;
-            padding: 3px 10px;
-            letter-spacing: 0.8px;
-        """)
-        badge_row.addWidget(lbl_badge)
-        badge_row.addStretch()
-        header_layout.addLayout(badge_row)
-
-        lbl_hero_title = QLabel("Willkommen im MatchTrack Studio")
-        lbl_hero_title.setStyleSheet("font-size: 24px; font-weight: 900; color: #ffffff; margin-top: 4px;")
-        header_layout.addWidget(lbl_hero_title)
-
-        lbl_hero_desc = QLabel(
-            "Wählen Sie einen geführten Arbeitsbereich für Ihre Spielaufnahmen, Analyse und Live-Übertragung "
-            "oder springen Sie direkt in die vollständige Arbeitsfläche:"
-        )
-        lbl_hero_desc.setStyleSheet("font-size: 13px; color: #94a3b8; line-height: 1.4;")
-        lbl_hero_desc.setWordWrap(True)
-        header_layout.addWidget(lbl_hero_desc)
-
-        layout_main.addWidget(header_frame)
-
-        # -------------------------------------------------------------
-        # 2. Hero Action Cards (2x2 Grid)
+        # Action Cards (2x2 Grid)
         # -------------------------------------------------------------
         grid = QGridLayout()
         grid.setSpacing(16)
@@ -7359,7 +7322,7 @@ class MainWindow(QMainWindow):
             }
             QPushButton:hover { background-color: #3b82f6; }
         """)
-        btn_c2_action.clicked.connect(lambda: self.show_workspace(2))
+        btn_c2_action.clicked.connect(lambda: self.show_workspace(1))
         card2_layout.addWidget(btn_c2_action)
 
         grid.addWidget(card2, 0, 1)
@@ -7415,7 +7378,7 @@ class MainWindow(QMainWindow):
             }
             QPushButton:hover { background-color: #f43f5e; }
         """)
-        btn_c3_action.clicked.connect(lambda: self.show_workspace(4))
+        btn_c3_action.clicked.connect(lambda: self.show_workspace(3))
         card3_layout.addWidget(btn_c3_action)
 
         grid.addWidget(card3, 1, 0)
@@ -7471,7 +7434,7 @@ class MainWindow(QMainWindow):
             }
             QPushButton:hover { background-color: #10b981; }
         """)
-        btn_c4_action.clicked.connect(lambda: self.show_workspace(5))
+        btn_c4_action.clicked.connect(lambda: self.show_workspace(4))
         card4_layout.addWidget(btn_c4_action)
 
         grid.addWidget(card4, 1, 1)
