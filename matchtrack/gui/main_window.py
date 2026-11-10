@@ -2010,6 +2010,7 @@ class MainWindow(QMainWindow):
 
         self.btn_nav_home = QPushButton("🏠 Zentrale")
         self.btn_nav_stitch = QPushButton("🧵 Stitching")
+        self.btn_nav_calib = QPushButton("🎨 Naht & Farbe")
         self.btn_nav_ai = QPushButton("🎯 KI-Broadcast")
         self.btn_nav_export = QPushButton("🚀 Export")
         self.btn_nav_live = QPushButton("🔴 Live-Stream")
@@ -2017,12 +2018,13 @@ class MainWindow(QMainWindow):
 
         self.btn_nav_home.clicked.connect(self.show_landing_page)
         self.btn_nav_stitch.clicked.connect(lambda: self.show_workspace(0))
+        self.btn_nav_calib.clicked.connect(lambda: self.show_workspace(1))
         self.btn_nav_ai.clicked.connect(lambda: self.show_workspace(2))
         self.btn_nav_export.clicked.connect(lambda: self.show_workspace(3))
         self.btn_nav_live.clicked.connect(lambda: self.show_workspace(4))
         self.btn_nav_cloud.clicked.connect(lambda: self.show_workspace(5))
 
-        for btn in [self.btn_nav_home, self.btn_nav_stitch, self.btn_nav_ai, self.btn_nav_export, self.btn_nav_live, self.btn_nav_cloud]:
+        for btn in [self.btn_nav_home, self.btn_nav_stitch, self.btn_nav_calib, self.btn_nav_ai, self.btn_nav_export, self.btn_nav_live, self.btn_nav_cloud]:
             btn.setStyleSheet("background-color: transparent; border: none; border-radius: 6px; font-weight: 700; font-size: 11px; padding: 5px 11px; color: #94a3b8;")
             nav_layout.addWidget(btn)
 
@@ -2039,24 +2041,28 @@ class MainWindow(QMainWindow):
         
         menu_areas.addSeparator()
         
-        act_stitch = menu_areas.addAction("🧵 1. Video-Stitching & Panorama")
+        act_stitch = menu_areas.addAction("🧵 1. Video-Stitching & Medien")
         act_stitch.setShortcut("Ctrl+1")
         act_stitch.triggered.connect(lambda: self.show_workspace(0))
+
+        act_calib = menu_areas.addAction("🎨 2. Naht & Farbe (Kalibrierung)")
+        act_calib.setShortcut("Ctrl+2")
+        act_calib.triggered.connect(lambda: self.show_workspace(1))
         
-        act_ai = menu_areas.addAction("🎯 2. KI-Broadcast & Follow-Cam")
-        act_ai.setShortcut("Ctrl+2")
+        act_ai = menu_areas.addAction("🎯 3. KI-Broadcast & Follow-Cam")
+        act_ai.setShortcut("Ctrl+3")
         act_ai.triggered.connect(lambda: self.show_workspace(2))
         
-        act_export = menu_areas.addAction("🚀 3. Video-Export")
-        act_export.setShortcut("Ctrl+3")
+        act_export = menu_areas.addAction("🚀 4. Video-Export")
+        act_export.setShortcut("Ctrl+4")
         act_export.triggered.connect(lambda: self.show_workspace(3))
         
-        act_live = menu_areas.addAction("🔴 4. Live-Streaming (OBS-Studio)")
-        act_live.setShortcut("Ctrl+4")
+        act_live = menu_areas.addAction("🔴 5. Live-Streaming (OBS-Studio)")
+        act_live.setShortcut("Ctrl+5")
         act_live.triggered.connect(lambda: self.show_workspace(4))
         
-        act_cloud = menu_areas.addAction("☁️ 5. MatchTrack Cloud-Upload")
-        act_cloud.setShortcut("Ctrl+5")
+        act_cloud = menu_areas.addAction("☁️ 6. MatchTrack Cloud-Upload")
+        act_cloud.setShortcut("Ctrl+6")
         act_cloud.triggered.connect(lambda: self.show_workspace(5))
 
         # Profile / Settings Management Buttons
@@ -2346,8 +2352,9 @@ class MainWindow(QMainWindow):
         # =========================================================================
         self.right_pane = QTabWidget()
         self.right_pane.setMinimumWidth(380)
-        self.right_pane.tabBar().setExpanding(True)
         self.right_pane.setDocumentMode(True)
+        self.right_pane.setStyleSheet("QTabWidget::pane { border: none; }")
+        self.right_pane.tabBar().hide()
         self.right_pane.currentChanged.connect(self._on_tab_changed)
 
         # -------------------------------------------------------------------------
@@ -4422,7 +4429,7 @@ class MainWindow(QMainWindow):
         """Handles sidebar tab switching and updates top step navigation pills."""
         tab_key_map = {
             0: "stitch",
-            1: "stitch",
+            1: "calib",
             2: "ai",
             3: "export",
             4: "live",
@@ -4435,6 +4442,7 @@ class MainWindow(QMainWindow):
         pills = {
             "home": getattr(self, "btn_nav_home", None),
             "stitch": getattr(self, "btn_nav_stitch", None),
+            "calib": getattr(self, "btn_nav_calib", None),
             "ai": getattr(self, "btn_nav_ai", None),
             "export": getattr(self, "btn_nav_export", None),
             "live": getattr(self, "btn_nav_live", None),
