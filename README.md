@@ -6,16 +6,16 @@
 
 ### Professioneller 32:9 Fußball-Panorama Stitcher & KI-gestützte 16:9 Broadcast Follow-Cam
 
-[![Release](https://img.shields.io/badge/Release-v1.5.2-blue.svg)](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.2)
+[![Release](https://img.shields.io/badge/Release-v1.5.4-blue.svg)](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.4)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-41CD52.svg?logo=qt&logoColor=white)](https://pypi.org/project/PySide6/)
 [![OpenCV](https://img.shields.io/badge/Computer%20Vision-OpenCV-5C3EE8.svg?logo=opencv&logoColor=white)](https://opencv.org/)
 [![YOLO11](https://img.shields.io/badge/AI%20Tracking-YOLO11%20%2F%20v8-00FFFF.svg)](https://docs.ultralytics.com/)
 [![FFmpeg NVENC](https://img.shields.io/badge/Hardware%20Accel-NVIDIA%20NVENC-76B900.svg?logo=nvidia&logoColor=white)](https://developer.nvidia.com/video-encode-decode-gpu-support-matrix)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6.svg?logo=windows&logoColor=white)](https://github.com/soko-grafik/matchtrack-stitcher/releases)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6.svg?logo=windows&logoColor=white)](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases)
 [![License](https://img.shields.io/badge/License-Proprietary-red.svg)](#lizenz)
 
-[**Download Windows Installer (v1.5.2)**](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.2) • [**Dokumentation**](#-workflow-anleitung) • [**CLI Reference**](#-cli-batch-modus) • [**Release Notes**](#-release-notes--changelog)
+[**Download Windows Installer (v1.5.4)**](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.4) • [**Dokumentation**](#-workflow-anleitung) • [**CLI Reference**](#-cli-batch-modus) • [**Release Notes**](#-release-notes--changelog)
 
 </div>
 
@@ -115,7 +115,7 @@ Zusätzlich beinhaltet das System eine **KI-gestützte 16:9 Broadcast Follow-Cam
 
 Für Endanwender und Analysten steht ein vorkompilierter Standalone-Installer zur Verfügung, der sämtliche Abhängigkeiten, FFmpeg und KI-Modelle bündelt:
 
-1. Laden Sie die Datei **`MatchTrack-Stitcher-Setup-v1.5.2.exe`** unter [**Releases**](https://github.com/soko-grafik/matchtrack-stitcher/releases/tag/v1.5.2) herunter.
+1. Laden Sie die Datei **`MatchTrack-Stitcher-Setup-v1.5.4.exe`** unter [**Releases**](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.4) herunter.
 2. Führen Sie die Setup-Datei aus und folgen Sie dem Installationsassistenten.
 3. Starten Sie **MatchTrack Stitcher** bequem über das Startmenü oder die Desktop-Verknüpfung.
 
@@ -307,13 +307,33 @@ Das Skript führt folgende Schritte automatisch aus:
 2. Kompilieren aller Python-Module und GUI-Ressourcen mit **PyInstaller**.
 3. Bündeln von `ffmpeg.exe`, `ffprobe.exe` sowie aller **YOLO-KI-Modelle** (`.pt`).
 4. Generierung des signierfähigen Setup-Installers mit **Inno Setup 6**.
-5. Ausgabe der fertigen Datei in `installer_output/MatchTrack-Stitcher-Setup-v1.5.2.exe`.
+5. Ausgabe der fertigen Datei in `installer_output/MatchTrack-Stitcher-Setup-v1.5.4.exe`.
 
 ---
 
 ## 📝 Release Notes / Changelog
 
-### Version 1.5.2 (Aktuell)
+### Version 1.5.4 (Aktuell)
+- **1:1 OBS Studio Ausgabe- & Kodierer-Engine:**
+  - Komplette OBS-Studio Ausgabe- und Kodierereinstellungen (Erweitert & Einfach) mit originalgetreuem Layout.
+  - Volle Unterstützung für Hardware-Encoder (**NVIDIA NVENC H.264 / HEVC**, **Intel QuickSync QSV**) sowie **x264 Software CPU**.
+  - Präzise Kodierer-Parameter: Qualitätsregulierungsmethode (VBR, CBR, CQP, Verlustfrei), Bitrate & Maximalbitrate, Keyframe-Intervall, Voreinstellungen P1–P7, Tuning (Hohe Qualität, Niedrige Latenz, Lossless), Multipass-Modus (QRes / FullRes), Profile (main, high, baseline), Lookahead (32 Frames), Adaptive Psycho-Visual Quantisierung, B-Frames und benutzerdefinierte CLI-Optionen.
+  - Eigenständiges OBS-Studio Einstellungsfenster (`🗗 OBS-Fenster`) für übersichtliche Großansicht.
+- **Multi-Stream & 4-Kanal Live-Multiview Grid:**
+  - Paralleles Streaming von bis zu 4 RTMP-Kanälen (16:9 KI-Regie, Taktik-Panorama, Cam 1 Direkt, Cam 2 Direkt).
+  - Interaktives 4er-Multiview-Grid im Live-Viewport zur gleichzeitigen Überwachung aller Feeds inklusive Tally-Indikatoren.
+  - Dynamischer Live-Modus-Umschalter: Dual-Stitching vs. Einzelkameras (Cam 1 / Cam 2) vs. Dual-Direct ohne CPU/GPU-Stitching-Last.
+- **Optimierte Ballerkennung (YOLO-Football-Modell):**
+  - Dediziertes neuronales Netzwerk für Fußbälle zur Vermeidung von Ballverlusten bei schnellen Fernschüssen und Flanken.
+- **Workflow-Zentrale & UI-Bereinigung:**
+  - Zentrale Startseite für geführten Workflow (Stitching, KI-Broadcast, Live-Streaming, Cloud-Upload) und bereinigte Kopfnavigation.
+- **QBackingStore & Render-Stabilitätsfix:**
+  - Saubere Ressourcenfreigabe aller nativen Qt-Painter (`try: ... finally: painter.end()`) zur Beseitigung von PaintEvent-Warnungen.
+
+### Version 1.5.3
+- Vorbereitende Live-Streaming-Module und DJI Direct-UVC-Kopplung.
+
+### Version 1.5.2
 - **Metrische Taktik-Analytik & Scouting (SkillCorner & Google DeepMind TacticAI-Prinzip):**
   - **Spielfeld-Homographie:** Nahtlose Umrechnung der 6-Punkt-Panoramakoordinaten in reale metrische FIFA-Spielfeldmaße ($105\text{ m} \times 68\text{ m}$) via Dual-Quad-Homographie.
   - **Live km/h Speed Badges:** Echtzeitanzeige der Geschwindigkeit für Spieler (`🔥 XX.X km/h` Sprint, `⚡ XX.X km/h` Lauf) und Ball (`⚽ XX.X km/h`) im Live-Viewport.
