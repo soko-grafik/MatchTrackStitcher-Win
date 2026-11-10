@@ -270,7 +270,7 @@ class StitcherEngine:
     def stitch_live_pair(
         self,
         frame_l: np.ndarray,
-        frame_r: np.ndarray,
+        frame_r: Optional[np.ndarray] = None,
         pano_width: int = 2560,
         pano_height: int = 720,
         broadcast_width: int = 1920,
@@ -278,15 +278,36 @@ class StitcherEngine:
     ) -> Tuple[np.ndarray, np.ndarray, Tuple[int, int, int, int]]:
         """
         Real-time pipeline for live streaming:
-        1. Warps and stitches incoming live frames (Cam Left & Cam Right) using calibrated LUTs.
-        2. Detects ball/players via AI Broadcast Tracker to smoothly steer the virtual follow-cam.
-        3. Crops and scales the 16:9 Broadcast frame.
+        1. In Dual-Camera mode: Warps and stitches incoming live frames (Cam Left & Cam Right) using calibrated LUTs.
+           Auto-scales any webcam resolution to match the rig sensor parameters.
+        2. In Single-Camera mode (frame_r is None): Passes the single camera feed through without stitching.
+        3. Detects ball/players via AI Broadcast Tracker to smoothly steer the virtual follow-cam.
+        4. Crops and scales the 16:9 Broadcast frame.
         Returns: (stitched_panorama, broadcast_16x9, (crop_x, crop_y, crop_w, crop_h)).
         """
-        luts = self.update_luts(pano_width, pano_height)
-        self.color_matcher.enabled = getattr(self.rig, 'auto_color_match', True)
-        self.color_matcher.set_strength(getattr(self.rig, 'color_match_strength', 1.0))
-        stitched = apply_stitch(frame_l, frame_r, luts, color_matcher=self.color_matcher)
+        if frame_r is None:
+            # Single-Webcam Mode: pass through or scale to panorama dimensions
+            if (frame_l.shape[1], frame_l.shape[0]) != (pano_width, pano_height):
+                stitched = cv2.resize(frame_l, (pano_width, pano_height), interpolation=cv2.INTER_LINEAR)
+            else:
+                stitched = frame_l.copy()
+        else:
+            # Dual-Webcam Stitching Mode
+            # Ensure input frames conform to rig calibration dimensions to prevent out-of-bounds LUT remapping
+            target_wl = getattr(self.rig.left_camera, 'image_width', 1440)
+            target_hl = getattr(self.rig.left_camera, 'image_height', 1080)
+            target_wr = getattr(self.rig.right_camera, 'image_width', 1440)
+            target_hr = getattr(self.rig.right_camera, 'image_height', 1080)
+
+            if (frame_l.shape[1], frame_l.shape[0]) != (target_wl, target_hl):
+                frame_l = cv2.resize(frame_l, (target_wl, target_hl), interpolation=cv2.INTER_LINEAR)
+            if (frame_r.shape[1], frame_r.shape[0]) != (target_wr, target_hr):
+                frame_r = cv2.resize(frame_r, (target_wr, target_hr), interpolation=cv2.INTER_LINEAR)
+
+            luts = self.update_luts(pano_width, pano_height)
+            self.color_matcher.enabled = getattr(self.rig, 'auto_color_match', True)
+            self.color_matcher.set_strength(getattr(self.rig, 'color_match_strength', 1.0))
+            stitched = apply_stitch(frame_l, frame_r, luts, color_matcher=self.color_matcher)
 
         tx, ty, tz, ball_found, ball_px = self.ai_broadcast.detect_action(stitched)
         self.ai_broadcast.update_camera(tx, ty, tz)

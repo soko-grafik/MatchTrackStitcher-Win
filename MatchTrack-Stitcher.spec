@@ -50,6 +50,9 @@ hiddenimports = [
     'certifi',
     'bleak',
     'qrcode',
+    'pygrabber',
+    'pygrabber.dshow_graph',
+    'comtypes',
 ]
 hiddenimports += collect_submodules('matchtrack')
 

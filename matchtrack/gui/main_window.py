@@ -6593,9 +6593,9 @@ class MainWindow(QMainWindow):
         live_layout.addWidget(grp_tally)
 
         # ---------------------------------------------------------------------
-        # 2. Camera Input Source Group (USB-C UVC vs. Wireless BLE)
+        # 2. Camera Input Source Group (USB Webcams / UVC vs. Wireless BLE)
         # ---------------------------------------------------------------------
-        grp_input = QGroupBox("📹 Kamera-Eingangsquellen (Direct-Connect)")
+        grp_input = QGroupBox("📹 Kamera-Eingangsquellen (USB-Webcams, DJI Action & UVC)")
         grp_input.setStyleSheet("QGroupBox { font-weight: bold; color: #38bdf8; border: 1px solid #282839; border-radius: 8px; margin-top: 6px; padding-top: 10px; }")
         input_layout = QVBoxLayout(grp_input)
         input_layout.setSpacing(8)
@@ -6603,26 +6603,26 @@ class MainWindow(QMainWindow):
         row_mode = QHBoxLayout()
         row_mode.addWidget(QLabel("Eingangs-Modus:"))
         self.combo_live_input_mode = QComboBox()
-        self.combo_live_input_mode.addItem("🔌 USB-C Kabel (Direkte UVC-Webcam - 0ms Latenz)", "uvc")
-        self.combo_live_input_mode.addItem("📡 Kabellose BLE-Fernsteuerung (DJI Mimo Bypass)", "ble")
+        self.combo_live_input_mode.addItem("🔌 USB-Kabel (Standard-Webcams, USB-C, DJI Action - 0ms Latenz)", "uvc")
+        self.combo_live_input_mode.addItem("📡 Kabellose BLE-Fernsteuerung (Nur DJI Action 4/5 - Mimo Bypass)", "ble")
         self.combo_live_input_mode.currentIndexChanged.connect(self._on_live_input_mode_changed)
         self.combo_live_input_mode.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6;")
         row_mode.addWidget(self.combo_live_input_mode, 1)
         input_layout.addLayout(row_mode)
 
-        # Container A: USB-C UVC Direct Controls
+        # Container A: USB Webcams & UVC Direct Controls
         self.panel_uvc = QFrame()
         self.panel_uvc.setStyleSheet("QFrame { background-color: #0b0b12; border: 1px solid #1e1e2d; border-radius: 6px; padding: 6px; }")
         uvc_layout = QVBoxLayout(self.panel_uvc)
         uvc_layout.setSpacing(6)
 
         row_uvc_sel = QGridLayout()
-        row_uvc_sel.addWidget(QLabel("Cam Links:"), 0, 0)
+        row_uvc_sel.addWidget(QLabel("Cam Links / Einzelkamera:"), 0, 0)
         self.combo_uvc_left = QComboBox()
         self.combo_uvc_left.setStyleSheet("background-color: #12121a; border: 1px solid #27273a; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
         row_uvc_sel.addWidget(self.combo_uvc_left, 0, 1)
 
-        row_uvc_sel.addWidget(QLabel("Cam Rechts:"), 1, 0)
+        row_uvc_sel.addWidget(QLabel("Cam Rechts (für Dual-Stitching):"), 1, 0)
         self.combo_uvc_right = QComboBox()
         self.combo_uvc_right.setStyleSheet("background-color: #12121a; border: 1px solid #27273a; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
         row_uvc_sel.addWidget(self.combo_uvc_right, 1, 1)
@@ -6857,18 +6857,24 @@ class MainWindow(QMainWindow):
         self.combo_uvc_right.clear()
         devices = enumerate_video_devices(max_devices=6)
         if not devices:
-            self.combo_uvc_left.addItem("Keine Kameras gefunden", -1)
-            self.combo_uvc_right.addItem("Keine Kameras gefunden", -1)
-            self.lbl_uvc_status.setText("Keine UVC-Kameras über DirectShow gefunden.")
+            self.combo_uvc_left.addItem("Keine Webcams gefunden", -1)
+            self.combo_uvc_right.addItem("--- (Keine / Einzelkamera-Modus) ---", -1)
+            self.lbl_uvc_status.setText("Keine USB-Webcams oder Kameras in Windows erkannt.")
             return
 
         for dev in devices:
             self.combo_uvc_left.addItem(f"[{dev.index}] {dev.name}", dev.index)
+
+        self.combo_uvc_right.addItem("--- (Keine / Einzelkamera-Modus) ---", -1)
+        for dev in devices:
             self.combo_uvc_right.addItem(f"[{dev.index}] {dev.name}", dev.index)
 
         if len(devices) > 1:
-            self.combo_uvc_right.setCurrentIndex(1)
-        self.lbl_uvc_status.setText(f"{len(devices)} Kamera-Gerät(e) in Windows erkannt.")
+            self.combo_uvc_right.setCurrentIndex(2)
+            self.lbl_uvc_status.setText(f"{len(devices)} Webcams erkannt (Dual-Kamera Panorama-Stitching bereit).")
+        else:
+            self.combo_uvc_right.setCurrentIndex(0)
+            self.lbl_uvc_status.setText(f"{len(devices)} Webcam erkannt (Einzelkamera Live-Broadcast bereit).")
 
     def _toggle_uvc_live_capture(self):
         if self.live_capture_manager.is_running:
@@ -6880,16 +6886,22 @@ class MainWindow(QMainWindow):
         else:
             idx_l = self.combo_uvc_left.currentData()
             idx_r = self.combo_uvc_right.currentData()
-            if idx_l is None or idx_r is None or idx_l < 0 or idx_r < 0:
-                QMessageBox.warning(self, "Kameras wählen", "Bitte wähle zwei gültige Kameras (Links & Rechts) aus.")
+            if idx_l is None or idx_l < 0:
+                QMessageBox.warning(self, "Kamera wählen", "Bitte wähle mindestens eine gültige USB-Webcam für 'Cam Links' aus.")
                 return
+
+            if idx_r is None or idx_r < 0:
+                idx_r = None
 
             fps_val = self.combo_stream_fps.currentData() or 30
             self.live_capture_manager.start(idx_l, idx_r, width=1920, height=1080, fps=fps_val)
             self.live_capture_timer.start()
             self.btn_toggle_uvc.setText("⏹ Kameras deaktivieren")
             self.btn_toggle_uvc.setStyleSheet("background-color: #b91c1c; color: white; font-weight: bold; border-radius: 6px; padding: 5px 12px; font-size: 11px;")
-            self.lbl_uvc_status.setText("Live-Erfassung aktiv (1080p @ 30 FPS).")
+            if idx_r is None:
+                self.lbl_uvc_status.setText(f"Einzelkamera-Erfassung aktiv (Quelle: [{idx_l}], 1080p @ {fps_val} FPS).")
+            else:
+                self.lbl_uvc_status.setText(f"Dual-Webcam-Erfassung aktiv (Quellen: [{idx_l}] & [{idx_r}], 1080p @ {fps_val} FPS).")
 
     def _on_live_capture_tick(self):
         """Tick event capturing live frames from cameras, stitching, and pushing to RTMP streams."""
@@ -6897,7 +6909,7 @@ class MainWindow(QMainWindow):
             return
 
         frame_l, frame_r, is_synced = self.live_capture_manager.get_synced_frames()
-        if frame_l is None or frame_r is None:
+        if frame_l is None:
             return
 
         try:
@@ -6912,7 +6924,7 @@ class MainWindow(QMainWindow):
                 broadcast_height=1080
             )
         except Exception as e:
-            logger.warning(f"Fehler beim Live-Stitching: {e}")
+            logger.warning(f"Fehler beim Live-Stitching/Capture: {e}")
             return
 
         # Push to active RTMP streaming channels
@@ -6920,7 +6932,8 @@ class MainWindow(QMainWindow):
             self.stream_manager.push_frame("broadcast_16x9", bcast_frame)
             self.stream_manager.push_frame("panorama_8x3", pano_frame)
             self.stream_manager.push_frame("cam1", frame_l)
-            self.stream_manager.push_frame("cam2", frame_r)
+            if frame_r is not None:
+                self.stream_manager.push_frame("cam2", frame_r)
 
         # Update viewport preview
         display_frame = bcast_frame if self.view_mode.startswith("16:9") else pano_frame
