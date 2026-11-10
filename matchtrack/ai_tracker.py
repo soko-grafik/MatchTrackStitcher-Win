@@ -25,6 +25,13 @@ from .tactics_metrics import (
     TacticsReportExporter,
     MatchTacticsSummary
 )
+from .ball_filter import (
+    StaticPitchArtifactSuppressor,
+    BallPlausibilityFilter,
+    is_player_on_pitch,
+    is_point_in_pitch_polygon_with_margin,
+    SidelineStaffClassifier
+)
 from .logger import get_logger
 
 logger = get_logger("ai_tracker")
@@ -195,6 +202,12 @@ class BroadcastConfig:
     enable_speed_badges: bool = False    # Display player/ball real-time speed in km/h
     enable_tactical_heatmap: bool = False # Display tactical density heatmap on radar/canvas
 
+    # Robust Ball & Sideline Filtering (Anti-Jersey, Anti-Leaf, Sideline-Staff Filter)
+    enable_anti_jersey_filter: bool = True     # Rejects ball candidates overlapping player torso/clothing
+    enable_static_leaf_filter: bool = True     # Rejects static pitch spots/leaves/divots that never move
+    enable_sideline_filter: bool = True        # Strictly excludes sideline coaches/staff/spectators outside pitch
+    pitch_margin_pct: float = 1.0              # Inward boundary margin (0.0% to 5.0%) to cleanly reject sideline people
+
 
 class AIBroadcastTracker:
     """
@@ -231,6 +244,12 @@ class AIBroadcastTracker:
         self.last_player_centroid: float = 0.5
         self.bytetracker = ByteTracker(track_thresh=0.40, high_thresh=0.50, match_thresh=0.65)
         self.current_player_tracks: List[Tuple[float, float, int]] = [] # (norm_x, norm_y, team_id)
+
+        # Robust Ball & Sideline Filtering Engines
+        self.static_leaf_suppressor = StaticPitchArtifactSuppressor()
+        self.sideline_classifier = SidelineStaffClassifier()
+        self.suppressed_spots: List[Tuple[float, float]] = []
+        self.sideline_staff_tracks: List[int] = []
         
         # Motion history for CV fallback
         self.prev_gray: Optional[np.ndarray] = None
@@ -313,6 +332,10 @@ class AIBroadcastTracker:
         self.last_player_centroid = 0.5
         self.bytetracker.reset()
         self.current_player_tracks.clear()
+        self.static_leaf_suppressor.reset()
+        self.sideline_classifier.reset()
+        self.suppressed_spots.clear()
+        self.sideline_staff_tracks.clear()
         self.prev_gray = None
         self.precomputed_trajectory.clear()
 
@@ -377,6 +400,72 @@ class AIBroadcastTracker:
 
         return float(density_centroid)
 
+    def _filter_players_and_balls(self, 
+                                  raw_players: List[DetectionBox], 
+                                  raw_balls: List[DetectionBox], 
+                                  corners: List[List[float]], 
+                                  pano_frame_bgr: np.ndarray, 
+                                  f_idx: int) -> Tuple[List[DetectionBox], List[DetectionBox]]:
+        """
+        Applies multi-stage filtering:
+        1. Sideline & Coach Exclusion: Only players whose feet contact point is inside the pitch polygon.
+        2. Anti-Jersey Filter: Rejects ball candidates located inside player jerseys/torso/shorts.
+        3. Aspect Ratio & Relative Size: Rejects non-circular or oversized ball candidates.
+        4. Static Pitch Artifact Suppressor: Rejects leaves, divots, and turf blemishes that do not move for > 20 frames.
+        5. Color / Luminance Contrast: Rejects dark brown leaves or grass patches.
+        """
+        enable_sideline = getattr(self.config, 'enable_sideline_filter', True)
+        margin = float(getattr(self.config, 'pitch_margin_pct', 1.0)) if enable_sideline else 0.0
+
+        # 1. Sideline Filter for Players (Feet Ground Contact)
+        if enable_sideline:
+            valid_players = [
+                p for p in raw_players 
+                if is_player_on_pitch(p.bbox, corners, margin_pct=margin)
+            ]
+        else:
+            valid_players = [
+                p for p in raw_players 
+                if is_point_in_pitch_polygon(p.center[0], p.center[1], corners)
+            ]
+
+        # 2. Pitch Boundary Filter for Balls
+        valid_balls = [
+            b for b in raw_balls 
+            if is_point_in_pitch_polygon_with_margin(b.center[0], b.center[1], corners, margin_pct=0.0)
+        ]
+
+        enable_anti_jersey = getattr(self.config, 'enable_anti_jersey_filter', True)
+        enable_static_leaf = getattr(self.config, 'enable_static_leaf_filter', True)
+
+        # 3. Anti-Jersey Filter (Rejects white kit / clothing false positives)
+        if enable_anti_jersey and valid_players:
+            valid_balls = [
+                b for b in valid_balls 
+                if not BallPlausibilityFilter.is_inside_player_torso(b.center[0], b.center[1], valid_players)
+            ]
+
+        # 4. Aspect Ratio & Relative Size Filter
+        p_heights = [p.bbox[3] - p.bbox[1] for p in valid_players if (p.bbox[3] - p.bbox[1]) > 0.01]
+        med_ph = float(np.median(p_heights)) if p_heights else None
+        valid_balls = [
+            b for b in valid_balls 
+            if BallPlausibilityFilter.validate_aspect_ratio_and_size(b.bbox[0], b.bbox[1], b.bbox[2], b.bbox[3], med_ph)
+        ]
+
+        # 5. Color / Luminance Contrast Filter for low-confidence detections
+        valid_balls = [
+            b for b in valid_balls 
+            if (b.conf >= 0.40 or BallPlausibilityFilter.validate_patch_color(pano_frame_bgr, b.bbox, min_brightness=110))
+        ]
+
+        # 6. Static Pitch Artifact & Leaf Suppressor
+        if enable_static_leaf:
+            player_feet = [((p.bbox[0] + p.bbox[2]) * 0.5, p.bbox[3]) for p in valid_players]
+            valid_balls, self.suppressed_spots = self.static_leaf_suppressor.update_and_filter(valid_balls, player_feet, f_idx)
+
+        return valid_players, valid_balls
+
     def detect_action(self, pano_frame_bgr: np.ndarray, frame_index: Optional[int] = None) -> Tuple[float, float, float, bool, Optional[Tuple[int, int]]]:
         """
         Runs AI Action Detection on the stitched panorama.
@@ -435,8 +524,9 @@ class AIBroadcastTracker:
                     pano_w=infer_w,
                     pano_h=infer_h
                 )
-                valid_players = [p for p in raw_players if is_point_in_pitch_polygon(p.center[0], p.center[1], corners)]
-                valid_balls = [b for b in raw_balls if is_point_in_pitch_polygon(b.center[0], b.center[1], corners)]
+                valid_players, valid_balls = self._filter_players_and_balls(
+                    raw_players, raw_balls, corners, pano_frame_bgr, f_idx
+                )
                 self.current_detections = valid_players
 
                 for p in valid_players:
@@ -466,52 +556,81 @@ class AIBroadcastTracker:
                 if results and len(results) > 0:
                     boxes = results[0].boxes
                     names = self.model.model.names if hasattr(self.model, "model") and hasattr(self.model.model, "names") else {}
+                    raw_p = []
+                    raw_b = []
                     for box in boxes:
                         cls_id = int(box.cls[0])
                         conf = float(box.conf[0])
                         cls_name = names.get(cls_id, "").lower()
                         xyxy = box.xyxy[0].cpu().numpy()
-                        cx = float((xyxy[0] + xyxy[2]) * 0.5) + offset_x
-                        cy = float((xyxy[1] + xyxy[3]) * 0.5) + offset_y
-
-                        norm_x = cx / infer_w
-                        norm_y = cy / infer_h
-
-                        if not is_point_in_pitch_polygon(norm_x, norm_y, corners):
-                            continue
+                        bx1 = max(0.0, min(1.0, float(xyxy[0] + offset_x) / infer_w))
+                        by1 = max(0.0, min(1.0, float(xyxy[1] + offset_y) / infer_h))
+                        bx2 = max(0.0, min(1.0, float(xyxy[2] + offset_x) / infer_w))
+                        by2 = max(0.0, min(1.0, float(xyxy[3] + offset_y) / infer_h))
 
                         is_ball = (cls_name == "ball" or cls_id == 32)
                         is_player = (cls_name in ["player", "goalkeeper", "referee", "person"] or cls_id == 0)
 
                         if is_player:
-                            bx1 = max(0.0, min(1.0, float(xyxy[0] + offset_x) / infer_w))
-                            by1 = max(0.0, min(1.0, float(xyxy[1] + offset_y) / infer_h))
-                            bx2 = max(0.0, min(1.0, float(xyxy[2] + offset_x) / infer_w))
-                            by2 = max(0.0, min(1.0, float(xyxy[3] + offset_y) / infer_h))
-                            team_id = 0
-                            player_boxes.append([bx1, by1, bx2, by2])
-                            player_scores.append(conf)
-                            player_teams.append(team_id)
-                            if cls_name != "goalkeeper":
-                                player_positions.append((norm_x, norm_y))
+                            raw_p.append(DetectionBox(
+                                bbox=(bx1, by1, bx2, by2),
+                                conf=conf,
+                                cls_id=cls_id,
+                                cls_name=cls_name,
+                                team_id=0
+                            ))
                         elif is_ball:
-                            orig_px_x = int(round(cx * (w / infer_w)))
-                            orig_px_y = int(round(cy * (h / infer_h)))
-                            ball_candidates.append((norm_x, norm_y, conf, orig_px_x, orig_px_y))
+                            raw_b.append(DetectionBox(
+                                bbox=(bx1, by1, bx2, by2),
+                                conf=conf,
+                                cls_id=cls_id,
+                                cls_name="ball",
+                                team_id=-1
+                            ))
+
+                    valid_players, valid_balls = self._filter_players_and_balls(
+                        raw_p, raw_b, corners, pano_frame_bgr, f_idx
+                    )
+                    self.current_detections = valid_players
+
+                    for p in valid_players:
+                        player_boxes.append(list(p.bbox))
+                        player_scores.append(p.conf)
+                        player_teams.append(p.team_id)
+                        if p.cls_name != "goalkeeper":
+                            player_positions.append(p.center)
+
+                    for b in valid_balls:
+                        orig_px_x = int(round(b.center[0] * w))
+                        orig_px_y = int(round(b.center[1] * h))
+                        ball_candidates.append((b.center[0], b.center[1], b.conf, orig_px_x, orig_px_y))
             except Exception:
                 pass
 
         # Multi-Object Tracking (ByteTrack) update with high & low confidence detections
+        staff_map = {}
         if len(player_boxes) > 0:
             det_arr = np.array(player_boxes, dtype=np.float32)
             score_arr = np.array(player_scores, dtype=np.float32)
             team_arr = np.array(player_teams, dtype=np.int32)
             active_tracks = self.bytetracker.update(det_arr, score_arr, team_arr)
-            self.current_player_tracks = [(cx, cy, tid) for (_, cx, cy, _, _, tid) in active_tracks]
+            
+            # Identify stationary sideline staff (coaches/trainers)
+            staff_map = self.sideline_classifier.update_and_classify(active_tracks, corners, f_idx)
+            self.sideline_staff_tracks = [tid for tid, is_s in staff_map.items() if is_s]
+            
+            self.current_player_tracks = [
+                (cx, cy, tid) for (tid, cx, cy, _, _, tid_team) in active_tracks
+                if not staff_map.get(tid, False)
+            ]
         else:
             active_tracks = self.bytetracker.update(np.empty((0, 4), dtype=np.float32), np.empty(0, dtype=np.float32), np.empty(0, dtype=np.int32))
+            staff_map = self.sideline_classifier.update_and_classify(active_tracks, corners, f_idx)
             if active_tracks:
-                self.current_player_tracks = [(cx, cy, tid) for (_, cx, cy, _, _, tid) in active_tracks]
+                self.current_player_tracks = [
+                    (cx, cy, tid) for (tid, cx, cy, _, _, tid_team) in active_tracks
+                    if not staff_map.get(tid, False)
+                ]
             elif player_positions:
                 self.current_player_tracks = [(px, py, 0) for px, py in player_positions]
             else:
@@ -555,20 +674,30 @@ class AIBroadcastTracker:
         ball_px = None
         verified_ball: Optional[Tuple[float, float, float, int, int]] = None
 
+        # Anti-Sticky Kalman Unlocking:
+        # If Kalman was stationary (< 0.002) and play moved away (> 0.12), do not cling to the old spot
+        if self.kalman.speed < 0.002 and abs(player_cx - self.kalman.pos[0]) > 0.12:
+            self.ball_confidence = max(0.0, self.ball_confidence - 0.15)
+            if self.ball_confidence <= 0.10:
+                self.kalman.reset(player_cx, self.config.vertical_center_bias)
+                pred_bx, pred_by = player_cx, self.config.vertical_center_bias
+
         if ball_candidates:
             # Score each candidate: Confidence + proximity to prediction + proximity to player cluster
             valid_candidates = []
             for cand in ball_candidates:
                 bx, by, bconf, bpx_x, bpx_y = cand
                 dist_to_players = abs(bx - player_cx)
-                dist_to_kalman = np.sqrt((bx - pred_bx)**2 + (by - pred_by)**2)
+                dist_to_kalman = math.hypot(bx - pred_bx, by - pred_by)
 
                 # Plausibility check: Must be near play OR have physical trajectory continuity
-                is_near_play = (dist_to_players < 0.28)
+                is_near_play = (dist_to_players < 0.35)
                 is_kalman_plausible = self.kalman.is_plausible_measurement(bx, by)
 
                 if is_near_play or is_kalman_plausible:
-                    score = bconf * 1.5 - (dist_to_kalman * 1.2) - (dist_to_players * 0.5)
+                    motion_dist = math.hypot(bx - self.kalman.pos[0], by - self.kalman.pos[1])
+                    motion_bonus = 0.25 if motion_dist > 0.005 else -0.20 # penalize complete immobility
+                    score = bconf * 1.6 - (dist_to_kalman * 1.5) - (dist_to_players * 0.4) + motion_bonus
                     valid_candidates.append((score, cand))
 
             if valid_candidates:

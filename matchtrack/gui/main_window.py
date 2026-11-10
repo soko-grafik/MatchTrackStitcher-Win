@@ -1763,6 +1763,13 @@ class MainWindow(QMainWindow):
         act_speed.setDefaultWidget(self.chk_show_speed_menu)
         menu_overlays.addAction(act_speed)
 
+        self.chk_sideline_menu = QCheckBox("🚶 Trainer-/Auslinien-Filter")
+        self.chk_sideline_menu.setChecked(True)
+        self.chk_sideline_menu.toggled.connect(self.toggle_sideline_filter)
+        act_sideline = QWidgetAction(self)
+        act_sideline.setDefaultWidget(self.chk_sideline_menu)
+        menu_overlays.addAction(act_sideline)
+
         self.btn_overlays_menu.setMenu(menu_overlays)
         vp_tool_bar.addWidget(self.btn_overlays_menu)
 
@@ -2687,6 +2694,39 @@ class MainWindow(QMainWindow):
         layout_ac_follow.addWidget(grp_scan_speed)
 
         scroll_layout_ac.addWidget(grp_ac_follow)
+
+        # Ball Precision & Sideline False-Positive Filter Group
+        grp_precision = QGroupBox("🎯 Ball-Präzision & Spielfeld-Filter")
+        layout_precision = QVBoxLayout(grp_precision)
+        layout_precision.setSpacing(8)
+
+        self.chk_anti_jersey = QCheckBox("👕 Trikot-Fehlalarm-Filter (Anti-Weißes-Trikot)")
+        self.chk_anti_jersey.setChecked(True)
+        self.chk_anti_jersey.setStyleSheet("font-weight: 600; color: #10b981;")
+        self.chk_anti_jersey.setToolTip("Schließt Ball-Fehlalarme auf Spieleroberkörpern und weißen/hellen Trikots anatomisch aus.")
+        self.chk_anti_jersey.toggled.connect(self.on_autocam_param_changed)
+        layout_precision.addWidget(self.chk_anti_jersey)
+
+        self.chk_static_leaf = QCheckBox("🍂 Laub- & Bodenflecken-Unterdrückung")
+        self.chk_static_leaf.setChecked(True)
+        self.chk_static_leaf.setStyleSheet("font-weight: 600; color: #38bdf8;")
+        self.chk_static_leaf.setToolTip("Erkennt unbewegliche Flecken (Laubblätter, Rasenschäden) und sperrt diese temporär, wenn kein Spieler in Reichweite ist.")
+        self.chk_static_leaf.toggled.connect(self.on_autocam_param_changed)
+        layout_precision.addWidget(self.chk_static_leaf)
+
+        self.chk_sideline_filter = QCheckBox("🚶 Trainer- & Auslinien-Filter (Nur aktives Spielfeld)")
+        self.chk_sideline_filter.setChecked(True)
+        self.chk_sideline_filter.setStyleSheet("font-weight: 600; color: #f59e0b;")
+        self.chk_sideline_filter.setToolTip("Filtert Personen außerhalb des 6-Punkte-Polygons (Trainerzone, Auswechselspieler, Zuschauer) anhand präziser Bodenkontaktpunkte (Füße) aus.")
+        self.chk_sideline_filter.toggled.connect(self.toggle_sideline_filter)
+        layout_precision.addWidget(self.chk_sideline_filter)
+
+        self.ctrl_pitch_margin = LabeledSliderSpinBox("Auslinien-Toleranzpuffer:", 0.0, 5.0, 1.0, 0.5, "%", decimals=1)
+        self.ctrl_pitch_margin.setToolTip("Sicherheitsabstand nach innen/außen an der Auslinie (in % der Feldgröße).")
+        self.ctrl_pitch_margin.valueChanged.connect(self.on_autocam_param_changed)
+        layout_precision.addWidget(self.ctrl_pitch_margin)
+
+        scroll_layout_ac.addWidget(grp_precision)
 
         # Tactical VAR & Pose Overlays Group
         grp_var = QGroupBox("🚩 Taktik & FIFA-VAR-Entscheidungen")
@@ -3738,6 +3778,22 @@ class MainWindow(QMainWindow):
             cfg.enable_speed_badges = checked
         self.viewport.update()
 
+    def toggle_sideline_filter(self, checked: bool):
+        if hasattr(self, 'chk_sideline_filter'):
+            self.chk_sideline_filter.blockSignals(True)
+            self.chk_sideline_filter.setChecked(checked)
+            self.chk_sideline_filter.blockSignals(False)
+        if hasattr(self, 'chk_sideline_menu'):
+            self.chk_sideline_menu.blockSignals(True)
+            self.chk_sideline_menu.setChecked(checked)
+            self.chk_sideline_menu.blockSignals(False)
+        if hasattr(self, 'ctrl_pitch_margin'):
+            self.ctrl_pitch_margin.setVisible(checked)
+        cfg = getattr(self.engine.ai_broadcast, 'config', None)
+        if cfg:
+            cfg.enable_sideline_filter = checked
+        self.refresh_preview()
+
     def open_tactics_dashboard(self):
         """Opens the full interactive tactics and scouting dashboard."""
         ai_tracker = getattr(self.engine, 'ai_broadcast', None)
@@ -4081,6 +4137,20 @@ class MainWindow(QMainWindow):
             self.engine.ai_broadcast.config.zone_boost_factor = self.ctrl_zone_boost.value()
         if hasattr(self, 'ctrl_tactical_margin'):
             self.engine.ai_broadcast.config.tactical_margin = self.ctrl_tactical_margin.value()
+        if hasattr(self, 'chk_anti_jersey'):
+            self.engine.ai_broadcast.config.enable_anti_jersey_filter = self.chk_anti_jersey.isChecked()
+        if hasattr(self, 'chk_static_leaf'):
+            self.engine.ai_broadcast.config.enable_static_leaf_filter = self.chk_static_leaf.isChecked()
+        if hasattr(self, 'chk_sideline_filter'):
+            self.engine.ai_broadcast.config.enable_sideline_filter = self.chk_sideline_filter.isChecked()
+            if hasattr(self, 'chk_sideline_menu'):
+                self.chk_sideline_menu.blockSignals(True)
+                self.chk_sideline_menu.setChecked(self.chk_sideline_filter.isChecked())
+                self.chk_sideline_menu.blockSignals(False)
+            if hasattr(self, 'ctrl_pitch_margin'):
+                self.ctrl_pitch_margin.setVisible(self.chk_sideline_filter.isChecked())
+        if hasattr(self, 'ctrl_pitch_margin'):
+            self.engine.ai_broadcast.config.pitch_margin_pct = self.ctrl_pitch_margin.value()
         self.refresh_preview()
 
     def on_pitch_roi_toggled(self, checked: bool):
@@ -4378,7 +4448,11 @@ class MainWindow(QMainWindow):
             "ai_backend": self.combo_ai_engine.currentData() if hasattr(self, 'combo_ai_engine') else getattr(ac_cfg, 'ai_backend', 'yolo11'),
             "enable_offside_line": self.chk_show_offside.isChecked() if hasattr(self, 'chk_show_offside') else getattr(ac_cfg, 'enable_offside_line', True),
             "enable_skeletons": self.chk_show_skeletons.isChecked() if hasattr(self, 'chk_show_skeletons') else getattr(ac_cfg, 'enable_skeletons', False),
-            "enable_speed_badges": self.chk_show_speed.isChecked() if hasattr(self, 'chk_show_speed') else getattr(ac_cfg, 'enable_speed_badges', False)
+            "enable_speed_badges": self.chk_show_speed.isChecked() if hasattr(self, 'chk_show_speed') else getattr(ac_cfg, 'enable_speed_badges', False),
+            "enable_anti_jersey_filter": self.chk_anti_jersey.isChecked() if hasattr(self, 'chk_anti_jersey') else getattr(ac_cfg, 'enable_anti_jersey_filter', True),
+            "enable_static_leaf_filter": self.chk_static_leaf.isChecked() if hasattr(self, 'chk_static_leaf') else getattr(ac_cfg, 'enable_static_leaf_filter', True),
+            "enable_sideline_filter": self.chk_sideline_filter.isChecked() if hasattr(self, 'chk_sideline_filter') else getattr(ac_cfg, 'enable_sideline_filter', True),
+            "pitch_margin_pct": self.ctrl_pitch_margin.value() if hasattr(self, 'ctrl_pitch_margin') else getattr(ac_cfg, 'pitch_margin_pct', 1.0)
         }
 
         # UI preferences
@@ -4393,6 +4467,7 @@ class MainWindow(QMainWindow):
             "show_offside_line": self.chk_show_offside.isChecked() if hasattr(self, 'chk_show_offside') else True,
             "show_skeletons": self.chk_show_skeletons.isChecked() if hasattr(self, 'chk_show_skeletons') else False,
             "show_speed": self.chk_show_speed.isChecked() if hasattr(self, 'chk_show_speed') else False,
+            "show_sideline_filter": self.chk_sideline_menu.isChecked() if hasattr(self, 'chk_sideline_menu') else True,
             "show_seam": self.chk_show_seam.isChecked() if hasattr(self, 'chk_show_seam') else True,
             "show_grid": self.chk_show_grid.isChecked() if hasattr(self, 'chk_show_grid') else True,
             "sync_angles": getattr(self, 'sync_angles', True),
@@ -4653,6 +4728,27 @@ class MainWindow(QMainWindow):
             if "enable_speed_badges" in ac:
                 self.toggle_speed_badges(bool(ac["enable_speed_badges"]))
 
+            if hasattr(self, 'chk_anti_jersey') and "enable_anti_jersey_filter" in ac:
+                self.chk_anti_jersey.setChecked(bool(ac["enable_anti_jersey_filter"]))
+                self.engine.ai_broadcast.config.enable_anti_jersey_filter = bool(ac["enable_anti_jersey_filter"])
+
+            if hasattr(self, 'chk_static_leaf') and "enable_static_leaf_filter" in ac:
+                self.chk_static_leaf.setChecked(bool(ac["enable_static_leaf_filter"]))
+                self.engine.ai_broadcast.config.enable_static_leaf_filter = bool(ac["enable_static_leaf_filter"])
+
+            if hasattr(self, 'chk_sideline_filter') and "enable_sideline_filter" in ac:
+                val_sf = bool(ac["enable_sideline_filter"])
+                self.chk_sideline_filter.setChecked(val_sf)
+                self.engine.ai_broadcast.config.enable_sideline_filter = val_sf
+                if hasattr(self, 'chk_sideline_menu'):
+                    self.chk_sideline_menu.blockSignals(True)
+                    self.chk_sideline_menu.setChecked(val_sf)
+                    self.chk_sideline_menu.blockSignals(False)
+
+            if hasattr(self, 'ctrl_pitch_margin') and "pitch_margin_pct" in ac:
+                self.ctrl_pitch_margin.setValue(float(ac["pitch_margin_pct"]))
+                self.engine.ai_broadcast.config.pitch_margin_pct = float(ac["pitch_margin_pct"])
+
         # 4. Export Settings
         if "export" in data and isinstance(data["export"], dict):
             exp = data["export"]
@@ -4714,6 +4810,8 @@ class MainWindow(QMainWindow):
                 self.toggle_skeletons(bool(ui["show_skeletons"]))
             if "show_speed" in ui:
                 self.toggle_speed_badges(bool(ui["show_speed"]))
+            if "show_sideline_filter" in ui:
+                self.toggle_sideline_filter(bool(ui["show_sideline_filter"]))
             if hasattr(self, 'chk_show_seam') and "show_seam" in ui:
                 self.chk_show_seam.setChecked(bool(ui["show_seam"]))
             if hasattr(self, 'chk_show_grid') and "show_grid" in ui:

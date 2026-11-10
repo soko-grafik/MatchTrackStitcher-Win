@@ -27,6 +27,7 @@ except ImportError:
 
 from .paths import get_resource_path
 from .logger import get_logger
+from .ball_filter import BallPlausibilityFilter
 
 logger = get_logger("detector")
 
@@ -243,6 +244,13 @@ class YOLODetectorBackend(BaseDetectorBackend):
         except Exception as e:
             logger.warning(f"Fehler bei YOLO-Inferenz: {e}")
 
+        # Early Aspect Ratio & Shape Filter
+        if balls:
+            balls = [
+                b for b in balls 
+                if BallPlausibilityFilter.validate_aspect_ratio_and_size(b.bbox[0], b.bbox[1], b.bbox[2], b.bbox[3])
+            ]
+
         return players, balls
 
 
@@ -345,6 +353,13 @@ class RTDETRBackend(BaseDetectorBackend):
                         ))
         except Exception as e:
             logger.warning(f"Fehler bei RTDETR-Inferenz: {e}")
+
+        # Early Aspect Ratio & Shape Filter
+        if balls:
+            balls = [
+                b for b in balls 
+                if BallPlausibilityFilter.validate_aspect_ratio_and_size(b.bbox[0], b.bbox[1], b.bbox[2], b.bbox[3])
+            ]
 
         return players, balls
 
