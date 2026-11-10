@@ -545,6 +545,8 @@ class AIBroadcastTracker:
         player_scores: List[float] = []
         player_teams: List[int] = []
         ball_candidates: List[Tuple[float, float, float, int, int]] = [] # (norm_x, norm_y, score, px_x, px_y)
+        valid_players: List[DetectionBox] = []
+        valid_balls: List[DetectionBox] = []
 
         # 3. AI Inference via Pluggable Backend (YOLO11, RT-DETR, or YOLO-Pose)
         use_fp16 = (self.device == "cuda" and getattr(self.config, "use_fp16", True))
@@ -707,13 +709,15 @@ class AIBroadcastTracker:
         # 5. Compute Rock-Solid Player Density Centroid (ONLY active on-pitch players, EXCLUDING coaches & staff)
         if self.current_player_tracks:
             active_player_positions = [(cx, cy) for (cx, cy, _) in self.current_player_tracks]
-        else:
+        elif valid_players:
             active_player_positions = [
                 p.center for p in valid_players 
                 if p.cls_name not in ["goalkeeper", "coach", "staff"]
             ]
-        if not active_player_positions and player_positions:
+        elif player_positions:
             active_player_positions = player_positions
+        else:
+            active_player_positions = []
 
         player_cx = self._compute_player_density_centroid(active_player_positions)
         self.last_player_centroid = player_cx
