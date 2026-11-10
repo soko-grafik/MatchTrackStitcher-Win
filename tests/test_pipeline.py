@@ -269,6 +269,18 @@ def test_camera_presets():
     assert preset.model_type == "pinhole"
     print("1080p 60fps preset verified.")
 
+    print("Testing 1080p 4:3 Dewarp RockSteady preset...")
+    assert "DJI_Action4_1080p_4_3_Dewarp_RockSteady" in CAMERA_PRESETS
+    preset_4x3 = CAMERA_PRESETS["DJI_Action4_1080p_4_3_Dewarp_RockSteady"]
+    assert preset_4x3.image_width == 1440
+    assert preset_4x3.image_height == 1080
+    assert preset_4x3.hfov_deg == 82.0
+    assert preset_4x3.cx == 720.0
+    assert preset_4x3.cy == 540.0
+    assert preset_4x3.model_type == "pinhole"
+    assert abs(preset_4x3.fx - 828.0) < 1.0
+    print("1080p 4:3 Dewarp RockSteady preset verified.")
+
 
 def test_video_trimming_logic():
     print("Testing In/Out Video Trimming reference logic...")

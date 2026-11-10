@@ -2085,9 +2085,16 @@ class MainWindow(QMainWindow):
         layout_preset.addWidget(lbl_profile_sel)
 
         self.combo_preset = QComboBox()
-        self.combo_preset.addItems(list(CAMERA_PRESETS.keys()))
-        self.combo_preset.currentTextChanged.connect(self.on_preset_changed)
+        for key, p in CAMERA_PRESETS.items():
+            self.combo_preset.addItem(f"{p.name} [{key}]", key)
+        self.combo_preset.currentIndexChanged.connect(self.on_preset_changed)
         layout_preset.addWidget(self.combo_preset)
+
+        btn_preset_action4_4x3 = QPushButton("⚡ Quick-Preset: Action 4 (1080p 4:3 RockSteady)")
+        btn_preset_action4_4x3.setStyleSheet("background-color: #1e293b; border: 1px solid #38bdf8; font-weight: bold; padding: 7px; color: #38bdf8; border-radius: 8px;")
+        btn_preset_action4_4x3.setToolTip("Setzt 1080p 4:3 Dewarp Profil, 82.0° HFOV, ±36.5° Rig-Winkel und Naht-Überlappung mit 1 Klick.")
+        btn_preset_action4_4x3.clicked.connect(self.apply_action4_4x3_rocksteady_preset)
+        layout_preset.addWidget(btn_preset_action4_4x3)
 
         self.ctrl_cam_fov = LabeledSliderSpinBox("Objektiv-Blickwinkel (HFOV / Brennweite):", 60.0, 140.0, 92.0, 0.2, "°")
         self.ctrl_cam_fov.valueChanged.connect(self.on_cam_fov_changed)
@@ -2261,10 +2268,18 @@ class MainWindow(QMainWindow):
         self.ctrl_squeeze.valueChanged.connect(self.on_rig_param_changed)
         layout_pitch.addWidget(self.ctrl_squeeze)
 
-        btn_full_pitch = QPushButton("🏟️ Ganzes Spielfeld + Beide Tore (145° Preset)")
+        row_pitch_presets = QHBoxLayout()
+        btn_full_pitch = QPushButton("🏟️ 16:9 Spielfeld (145° Preset)")
         btn_full_pitch.setStyleSheet("background-color: #1e1e2d; border: 1px solid #10b981; font-weight: bold; padding: 7px; color: #34d399; border-radius: 8px;")
         btn_full_pitch.clicked.connect(self.apply_full_pitch_preset)
-        layout_pitch.addWidget(btn_full_pitch)
+        row_pitch_presets.addWidget(btn_full_pitch)
+
+        btn_pitch_4x3 = QPushButton("📹 1080p 4:3 RockSteady")
+        btn_pitch_4x3.setStyleSheet("background-color: #1e1e2d; border: 1px solid #38bdf8; font-weight: bold; padding: 7px; color: #38bdf8; border-radius: 8px;")
+        btn_pitch_4x3.setToolTip("Richtet Rig und Blickfeld passend für 4:3 Dewarp mit RockSteady ein")
+        btn_pitch_4x3.clicked.connect(self.apply_action4_4x3_rocksteady_preset)
+        row_pitch_presets.addWidget(btn_pitch_4x3)
+        layout_pitch.addLayout(row_pitch_presets)
 
         scroll_layout.addWidget(grp_pitch_align)
 
@@ -3938,14 +3953,40 @@ class MainWindow(QMainWindow):
         self.engine.invalidate_luts()
         self.trigger_smooth_preview()
 
-    def on_preset_changed(self, preset_name: str):
-        if preset_name in CAMERA_PRESETS:
-            preset = CAMERA_PRESETS[preset_name]
-            self.rig.left_camera = preset
-            self.rig.right_camera = preset
-            self.ctrl_cam_fov.setValue(preset.hfov_deg)
+    def on_preset_changed(self, val: Any = None):
+        key = None
+        if hasattr(self, 'combo_preset'):
+            data = self.combo_preset.currentData()
+            if data and data in CAMERA_PRESETS:
+                key = data
+        if not key and isinstance(val, str):
+            if val in CAMERA_PRESETS:
+                key = val
+            elif hasattr(self, 'combo_preset'):
+                txt = self.combo_preset.currentText()
+                for k, p in CAMERA_PRESETS.items():
+                    if k in txt or p.name in txt:
+                        key = k
+                        break
+
+        if key and key in CAMERA_PRESETS:
+            preset = CAMERA_PRESETS[key]
+            self.rig.left_camera = CameraIntrinsics.from_dict(preset.to_dict())
+            self.rig.right_camera = CameraIntrinsics.from_dict(preset.to_dict())
+            if hasattr(self, 'ctrl_cam_fov'):
+                self.ctrl_cam_fov.blockSignals(True)
+                self.ctrl_cam_fov.setValue(preset.hfov_deg)
+                self.ctrl_cam_fov.blockSignals(False)
+            if hasattr(self, 'combo_preset'):
+                idx = self.combo_preset.findData(key)
+                if idx >= 0 and self.combo_preset.currentIndex() != idx:
+                    self.combo_preset.blockSignals(True)
+                    self.combo_preset.setCurrentIndex(idx)
+                    self.combo_preset.blockSignals(False)
             self.engine.invalidate_luts()
             self.refresh_preview()
+            if hasattr(self, 'status_bar'):
+                self.status_bar.showMessage(f"📷 Profil aktiviert: {preset.name} ({preset.image_width}x{preset.image_height}, HFOV {preset.hfov_deg}°)")
 
     def on_curvature_changed(self, val: float):
         """Adjusts the field line curvature compensation to straighten ground lines."""
@@ -4087,6 +4128,94 @@ class MainWindow(QMainWindow):
         self.engine.invalidate_luts()
         self.refresh_preview()
         self.status_bar.showMessage("🏟️ Preset aktiviert: 145° Weitwinkel-Panorama + Breitenstauchung für volle Spielfeld- & Nah-Ecken-Abdeckung!")
+
+    def apply_action4_4x3_rocksteady_preset(self):
+        """Applies complete stitching preset for DJI Action 4 1080p 4:3 Dewarp (RockSteady ON, 30fps)."""
+        preset_key = "DJI_Action4_1080p_4_3_Dewarp_RockSteady"
+        if preset_key not in CAMERA_PRESETS:
+            return
+        preset = CAMERA_PRESETS[preset_key]
+        self.rig.left_camera = CameraIntrinsics.from_dict(preset.to_dict())
+        self.rig.right_camera = CameraIntrinsics.from_dict(preset.to_dict())
+
+        # Rig poses optimized for 82.0° FOV cameras (~9° central overlap)
+        self.rig.left_pose.yaw = -36.5
+        self.rig.left_pose.pitch = -2.0
+        self.rig.left_pose.roll = 0.0
+        self.rig.left_pose.reset_corners()
+
+        self.rig.right_pose.yaw = 36.5
+        self.rig.right_pose.pitch = -2.0
+        self.rig.right_pose.roll = 0.0
+        self.rig.right_pose.reset_corners()
+
+        self.rig.global_pitch_correction = 2.0
+        self.rig.global_roll_correction = 0.0
+        self.rig.global_yaw_center = 0.0
+        self.rig.pano_hfov = 142.0
+        self.rig.projection_type = "cylindrical"
+        self.rig.field_curvature_correction = 0.0
+        self.rig.blend_width_deg = 4.0
+        self.rig.auto_color_match = True
+        self.rig.color_match_strength = 1.0
+        self.rig.vertical_crop_offset = 0.0
+        self.rig.horizontal_squeeze = 0.85
+        self.rig.auto_crop_lir = True
+        self.rig.lir_safety_margin = 0.005
+
+        # Update UI Controls safely
+        for ctrl in [
+            self.ctrl_left_yaw, self.ctrl_right_yaw, self.ctrl_master_yaw,
+            self.ctrl_cam_pitch, self.ctrl_left_roll, self.ctrl_right_roll,
+            self.ctrl_global_pitch, self.ctrl_h_offset, self.ctrl_pano_hfov,
+            self.ctrl_v_offset, self.ctrl_squeeze, self.ctrl_blend_width,
+            self.ctrl_cam_fov, self.ctrl_safety_margin, self.chk_auto_crop
+        ]:
+            ctrl.blockSignals(True)
+
+        self.ctrl_left_yaw.setValue(-36.5)
+        self.ctrl_right_yaw.setValue(36.5)
+        self.ctrl_master_yaw.setValue(73.0)
+        self.ctrl_cam_pitch.setValue(-2.0)
+        self.ctrl_left_roll.setValue(0.0)
+        self.ctrl_right_roll.setValue(0.0)
+        self.ctrl_global_pitch.setValue(2.0)
+        self.ctrl_h_offset.setValue(0.0)
+        self.ctrl_pano_hfov.setValue(142.0)
+        self.ctrl_v_offset.setValue(0.0)
+        self.ctrl_squeeze.setValue(0.85)
+        self.ctrl_blend_width.setValue(4.0)
+        self.ctrl_cam_fov.setValue(82.0)
+        self.ctrl_safety_margin.setValue(0.5)
+        self.chk_auto_crop.setChecked(True)
+
+        for ctrl in [
+            self.ctrl_left_yaw, self.ctrl_right_yaw, self.ctrl_master_yaw,
+            self.ctrl_cam_pitch, self.ctrl_left_roll, self.ctrl_right_roll,
+            self.ctrl_global_pitch, self.ctrl_h_offset, self.ctrl_pano_hfov,
+            self.ctrl_v_offset, self.ctrl_squeeze, self.ctrl_blend_width,
+            self.ctrl_cam_fov, self.ctrl_safety_margin, self.chk_auto_crop
+        ]:
+            ctrl.blockSignals(False)
+
+        if hasattr(self, 'combo_preset'):
+            idx = self.combo_preset.findData(preset_key)
+            if idx >= 0:
+                self.combo_preset.blockSignals(True)
+                self.combo_preset.setCurrentIndex(idx)
+                self.combo_preset.blockSignals(False)
+
+        if hasattr(self, 'combo_projection'):
+            self.combo_projection.blockSignals(True)
+            idx = self.combo_projection.findData("cylindrical")
+            if idx >= 0:
+                self.combo_projection.setCurrentIndex(idx)
+            self.combo_projection.blockSignals(False)
+
+        self.update_corner_spinboxes_from_rig()
+        self.engine.invalidate_luts()
+        self.refresh_preview()
+        self.status_bar.showMessage("📹 Preset aktiviert: DJI Action 4 1080p 4:3 Dewarp (RockSteady ON, 30fps) - Rig & Stitching optimiert!")
 
     def toggle_auto_crop(self, checked: bool):
         self.rig.auto_crop_lir = checked
@@ -4602,6 +4731,21 @@ class MainWindow(QMainWindow):
 
             self.update_corner_spinboxes_from_rig()
             self.viewport.set_rig(self.rig)
+
+            if hasattr(self, 'combo_preset'):
+                cam_name = self.rig.left_camera.name
+                w = self.rig.left_camera.image_width
+                h = self.rig.left_camera.image_height
+                fov = self.rig.left_camera.hfov_deg
+                for idx in range(self.combo_preset.count()):
+                    k = self.combo_preset.itemData(idx)
+                    if k in CAMERA_PRESETS:
+                        p = CAMERA_PRESETS[k]
+                        if p.name == cam_name or (p.image_width == w and p.image_height == h and abs(p.hfov_deg - fov) < 1.0):
+                            self.combo_preset.blockSignals(True)
+                            self.combo_preset.setCurrentIndex(idx)
+                            self.combo_preset.blockSignals(False)
+                            break
 
         # 2. Sync / Frame offset
         if "sync" in data and isinstance(data["sync"], dict):
