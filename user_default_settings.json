@@ -185,7 +185,7 @@
     },
     "livestream": {
         "server_url": "rtmp://matchtrack.de:1935/live",
-        "resolution": "720p",
+        "resolution": "480p",
         "stream_key_c1": "broadcast_1",
         "stream_key_c2": "panorama_1",
         "stream_key_c3": "cam1",
@@ -199,8 +199,29 @@
         "chan_c3_enabled": true,
         "chan_c4_enabled": false,
         "encoder": "h264_nvenc (NVIDIA GPU - Empfohlen)",
-        "bitrate_kbps": 2500,
-        "wifi_ssid": ""
+        "bitrate_kbps": 3000,
+        "wifi_ssid": "",
+        "obs_settings": {
+            "output_mode": "advanced",
+            "audio_track": 1,
+            "audio_encoder": "aac",
+            "video_encoder": "h264_nvenc",
+            "rescale_output": false,
+            "rescale_resolution": "1920x1080",
+            "rate_control": "vbr",
+            "bitrate_kbps": 3000,
+            "max_bitrate_kbps": 5000,
+            "keyframe_interval_sec": 2.0,
+            "preset": "p4",
+            "tuning": "hq",
+            "multipass": "qres",
+            "profile": "main",
+            "lookahead": true,
+            "adaptive_quant": true,
+            "b_frames": 2,
+            "custom_options": "",
+            "fps": 30
+        }
     },
     "ui_view": {
         "view_mode": "cam1",

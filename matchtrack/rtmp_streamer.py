@@ -34,12 +34,31 @@ class RTMPChannelConfig:
     width: int = 1920
     height: int = 1080
     fps: int = 30
-    bitrate_kbps: int = 6000
+    bitrate_kbps: int = 3000
     codec: str = "h264_nvenc"           # "h264_nvenc", "h264_qsv", "libx264", "hevc_nvenc"
     keyframe_interval_sec: float = 2.0   # Standard GOP size for RTMP/HLS (2 seconds)
     audio_enabled: bool = True
     audio_device_name: str = ""          # DirectShow audio device name, e.g. "Mikrofon (DJI Action 4)"
     source_feed: str = "broadcast_16x9"  # "broadcast_16x9", "panorama_8x3", "cam1", "cam2"
+
+    # OBS Studio Advanced Output & Encoder Settings
+    output_mode: str = "advanced"        # "simple" or "advanced"
+    audio_track: int = 1                 # 1..6
+    audio_encoder: str = "aac"           # "aac" (FFmpeg AAC)
+    rescale_output: bool = False
+    rescale_width: int = 1920
+    rescale_height: int = 1080
+    rate_control: str = "vbr"            # "vbr", "cbr", "cqp", "lossless"
+    max_bitrate_kbps: int = 5000         # Maximum Bitrate for VBR
+    cqp_value: int = 23                  # For CQP rate control
+    preset: str = "p4"                   # "p1".."p7" for nvenc, "ultrafast".."slow" for x264
+    tuning: str = "hq"                   # "hq", "ll", "ull", "lossless"
+    multipass: str = "qres"              # "disabled", "qres", "fullres"
+    profile: str = "main"                # "main", "high", "baseline"
+    lookahead: bool = True               # Lookahead
+    adaptive_quant: bool = True          # Spatial AQ (Adaptive Quantisierung)
+    b_frames: int = 2                    # B-Frames
+    custom_options: str = ""             # Benutzerdefinierte Kodiereroptionen
 
 
 @dataclass
@@ -128,51 +147,114 @@ class RTMPChannelStreamer:
                 "-b:a", "128k"
             ])
 
-        # Hardware/Software Video Encoder Flags
-        bitrate_k = max(500, self.config.bitrate_kbps)
-        maxrate_k = int(bitrate_k * 1.15)
-        bufsize_k = int(bitrate_k * 2.0)
+        # Hardware/Software Video Encoder Flags (OBS Studio Advanced Mode)
+        bitrate_k = max(200, self.config.bitrate_kbps)
+        maxrate_k = max(bitrate_k, getattr(self.config, 'max_bitrate_kbps', int(bitrate_k * 1.5)))
+        bufsize_k = max(bitrate_k * 2, maxrate_k)
+        rc_mode = getattr(self.config, 'rate_control', 'vbr').lower()
+        preset_val = getattr(self.config, 'preset', 'p4')
+        tune_val = getattr(self.config, 'tuning', 'hq')
+        multipass_val = getattr(self.config, 'multipass', 'qres')
+        profile_val = getattr(self.config, 'profile', 'main')
+        b_frames = getattr(self.config, 'b_frames', 2)
+        lookahead = getattr(self.config, 'lookahead', True)
+        spatial_aq = getattr(self.config, 'adaptive_quant', True)
 
         codec_str = self.config.codec.lower()
         if "nvenc" in codec_str:
             v_codec = "h264_nvenc" if "h264" in codec_str else "hevc_nvenc"
             cmd.extend([
                 "-c:v", v_codec,
-                "-preset", "p4",           # Low-latency medium-quality preset
-                "-tune", "ll",             # Low latency
-                "-rc", "cbr",              # Constant Bitrate for streaming stability
-                "-b:v", f"{bitrate_k}k",
-                "-maxrate", f"{maxrate_k}k",
-                "-bufsize", f"{bufsize_k}k",
+                "-preset", preset_val,
+                "-tune", tune_val,
+                "-profile:v", profile_val,
+                "-bf", str(b_frames),
                 "-g", str(gop_size),
                 "-keyint_min", str(gop_size),
                 "-sc_threshold", "0",
                 "-pix_fmt", "yuv420p"
             ])
+
+            # Multipass Mode
+            if multipass_val in ("qres", "fullres"):
+                cmd.extend(["-multipass", multipass_val])
+            else:
+                cmd.extend(["-multipass", "disabled"])
+
+            # Rate Control Method (VBR / CBR / CQP / Lossless)
+            if rc_mode == "cbr":
+                cmd.extend([
+                    "-rc", "cbr",
+                    "-b:v", f"{bitrate_k}k",
+                    "-maxrate", f"{bitrate_k}k",
+                    "-bufsize", f"{bitrate_k}k"
+                ])
+            elif rc_mode == "cqp":
+                cqp = getattr(self.config, 'cqp_value', 23)
+                cmd.extend(["-rc", "constqp", "-qp", str(cqp)])
+            elif rc_mode == "lossless":
+                cmd.extend(["-tune", "lossless", "-qp", "0"])
+            else:  # vbr (Standard OBS)
+                cmd.extend([
+                    "-rc", "vbr",
+                    "-b:v", f"{bitrate_k}k",
+                    "-maxrate", f"{maxrate_k}k",
+                    "-bufsize", f"{bufsize_k}k"
+                ])
+
+            # Lookahead
+            if lookahead:
+                cmd.extend(["-rc-lookahead", "32"])
+
+            # Adaptive Quantisierung (Psycho Visual Tuning)
+            if spatial_aq:
+                cmd.extend(["-spatial-aq", "1", "-temporal-aq", "1"])
+
         elif "qsv" in codec_str:
             cmd.extend([
                 "-c:v", "h264_qsv",
                 "-preset", "veryfast",
+                "-profile:v", profile_val,
                 "-b:v", f"{bitrate_k}k",
                 "-maxrate", f"{maxrate_k}k",
                 "-bufsize", f"{bufsize_k}k",
                 "-g", str(gop_size),
+                "-bf", str(b_frames),
                 "-pix_fmt", "nv12"
             ])
         else:
-            # Fallback x264 software encoder
+            # Fallback x264 software CPU encoder
+            x264_preset = "medium" if preset_val in ("p4", "p5") else ("fast" if preset_val in ("p2", "p3") else "veryfast")
             cmd.extend([
                 "-c:v", "libx264",
-                "-preset", "veryfast",
-                "-tune", "zerolatency",
-                "-b:v", f"{bitrate_k}k",
-                "-maxrate", f"{maxrate_k}k",
-                "-bufsize", f"{bufsize_k}k",
+                "-preset", x264_preset,
+                "-profile:v", profile_val,
+                "-bf", str(b_frames),
                 "-g", str(gop_size),
                 "-keyint_min", str(gop_size),
                 "-sc_threshold", "0",
                 "-pix_fmt", "yuv420p"
             ])
+            if rc_mode == "cbr":
+                cmd.extend(["-b:v", f"{bitrate_k}k", "-minrate", f"{bitrate_k}k", "-maxrate", f"{bitrate_k}k", "-bufsize", f"{bitrate_k}k"])
+            elif rc_mode == "cqp":
+                cqp = getattr(self.config, 'cqp_value', 23)
+                cmd.extend(["-crf", str(cqp)])
+            else:
+                cmd.extend(["-b:v", f"{bitrate_k}k", "-maxrate", f"{maxrate_k}k", "-bufsize", f"{bufsize_k}k"])
+
+        # Rescaling (Ausgabe umskalieren)
+        if getattr(self.config, 'rescale_output', False) and getattr(self.config, 'rescale_width', 0) > 0 and getattr(self.config, 'rescale_height', 0) > 0:
+            cmd.extend(["-vf", f"scale={self.config.rescale_width}:{self.config.rescale_height}"])
+
+        # Benutzerdefinierte Kodiereroptionen
+        custom_opts = getattr(self.config, 'custom_options', '').strip()
+        if custom_opts:
+            import shlex
+            try:
+                cmd.extend(shlex.split(custom_opts))
+            except Exception as e:
+                logger.warning(f"Fehler beim Parsen benutzerdefinierter Optionen '{custom_opts}': {e}")
 
         # FLV / RTMP Output muxer settings
         cmd.extend([
