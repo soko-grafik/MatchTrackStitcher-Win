@@ -813,6 +813,7 @@ class InteractivePanoramaViewport(QWidget):
     corner_dragged = Signal(str, int, float, float) # (camera_side 'left'/'right', corner_idx 0..3, norm_x, norm_y)
     corner_drag_finished = Signal()
     pitch_corners_changed = Signal(list) # 6 freely movable pitch polygon corners [[x_tl, y_tl], [x_tc, y_tc], [x_tr, y_tr], [x_br, y_br], [x_bc, y_bc], [x_bl, y_bl]]
+    grid_quadrant_clicked = Signal(int) # 1, 2, 3, 4 (or 0 for toggle back to grid)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1731,15 +1732,27 @@ class InteractivePanoramaViewport(QWidget):
         is_8x3 = (self.view_mode == "8:3") or (self.current_qimage and abs(self.current_qimage.width() / max(1, self.current_qimage.height()) - (8.0 / 3.0)) < 0.25)
         if self.view_mode == "8:3":
             mode_str = "🌟 8:3 Taktik-Panorama"
+        elif self.view_mode == "grid":
+            mode_str = "🔲 4-Kanal Multiview Grid (1, 2, 3, 4)"
+            hud_text = f"{mode_str} | Klick auf Quadrant [1-4] zum Vergrößern | Doppelklick: Zurück zum Grid"
+        elif self.view_mode == "cam1":
+            mode_str = "📹 Cam 1 Links (Live-Feed)"
+            hud_text = f"{mode_str} ({iw}x{ih}) | Doppelklick: Zurück zum 4er-Grid"
+        elif self.view_mode == "cam2":
+            mode_str = "📹 Cam 2 Rechts (Live-Feed)"
+            hud_text = f"{mode_str} ({iw}x{ih}) | Doppelklick: Zurück zum 4er-Grid"
         elif self.view_mode == "32:9":
             mode_str = "🌟 8:3 Taktik-Panorama" if is_8x3 else "🌟 32:9 Taktik-Panorama"
+            hud_text = f"{mode_str} ({iw}x{ih}) | 🎬 TV-Zoom: {self.dynamic_zoom:.2f}x | Viewport: {int(self.zoom_level*100)}%"
         elif self.view_mode == "21:10":
             mode_str = "📐 21:10 Gestaucht"
+            hud_text = f"{mode_str} ({iw}x{ih}) | 🎬 TV-Zoom: {self.dynamic_zoom:.2f}x | Viewport: {int(self.zoom_level*100)}%"
         elif self.view_mode == "16:9_tactical":
             mode_str = "📐 16:9 Taktik-Warp (Live-Frame)"
+            hud_text = f"{mode_str} ({iw}x{ih}) | 🎬 TV-Zoom: {self.dynamic_zoom:.2f}x | Viewport: {int(self.zoom_level*100)}%"
         else:
             mode_str = "🎥 16:9 Auto-Broadcast"
-        hud_text = f"{mode_str} ({iw}x{ih}) | 🎬 TV-Zoom: {self.dynamic_zoom:.2f}x | Viewport: {int(self.zoom_level*100)}%"
+            hud_text = f"{mode_str} ({iw}x{ih}) | 🎬 TV-Zoom: {self.dynamic_zoom:.2f}x | Viewport: {int(self.zoom_level*100)}%"
         painter.drawText(14, 24 if (not self.pick_center_mode and not self.corner_pin_mode and not self.pitch_roi_mode and self.view_mode != "16:9_tactical") else 48, hud_text)
 
     def wheelEvent(self, event: QWheelEvent):
@@ -1752,6 +1765,16 @@ class InteractivePanoramaViewport(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent):
         target_rect = self._get_target_rect()
+
+        # 0. Grid Quadrant Click (Slot 1, 2, 3, 4 Zoom-In)
+        if self.view_mode == "grid" and target_rect is not None and event.button() == Qt.LeftButton:
+            pos = event.pos()
+            if target_rect.contains(pos):
+                rel_x = (pos.x() - target_rect.left()) / max(1.0, target_rect.width())
+                rel_y = (pos.y() - target_rect.top()) / max(1.0, target_rect.height())
+                quad = 1 if (rel_x < 0.5 and rel_y < 0.5) else (2 if rel_x >= 0.5 and rel_y < 0.5 else (3 if rel_x < 0.5 else 4))
+                self.grid_quadrant_clicked.emit(quad)
+                return
 
         # 1. Pitch ROI / Tactical 16:9 Corner Dragging
         if (self.pitch_roi_mode or self.view_mode == "16:9_tactical") and target_rect is not None and event.button() == Qt.LeftButton:
@@ -1886,6 +1909,9 @@ class InteractivePanoramaViewport(QWidget):
         super().leaveEvent(event)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
+        if self.view_mode != "grid":
+            self.grid_quadrant_clicked.emit(0)
+            return
         self.reset_zoom()
 
 
@@ -2093,11 +2119,14 @@ class MainWindow(QMainWindow):
 
         # View Mode Dropdown
         self.combo_view_mode = QComboBox()
+        self.combo_view_mode.addItem("🔲 4-Kanal Multiview Grid (1, 2, 3, 4)", "grid")
         self.combo_view_mode.addItem("🌟 32:9 Taktik-Panorama (16:9 Profil)", "32:9")
         self.combo_view_mode.addItem("🌟 8:3 Taktik-Panorama (4:3 Profil)", "8:3")
         self.combo_view_mode.addItem("📐 21:10 Gestauchtes Panorama (Gesamt)", "21:10")
         self.combo_view_mode.addItem("📐 16:9 Taktik-Warp (Spielfeld entzerrt)", "16:9_tactical")
         self.combo_view_mode.addItem("🎥 16:9 Auto-Broadcast (Follow-Cam)", "16:9")
+        self.combo_view_mode.addItem("📹 Cam 1 Links (Live-Feed)", "cam1")
+        self.combo_view_mode.addItem("📹 Cam 2 Rechts (Live-Feed)", "cam2")
         self.combo_view_mode.setStyleSheet("font-weight: 600; background-color: #181824; padding: 5px 10px; border: 1px solid #2a2a3e; border-radius: 8px;")
         self.combo_view_mode.currentIndexChanged.connect(self.on_view_mode_changed)
         vp_tool_bar.addWidget(self.combo_view_mode)
@@ -2224,6 +2253,7 @@ class MainWindow(QMainWindow):
         self.viewport.corner_dragged.connect(self.on_viewport_corner_dragged)
         self.viewport.corner_drag_finished.connect(self.on_viewport_corner_drag_finished)
         self.viewport.pitch_corners_changed.connect(self.on_viewport_pitch_corners_changed)
+        self.viewport.grid_quadrant_clicked.connect(self._on_grid_quadrant_clicked)
         left_layout.addWidget(self.viewport, 1)
 
         # Timeline & Playback Controls Frame (One UI Style)
@@ -4456,6 +4486,15 @@ class MainWindow(QMainWindow):
         }
         self._update_nav_highlight(tab_key_map.get(index, "stitch"))
 
+        if index == 3:  # Live-Stream tab
+            if hasattr(self, 'combo_view_mode') and self.combo_view_mode.findData("grid") >= 0:
+                self.set_view_mode_by_id("grid")
+            if hasattr(self, 'live_capture_manager') and not self.live_capture_manager.is_running:
+                mode = self.combo_live_proc_mode.currentData() if hasattr(self, 'combo_live_proc_mode') else "stitching_dual"
+                standby_grid = self._build_multiview_grid(None, None, None, None, mode=mode)
+                if hasattr(self, 'viewport'):
+                    self.viewport.update_preview_image(standby_grid)
+
     def _update_nav_highlight(self, active_key: str):
         """Updates highlight styling for top navigation pills."""
         pills = {
@@ -6612,15 +6651,72 @@ class MainWindow(QMainWindow):
         live_layout.addWidget(grp_tally)
 
         # ---------------------------------------------------------------------
+        # 1b. Multiview & Preview Monitor Switcher
+        # ---------------------------------------------------------------------
+        grp_monitor = QGroupBox("📺 Multiview-Monitor & Vorschau-Auswahl")
+        grp_monitor.setStyleSheet("QGroupBox { font-weight: bold; color: #38bdf8; border: 1px solid #282839; border-radius: 8px; margin-top: 4px; padding-top: 8px; }")
+        layout_mon = QVBoxLayout(grp_monitor)
+        layout_mon.setSpacing(6)
+
+        row_mv_btns = QHBoxLayout()
+        row_mv_btns.setSpacing(6)
+
+        self.btn_mv_grid = QPushButton("🔲 4er-Grid (1, 2, 3, 4)")
+        self.btn_mv_grid.setToolTip("Zeigt alle 4 Live-Streams gleichzeitig in einem 2x2 Regie-Grid (wie im Monitor gezeichnet)")
+        self.btn_mv_grid.setStyleSheet("background-color: #2563eb; color: white; font-weight: 700; border-radius: 6px; padding: 6px 10px; font-size: 11px;")
+        self.btn_mv_grid.clicked.connect(lambda: self.set_view_mode_by_id("grid"))
+
+        self.btn_mv_bcast = QPushButton("🎯 16:9 Regie")
+        self.btn_mv_bcast.setToolTip("Zeigt den virtuellen 16:9 TV-Broadcast mit Ball-Tracking im Vollbild")
+        self.btn_mv_bcast.setStyleSheet("background-color: #1a1a26; border: 1px solid #2a2a3e; color: #cbd5e1; border-radius: 6px; padding: 6px 10px; font-size: 11px;")
+        self.btn_mv_bcast.clicked.connect(lambda: self.set_view_mode_by_id("16:9"))
+
+        self.btn_mv_pano = QPushButton("🏟️ Panorama")
+        self.btn_mv_pano.setToolTip("Zeigt das vollständige gestitchte Stadion-Panorama")
+        self.btn_mv_pano.setStyleSheet("background-color: #1a1a26; border: 1px solid #2a2a3e; color: #cbd5e1; border-radius: 6px; padding: 6px 10px; font-size: 11px;")
+        self.btn_mv_pano.clicked.connect(lambda: self.set_view_mode_by_id("8:3" if self.is_4_3_mode() else "32:9"))
+
+        self.btn_mv_cam1 = QPushButton("📹 Cam 1")
+        self.btn_mv_cam1.setToolTip("Zeigt das Rohbild von Kamera Links")
+        self.btn_mv_cam1.setStyleSheet("background-color: #1a1a26; border: 1px solid #2a2a3e; color: #cbd5e1; border-radius: 6px; padding: 6px 10px; font-size: 11px;")
+        self.btn_mv_cam1.clicked.connect(lambda: self.set_view_mode_by_id("cam1"))
+
+        self.btn_mv_cam2 = QPushButton("📹 Cam 2")
+        self.btn_mv_cam2.setToolTip("Zeigt das Rohbild von Kamera Rechts")
+        self.btn_mv_cam2.setStyleSheet("background-color: #1a1a26; border: 1px solid #2a2a3e; color: #cbd5e1; border-radius: 6px; padding: 6px 10px; font-size: 11px;")
+        self.btn_mv_cam2.clicked.connect(lambda: self.set_view_mode_by_id("cam2"))
+
+        row_mv_btns.addWidget(self.btn_mv_grid, 2)
+        row_mv_btns.addWidget(self.btn_mv_bcast, 1)
+        row_mv_btns.addWidget(self.btn_mv_pano, 1)
+        row_mv_btns.addWidget(self.btn_mv_cam1, 1)
+        row_mv_btns.addWidget(self.btn_mv_cam2, 1)
+        layout_mon.addLayout(row_mv_btns)
+        live_layout.addWidget(grp_monitor)
+
+        # ---------------------------------------------------------------------
         # 2. Camera Input Source Group (USB Webcams / UVC vs. Wireless BLE)
         # ---------------------------------------------------------------------
-        grp_input = QGroupBox("📹 Kamera-Eingangsquellen (USB-Webcams, DJI Action & UVC)")
+        grp_input = QGroupBox("📹 Kamera-Eingangsquellen & Verarbeitungs-Modus")
         grp_input.setStyleSheet("QGroupBox { font-weight: bold; color: #38bdf8; border: 1px solid #282839; border-radius: 8px; margin-top: 6px; padding-top: 10px; }")
         input_layout = QVBoxLayout(grp_input)
         input_layout.setSpacing(8)
 
+        # Live Processing Mode: Stitching vs. Single-Camera vs. Dual Single-Stream
+        row_proc = QHBoxLayout()
+        row_proc.addWidget(QLabel("Live-Modus:"))
+        self.combo_live_proc_mode = QComboBox()
+        self.combo_live_proc_mode.addItem("🧵 Dual-Kamera Panorama-Stitching & KI-Regie (Stitching + Ball-Follow 16:9)", "stitching_dual")
+        self.combo_live_proc_mode.addItem("📹 Einzelkamera: Nur Cam 1 (Links - Direkt ohne Stitching / 0% Last)", "single_cam1")
+        self.combo_live_proc_mode.addItem("📹 Einzelkamera: Nur Cam 2 (Rechts - Direkt ohne Stitching / 0% Last)", "single_cam2")
+        self.combo_live_proc_mode.addItem("📹 Dual Direkt-Streams (Cam 1 & Cam 2 getrennt ohne Stitching)", "dual_cams_nostitch")
+        self.combo_live_proc_mode.currentIndexChanged.connect(self._on_live_proc_mode_changed)
+        self.combo_live_proc_mode.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6; font-weight: 700;")
+        row_proc.addWidget(self.combo_live_proc_mode, 1)
+        input_layout.addLayout(row_proc)
+
         row_mode = QHBoxLayout()
-        row_mode.addWidget(QLabel("Eingangs-Modus:"))
+        row_mode.addWidget(QLabel("Eingangs-Weg:"))
         self.combo_live_input_mode = QComboBox()
         self.combo_live_input_mode.addItem("🔌 USB-Kabel (Standard-Webcams, USB-C, DJI Action - 0ms Latenz)", "uvc")
         self.combo_live_input_mode.addItem("📡 Kabellose BLE-Fernsteuerung (Nur DJI Action 4/5 - Mimo Bypass)", "ble")
@@ -7524,6 +7620,72 @@ class MainWindow(QMainWindow):
         if data != "custom":
             self.txt_rtmp_server_url.setText(data)
 
+    def _on_grid_quadrant_clicked(self, quad: int):
+        """Switches full-screen viewport preview when a quadrant in the 2x2 grid is clicked."""
+        if quad == 0:
+            self.set_view_mode_by_id("grid")
+        elif quad == 1:
+            mode = self.combo_live_proc_mode.currentData() if hasattr(self, 'combo_live_proc_mode') else "stitching_dual"
+            if mode == "single_cam2":
+                self.set_view_mode_by_id("cam2")
+            elif mode in ("single_cam1", "dual_cams_nostitch"):
+                self.set_view_mode_by_id("cam1")
+            else:
+                self.set_view_mode_by_id("16:9")
+        elif quad == 2:
+            mode = self.combo_live_proc_mode.currentData() if hasattr(self, 'combo_live_proc_mode') else "stitching_dual"
+            if mode == "dual_cams_nostitch":
+                self.set_view_mode_by_id("cam2")
+            else:
+                self.set_view_mode_by_id("8:3" if self.is_4_3_mode() else "32:9")
+        elif quad == 3:
+            self.set_view_mode_by_id("cam1")
+        elif quad == 4:
+            self.set_view_mode_by_id("cam2")
+
+    def _on_live_proc_mode_changed(self):
+        """Adapts UI, channels, and camera inputs based on stitching vs. single-stream mode."""
+        mode = self.combo_live_proc_mode.currentData() if hasattr(self, 'combo_live_proc_mode') else "stitching_dual"
+        if mode == "single_cam1":
+            self.combo_uvc_left.setEnabled(True)
+            self.combo_uvc_right.setEnabled(False)
+            if hasattr(self, 'combo_feed_c1'):
+                idx = self.combo_feed_c1.findData("cam1")
+                if idx >= 0: self.combo_feed_c1.setCurrentIndex(idx)
+            self.lbl_uvc_status.setText("💡 Einzelkamera-Modus: Nur Cam 1 aktiv. Kein Stitching = minimale CPU/GPU-Auslastung.")
+        elif mode == "single_cam2":
+            self.combo_uvc_left.setEnabled(False)
+            self.combo_uvc_right.setEnabled(True)
+            if hasattr(self, 'combo_feed_c1'):
+                idx = self.combo_feed_c1.findData("cam2")
+                if idx >= 0: self.combo_feed_c1.setCurrentIndex(idx)
+            self.lbl_uvc_status.setText("💡 Einzelkamera-Modus: Nur Cam 2 aktiv. Kein Stitching = minimale CPU/GPU-Auslastung.")
+        elif mode == "dual_cams_nostitch":
+            self.combo_uvc_left.setEnabled(True)
+            self.combo_uvc_right.setEnabled(True)
+            if hasattr(self, 'combo_feed_c1'):
+                idx1 = self.combo_feed_c1.findData("cam1")
+                if idx1 >= 0: self.combo_feed_c1.setCurrentIndex(idx1)
+            if hasattr(self, 'combo_feed_c2'):
+                idx2 = self.combo_feed_c2.findData("cam2")
+                if idx2 >= 0: self.combo_feed_c2.setCurrentIndex(idx2)
+            self.lbl_uvc_status.setText("💡 Dual Direct-Stream: Cam 1 & Cam 2 werden parallel direkt gestreamt (ohne Stitching).")
+        else:
+            self.combo_uvc_left.setEnabled(True)
+            self.combo_uvc_right.setEnabled(True)
+            if hasattr(self, 'combo_feed_c1'):
+                idx1 = self.combo_feed_c1.findData("broadcast_16x9")
+                if idx1 >= 0: self.combo_feed_c1.setCurrentIndex(idx1)
+            if hasattr(self, 'combo_feed_c2'):
+                idx2 = self.combo_feed_c2.findData("panorama_8x3")
+                if idx2 >= 0: self.combo_feed_c2.setCurrentIndex(idx2)
+            self.lbl_uvc_status.setText("💡 Dual-Kamera Stitching aktiv: Echtzeit-Panorama & KI Ball-Follow Regie.")
+
+        if getattr(self, 'view_mode', '') == "grid" and hasattr(self, 'live_capture_manager') and not self.live_capture_manager.is_running:
+            standby = self._build_multiview_grid(None, None, None, None, mode=mode)
+            if hasattr(self, 'viewport'):
+                self.viewport.update_preview_image(standby)
+
     def _on_live_input_mode_changed(self, idx: int):
         mode = self.combo_live_input_mode.currentData()
         self.panel_uvc.setVisible(mode == "uvc")
@@ -7560,35 +7722,253 @@ class MainWindow(QMainWindow):
             self.btn_toggle_uvc.setText("▶️ Live-Kameras aktivieren")
             self.btn_toggle_uvc.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; border-radius: 6px; padding: 5px 12px; font-size: 11px;")
             self.lbl_uvc_status.setText("Live-Kameras gestoppt.")
+            if getattr(self, 'view_mode', '') == "grid":
+                mode = self.combo_live_proc_mode.currentData() if hasattr(self, 'combo_live_proc_mode') else "stitching_dual"
+                self.viewport.update_preview_image(self._build_multiview_grid(None, None, None, None, mode=mode))
         else:
+            mode = self.combo_live_proc_mode.currentData() if hasattr(self, 'combo_live_proc_mode') else "stitching_dual"
             idx_l = self.combo_uvc_left.currentData()
             idx_r = self.combo_uvc_right.currentData()
-            if idx_l is None or idx_l < 0:
-                QMessageBox.warning(self, "Kamera wählen", "Bitte wähle mindestens eine gültige USB-Webcam für 'Cam Links' aus.")
-                return
 
-            if idx_r is None or idx_r < 0:
-                idx_r = None
+            if mode == "single_cam2":
+                if idx_r is None or idx_r < 0:
+                    QMessageBox.warning(self, "Kamera wählen", "Bitte wähle eine gültige USB-Webcam für 'Cam Rechts' aus.")
+                    return
+                src_l = None
+                src_r = idx_r
+            elif mode == "single_cam1":
+                if idx_l is None or idx_l < 0:
+                    QMessageBox.warning(self, "Kamera wählen", "Bitte wähle eine gültige USB-Webcam für 'Cam Links' aus.")
+                    return
+                src_l = idx_l
+                src_r = None
+            else:
+                if idx_l is None or idx_l < 0:
+                    QMessageBox.warning(self, "Kamera wählen", "Bitte wähle mindestens eine gültige USB-Webcam für 'Cam Links' aus.")
+                    return
+                src_l = idx_l
+                src_r = idx_r if (idx_r is not None and idx_r >= 0) else None
 
             fps_val = self.combo_stream_fps.currentData() or 30
-            self.live_capture_manager.start(idx_l, idx_r, width=1920, height=1080, fps=fps_val)
+            self.live_capture_manager.start(src_l, src_r, width=1920, height=1080, fps=fps_val)
             self.live_capture_timer.start()
             self.btn_toggle_uvc.setText("⏹ Kameras deaktivieren")
             self.btn_toggle_uvc.setStyleSheet("background-color: #b91c1c; color: white; font-weight: bold; border-radius: 6px; padding: 5px 12px; font-size: 11px;")
-            if idx_r is None:
-                self.lbl_uvc_status.setText(f"Einzelkamera-Erfassung aktiv (Quelle: [{idx_l}], 1080p @ {fps_val} FPS).")
+
+            if mode == "single_cam1":
+                self.lbl_uvc_status.setText(f"Einzelkamera-Stream aktiv (Cam Links: [{src_l}], 1080p @ {fps_val} FPS - Ohne Stitching).")
+            elif mode == "single_cam2":
+                self.lbl_uvc_status.setText(f"Einzelkamera-Stream aktiv (Cam Rechts: [{src_r}], 1080p @ {fps_val} FPS - Ohne Stitching).")
+            elif mode == "dual_cams_nostitch":
+                self.lbl_uvc_status.setText(f"Dual Direct-Stream aktiv (Cams: [{src_l}] & [{src_r}] - Ohne Stitching).")
             else:
-                self.lbl_uvc_status.setText(f"Dual-Webcam-Erfassung aktiv (Quellen: [{idx_l}] & [{idx_r}], 1080p @ {fps_val} FPS).")
+                if src_r is None:
+                    self.lbl_uvc_status.setText(f"Einzelkamera-Erfassung aktiv (Quelle: [{src_l}], 1080p @ {fps_val} FPS).")
+                else:
+                    self.lbl_uvc_status.setText(f"Dual-Webcam-Erfassung aktiv (Quellen: [{src_l}] & [{src_r}], 1080p @ {fps_val} FPS).")
+
+    def _build_multiview_grid(
+        self,
+        bcast_frame: Optional[np.ndarray],
+        pano_frame: Optional[np.ndarray],
+        frame_l: Optional[np.ndarray],
+        frame_r: Optional[np.ndarray],
+        mode: str = "stitching_dual"
+    ) -> np.ndarray:
+        """
+        Renders a broadcast-grade 2x2 Multiview Grid (Quad-Split) in 1920x1080:
+        Quadrant 1 (Top-Left):     Feed 1 - 16:9 KI-Regie (Ball-Follow) or Cam 1 Single
+        Quadrant 2 (Top-Right):    Feed 2 - 8:3/32:9 Taktik-Panorama or Cam 2
+        Quadrant 3 (Bottom-Left):  Feed 3 - Cam 1 Links (Roh-Feed)
+        Quadrant 4 (Bottom-Right): Feed 4 - Cam 2 Rechts (Roh-Feed)
+        """
+        gw, gh = 958, 538
+        grid_img = np.full((1080, 1920, 3), 16, dtype=np.uint8)
+
+        # Dividing lines between 4 quadrants
+        cv2.line(grid_img, (959, 0), (959, 1080), (38, 38, 54), 2)
+        cv2.line(grid_img, (0, 539), (1920, 539), (38, 38, 54), 2)
+
+        # Determine which feeds are actively streaming to RTMP
+        is_live_any = hasattr(self, 'stream_manager') and self.stream_manager.is_any_live()
+        c1_live = is_live_any and hasattr(self, 'chk_chan_1') and self.chk_chan_1.isChecked()
+        c2_live = is_live_any and hasattr(self, 'chk_chan_2') and self.chk_chan_2.isChecked()
+        c3_live = is_live_any and hasattr(self, 'chk_chan_3') and self.chk_chan_3.isChecked()
+        c4_live = is_live_any and hasattr(self, 'chk_chan_4') and self.chk_chan_4.isChecked()
+
+        feed_c1 = self.combo_feed_c1.currentData() if hasattr(self, 'combo_feed_c1') else "broadcast_16x9"
+        feed_c2 = self.combo_feed_c2.currentData() if hasattr(self, 'combo_feed_c2') else "panorama_8x3"
+        feed_c3 = self.combo_feed_c3.currentData() if hasattr(self, 'combo_feed_c3') else "cam1"
+        feed_c4 = self.combo_feed_c4.currentData() if hasattr(self, 'combo_feed_c4') else "cam2"
+
+        live_feeds = set()
+        if c1_live and feed_c1: live_feeds.add(feed_c1)
+        if c2_live and feed_c2: live_feeds.add(feed_c2)
+        if c3_live and feed_c3: live_feeds.add(feed_c3)
+        if c4_live and feed_c4: live_feeds.add(feed_c4)
+
+        if mode == "single_cam1":
+            q1_img = frame_l
+            q1_title = "CAM 1 (LINKS / SINGLE STREAM)"
+            q1_live = "cam1" in live_feeds or "broadcast_16x9" in live_feeds
+            q1_sub = "HAUPT-STREAM AKTIV"
+
+            q2_img = None
+            q2_title = "TAKTIK-PANORAMA"
+            q2_live = False
+            q2_sub = "INAKTIV (Einzelkamera-Modus)"
+
+            q3_img = frame_l
+            q3_title = "CAM 1 LINKS (ROH-FEED)"
+            q3_live = "cam1" in live_feeds
+            q3_sub = "ROH-SIGNAL"
+
+            q4_img = None
+            q4_title = "CAM 2 RECHTS"
+            q4_live = False
+            q4_sub = "NICHT VERWENDET"
+
+        elif mode == "single_cam2":
+            q1_img = frame_r
+            q1_title = "CAM 2 (RECHTS / SINGLE STREAM)"
+            q1_live = "cam2" in live_feeds or "broadcast_16x9" in live_feeds
+            q1_sub = "HAUPT-STREAM AKTIV"
+
+            q2_img = None
+            q2_title = "TAKTIK-PANORAMA"
+            q2_live = False
+            q2_sub = "INAKTIV (Einzelkamera-Modus)"
+
+            q3_img = None
+            q3_title = "CAM 1 LINKS"
+            q3_live = False
+            q3_sub = "NICHT VERWENDET"
+
+            q4_img = frame_r
+            q4_title = "CAM 2 RECHTS (ROH-FEED)"
+            q4_live = "cam2" in live_feeds
+            q4_sub = "ROH-SIGNAL"
+
+        elif mode == "dual_cams_nostitch":
+            q1_img = frame_l
+            q1_title = "CAM 1 LINKS (DIRECT-STREAM)"
+            q1_live = "cam1" in live_feeds or "broadcast_16x9" in live_feeds
+            q1_sub = "DIREKT-STREAM"
+
+            q2_img = frame_r
+            q2_title = "CAM 2 RECHTS (DIRECT-STREAM)"
+            q2_live = "cam2" in live_feeds or "panorama_8x3" in live_feeds
+            q2_sub = "DIREKT-STREAM"
+
+            q3_img = frame_l
+            q3_title = "CAM 1 LINKS (ROH-FEED)"
+            q3_live = "cam1" in live_feeds
+            q3_sub = "ROH-SIGNAL"
+
+            q4_img = frame_r
+            q4_title = "CAM 2 RECHTS (ROH-FEED)"
+            q4_live = "cam2" in live_feeds
+            q4_sub = "ROH-SIGNAL"
+
+        else: # stitching_dual
+            q1_img = bcast_frame
+            q1_title = "16:9 REGIE (BALL-FOLLOW KI)"
+            q1_live = "broadcast_16x9" in live_feeds
+            q1_sub = "KI-FOLLOW REGIE"
+
+            q2_img = pano_frame
+            q2_title = "TAKTIK-PANORAMA (8:3 / 32:9)"
+            q2_live = "panorama_8x3" in live_feeds
+            q2_sub = "STITCHED PANORAMA"
+
+            q3_img = frame_l
+            q3_title = "CAM 1 LINKS (ROH-FEED)"
+            q3_live = "cam1" in live_feeds
+            q3_sub = "ROH-SIGNAL"
+
+            q4_img = frame_r
+            q4_title = "CAM 2 RECHTS (ROH-FEED)"
+            q4_live = "cam2" in live_feeds
+            q4_sub = "ROH-SIGNAL"
+
+        def render_tile(dest_slice, src_img, title, quad_num, is_live=False, standby_sub="STANDBY"):
+            tile = np.full((gh, gw, 3), 18, dtype=np.uint8)
+            if src_img is not None and src_img.size > 0:
+                ih, iw = src_img.shape[:2]
+                target_ar = gw / gh
+                src_ar = iw / max(1, ih)
+
+                if abs(src_ar - target_ar) < 0.05:
+                    content = cv2.resize(src_img, (gw, gh), interpolation=cv2.INTER_LINEAR)
+                elif src_ar > target_ar:
+                    fit_h = max(10, int(gw / src_ar))
+                    if fit_h > gh: fit_h = gh
+                    resized = cv2.resize(src_img, (gw, fit_h), interpolation=cv2.INTER_LINEAR)
+                    pad_top = (gh - fit_h) // 2
+                    content = np.zeros((gh, gw, 3), dtype=np.uint8)
+                    content[pad_top:pad_top+fit_h, 0:gw] = resized
+                else:
+                    fit_w = max(10, int(gh * src_ar))
+                    if fit_w > gw: fit_w = gw
+                    resized = cv2.resize(src_img, (fit_w, gh), interpolation=cv2.INTER_LINEAR)
+                    pad_left = (gw - fit_w) // 2
+                    content = np.zeros((gh, gw, 3), dtype=np.uint8)
+                    content[0:gh, pad_left:pad_left+fit_w] = resized
+                tile = content
+
+                b_color = (0, 0, 235) if is_live else (65, 55, 45)
+                b_thick = 2 if is_live else 1
+                cv2.rectangle(tile, (0, 0), (gw-1, gh-1), b_color, b_thick)
+            else:
+                cv2.rectangle(tile, (0, 0), (gw-1, gh-1), (40, 35, 30), 1)
+                # Big watermark number
+                cv2.putText(tile, str(quad_num), (gw//2 - 35, gh//2 + 45), cv2.FONT_HERSHEY_DUPLEX, 3.6, (30, 28, 25), 4)
+                # Title & Status text
+                t_w = len(title) * 9
+                cv2.putText(tile, title, (max(20, gw//2 - t_w//2), gh//2 - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (160, 160, 175), 2)
+                s_w = len(standby_sub) * 7
+                cv2.putText(tile, standby_sub, (max(20, gw//2 - s_w//2), gh//2 + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 120), 1)
+
+            # Top Header Bar Overlay
+            cv2.rectangle(tile, (0, 0), (gw, 36), (14, 14, 18), -1)
+            cv2.line(tile, (0, 36), (gw, 36), (35, 35, 48), 1)
+
+            # Quadrant Number Badge
+            badge_color = (37, 99, 235) if not is_live else (0, 0, 220)
+            cv2.rectangle(tile, (8, 6), (34, 30), badge_color, -1)
+            cv2.putText(tile, str(quad_num), (15, 25), cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 255), 2)
+
+            # Title
+            cv2.putText(tile, title, (42, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (230, 230, 240), 1, cv2.LINE_AA)
+
+            # Indicator Badge
+            if is_live:
+                cv2.rectangle(tile, (gw - 85, 7), (gw - 10, 29), (0, 0, 200), -1)
+                cv2.putText(tile, "LIVE", (gw - 72, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 1, cv2.LINE_AA)
+            elif src_img is not None and src_img.size > 0:
+                cv2.rectangle(tile, (gw - 95, 7), (gw - 10, 29), (32, 32, 44), -1)
+                cv2.putText(tile, "PREVIEW", (gw - 88, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (160, 160, 175), 1, cv2.LINE_AA)
+
+            dest_slice[:] = tile
+
+        # Render 4 quadrants
+        render_tile(grid_img[0:gh, 0:gw], q1_img, q1_title, 1, is_live=q1_live, standby_sub=q1_sub)
+        render_tile(grid_img[0:gh, 962:962+gw], q2_img, q2_title, 2, is_live=q2_live, standby_sub=q2_sub)
+        render_tile(grid_img[542:542+gh, 0:gw], q3_img, q3_title, 3, is_live=q3_live, standby_sub=q3_sub)
+        render_tile(grid_img[542:542+gh, 962:962+gw], q4_img, q4_title, 4, is_live=q4_live, standby_sub=q4_sub)
+
+        return grid_img
 
     def _on_live_capture_tick(self):
-        """Tick event capturing live frames from cameras, stitching, and pushing to RTMP streams."""
+        """Tick event capturing live frames from cameras, stitching/processing, and pushing to RTMP streams."""
         if not self.live_capture_manager.is_running:
             return
 
         frame_l, frame_r, is_synced = self.live_capture_manager.get_synced_frames()
-        if frame_l is None:
+        if frame_l is None and frame_r is None:
             return
 
+        mode = self.combo_live_proc_mode.currentData() if hasattr(self, 'combo_live_proc_mode') else "stitching_dual"
         res_mode = self.combo_stream_resolution.currentData() if hasattr(self, 'combo_stream_resolution') else "1080p"
         is_4_3 = self.is_4_3_mode()
 
@@ -7602,23 +7982,40 @@ class MainWindow(QMainWindow):
             pw, ph = (2560, 960) if is_4_3 else (3840, 1080)
             bw, bh = 1920, 1080
 
-        try:
-            pano_frame, bcast_frame, crop_box = self.engine.stitch_live_pair(
-                frame_l, frame_r,
-                pano_width=pw,
-                pano_height=ph,
-                broadcast_width=bw,
-                broadcast_height=bh
-            )
-        except Exception as e:
-            logger.warning(f"Fehler beim Live-Stitching/Capture: {e}")
-            return
+        pano_frame = None
+        bcast_frame = None
+        crop_box = None
+
+        if mode == "stitching_dual" and frame_l is not None:
+            try:
+                pano_frame, bcast_frame, crop_box = self.engine.stitch_live_pair(
+                    frame_l, frame_r,
+                    pano_width=pw,
+                    pano_height=ph,
+                    broadcast_width=bw,
+                    broadcast_height=bh
+                )
+            except Exception as e:
+                logger.warning(f"Fehler beim Live-Stitching/Capture: {e}")
+                return
+        elif mode == "single_cam1" or (mode == "stitching_dual" and frame_r is None and frame_l is not None):
+            bcast_frame = frame_l
+            pano_frame = None
+            crop_box = None
+        elif mode == "single_cam2":
+            bcast_frame = frame_r
+            pano_frame = None
+            crop_box = None
+        elif mode == "dual_cams_nostitch":
+            bcast_frame = frame_l
+            pano_frame = frame_r
+            crop_box = None
 
         # Push to active RTMP streaming channels via dynamic feed routing
         if self.stream_manager.is_any_live():
             feeds = {
-                "broadcast_16x9": bcast_frame,
-                "panorama_8x3": pano_frame,
+                "broadcast_16x9": bcast_frame if bcast_frame is not None else frame_l,
+                "panorama_8x3": pano_frame if pano_frame is not None else frame_r,
                 "cam1": frame_l,
                 "cam2": frame_r
             }
@@ -7626,11 +8023,26 @@ class MainWindow(QMainWindow):
 
         # Update viewport preview
         vm = self.view_mode
-        if vm.startswith("16:9") and bcast_frame is not None:
+        if vm == "grid":
+            display_frame = self._build_multiview_grid(
+                bcast_frame=bcast_frame,
+                pano_frame=pano_frame,
+                frame_l=frame_l,
+                frame_r=frame_r,
+                mode=mode
+            )
+            box = None
+        elif vm == "cam1":
+            display_frame = frame_l if frame_l is not None else bcast_frame
+            box = None
+        elif vm == "cam2":
+            display_frame = frame_r if frame_r is not None else bcast_frame
+            box = None
+        elif vm.startswith("16:9") and bcast_frame is not None:
             display_frame = bcast_frame
             box = None
         else:
-            display_frame = pano_frame
+            display_frame = pano_frame if pano_frame is not None else (bcast_frame if bcast_frame is not None else frame_l)
             box = crop_box
 
         if display_frame is not None and hasattr(self, 'viewport') and self.viewport is not None:

@@ -308,13 +308,14 @@ class DualLiveCaptureManager:
         """
         Retrieves the latest available frame pair from both cameras (or single frame in single mode).
         Returns: (frame_left, frame_right, is_synchronized)
-        In single mode: (frame_left, None, True)
         """
-        if self.single_mode:
-            if not self.cam_left:
-                return None, None, False
+        if self.cam_left and not self.cam_right:
             fl, _ = self.cam_left.get_latest_frame()
             return fl, None, True
+
+        if self.cam_right and not self.cam_left:
+            fr, _ = self.cam_right.get_latest_frame()
+            return None, fr, True
 
         if not self.cam_left or not self.cam_right:
             return None, None, False
