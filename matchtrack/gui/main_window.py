@@ -2540,16 +2540,22 @@ class MainWindow(QMainWindow):
             self.spin_pitch_corners.append((spin_x, spin_y))
 
         row_pitch_btns = QHBoxLayout()
-        btn_preset_curve = QPushButton("🏟️ Krümmung ausgleichen (Preset)")
+        btn_preset_curve = QPushButton("🏟️ Krümmung ausgleichen")
         btn_preset_curve.setStyleSheet("background-color: #1e1e2d; border: 1px solid #2563eb; font-weight: 600; padding: 6px; color: #60a5fa; border-radius: 8px;")
         btn_preset_curve.setToolTip("Setzt typische Entzerrungswerte für Mittellinien-Wölbung, um gebogene Seitenlinien zu begradigen")
         btn_preset_curve.clicked.connect(self.apply_preset_curve_warp)
 
-        btn_reset_pitch = QPushButton("↺ 100% Vollbild zurücksetzen")
+        btn_preset_youth = QPushButton("⚽ Querfeld / Jugendspiel")
+        btn_preset_youth.setStyleSheet("background-color: #1e293b; border: 1px solid #10b981; font-weight: 600; padding: 6px; color: #34d399; border-radius: 8px;")
+        btn_preset_youth.setToolTip("Setzt das 6-Punkte-Polygon sofort passend für Jugendspiele auf dem Querfeld (untere Seitenlinie bei ~55%, Trainer & Bänke werden ignoriert)")
+        btn_preset_youth.clicked.connect(self.apply_preset_youth_crossfield)
+
+        btn_reset_pitch = QPushButton("↺ 100% Vollbild")
         btn_reset_pitch.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; padding: 6px; font-size: 11px; color: #cbd5e1; border-radius: 8px;")
         btn_reset_pitch.clicked.connect(self.apply_preset_fullscreen_warp)
 
         row_pitch_btns.addWidget(btn_preset_curve)
+        row_pitch_btns.addWidget(btn_preset_youth)
         row_pitch_btns.addWidget(btn_reset_pitch)
         layout_pitch_roi.addLayout(row_pitch_btns)
 
@@ -4238,6 +4244,23 @@ class MainWindow(QMainWindow):
                     self.spin_pitch_corners[idx][0].setValue(dx)
                     self.spin_pitch_corners[idx][1].setValue(dy)
         self.status_bar.showMessage("🏟️ Preset aktiviert: Mittellinien-Wölbung entzerrt (Panorama-Seitenlinien begradigt)!")
+
+    def apply_preset_youth_crossfield(self):
+        """Applies Querfeld / Jugendspiel preset (half-pitch / cross-pitch field setup)."""
+        preset = [
+            (5.0, 15.0),   # TL (Tor links)
+            (50.0, 12.0),  # TC (obere Begrenzung)
+            (95.0, 15.0),  # TR (Tor rechts)
+            (95.0, 52.0),  # BR (untere Ecke rechts)
+            (50.0, 58.0),  # BC (Wölbung / Pylone unten)
+            (5.0, 52.0)    # BL (untere Ecke links)
+        ]
+        if hasattr(self, 'spin_pitch_corners'):
+            for idx, (dx, dy) in enumerate(preset):
+                if idx < len(self.spin_pitch_corners):
+                    self.spin_pitch_corners[idx][0].setValue(dx)
+                    self.spin_pitch_corners[idx][1].setValue(dy)
+        self.status_bar.showMessage("⚽ Preset aktiviert: Querfeld / Jugendspiel (untere Seitenlinie bei ~55%, Trainer im Vordergrund ignoriert)!")
 
     def apply_preset_fullscreen_warp(self):
         """Resets tactical warp to 100% full frame."""

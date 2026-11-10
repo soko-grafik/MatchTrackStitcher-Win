@@ -95,9 +95,11 @@ class BaseDetectorBackend(ABC):
                 offset_x: int = 0, 
                 offset_y: int = 0, 
                 pano_w: int = 1920, 
-                pano_h: int = 1080) -> Tuple[List[DetectionBox], List[DetectionBox]]:
+                pano_h: int = 1080,
+                crop_scale: float = 1.0) -> Tuple[List[DetectionBox], List[DetectionBox]]:
         """
         Runs inference on sub-crop and returns (players, balls) in full-frame normalized coords.
+        crop_scale: Scale factor if img_bgr was resized from (pano_crop) before inference.
         """
         pass
 
@@ -160,12 +162,15 @@ class YOLODetectorBackend(BaseDetectorBackend):
                 offset_x: int = 0, 
                 offset_y: int = 0, 
                 pano_w: int = 1920, 
-                pano_h: int = 1080) -> Tuple[List[DetectionBox], List[DetectionBox]]:
+                pano_h: int = 1080,
+                crop_scale: float = 1.0) -> Tuple[List[DetectionBox], List[DetectionBox]]:
         players: List[DetectionBox] = []
         balls: List[DetectionBox] = []
 
         if not self.is_loaded or self.model is None:
             return players, balls
+
+        cs = max(1e-6, float(crop_scale))
 
         try:
             with torch.inference_mode():
@@ -174,7 +179,7 @@ class YOLODetectorBackend(BaseDetectorBackend):
                     device=self.device,
                     half=self.use_fp16,
                     verbose=False,
-                    imgsz=640,
+                    imgsz=1280,
                     conf=conf_thresh
                 )
             if results and len(results) > 0:
@@ -189,15 +194,23 @@ class YOLODetectorBackend(BaseDetectorBackend):
                     xyxy = box.xyxy[0].cpu().numpy()
 
                     # Convert to normalized coordinates of full panorama
-                    bx1 = max(0.0, min(1.0, float(xyxy[0] + offset_x) / pano_w))
-                    by1 = max(0.0, min(1.0, float(xyxy[1] + offset_y) / pano_h))
-                    bx2 = max(0.0, min(1.0, float(xyxy[2] + offset_x) / pano_w))
-                    by2 = max(0.0, min(1.0, float(xyxy[3] + offset_y) / pano_h))
+                    bx1 = max(0.0, min(1.0, float(xyxy[0] / cs + offset_x) / pano_w))
+                    by1 = max(0.0, min(1.0, float(xyxy[1] / cs + offset_y) / pano_h))
+                    bx2 = max(0.0, min(1.0, float(xyxy[2] / cs + offset_x) / pano_w))
+                    by2 = max(0.0, min(1.0, float(xyxy[3] / cs + offset_y) / pano_h))
 
-                    is_ball = (cls_name == "ball" or cls_id == 32)
-                    is_player = (cls_name in ["player", "goalkeeper", "referee", "person"] or cls_id == 0)
+                    is_ball = ("ball" in cls_name or (cls_id == 32 and cls_name in ["sports ball", "ball", ""]))
+                    is_player = (cls_name in ["player", "goalkeeper", "referee", "person"]) or (cls_id == 0 and cls_name == "person")
 
-                    if is_player:
+                    if is_ball:
+                        balls.append(DetectionBox(
+                            bbox=(bx1, by1, bx2, by2),
+                            conf=conf,
+                            cls_id=cls_id,
+                            cls_name="ball",
+                            team_id=-1
+                        ))
+                    elif is_player:
                         team_id = 2 if cls_name == "referee" else _classify_torso_color(img_bgr, xyxy)
                         players.append(DetectionBox(
                             bbox=(bx1, by1, bx2, by2),
@@ -206,49 +219,57 @@ class YOLODetectorBackend(BaseDetectorBackend):
                             cls_name=cls_name,
                             team_id=team_id
                         ))
-                    elif is_ball:
-                        balls.append(DetectionBox(
-                            bbox=(bx1, by1, bx2, by2),
-                            conf=conf,
-                            cls_id=cls_id,
-                            cls_name="ball",
-                            team_id=-1
-                        ))
 
-            # Optional dedicated ball model inference if main model saw no ball
-            if len(balls) == 0 and self.ball_model is not None:
+            # Dedicated specialized ball model inference to enhance small-ball recall
+            if self.ball_model is not None:
                 with torch.inference_mode():
                     b_res = self.ball_model.predict(
                         img_bgr,
                         device=self.device,
                         half=self.use_fp16,
                         verbose=False,
-                        imgsz=640,
+                        imgsz=1280,
                         conf=0.15
                     )
                 if b_res and len(b_res) > 0:
                     for box in b_res[0].boxes:
                         conf = float(box.conf[0])
                         xyxy = box.xyxy[0].cpu().numpy()
-                        bx1 = max(0.0, min(1.0, float(xyxy[0] + offset_x) / pano_w))
-                        by1 = max(0.0, min(1.0, float(xyxy[1] + offset_y) / pano_h))
-                        bx2 = max(0.0, min(1.0, float(xyxy[2] + offset_x) / pano_w))
-                        by2 = max(0.0, min(1.0, float(xyxy[3] + offset_y) / pano_h))
-                        balls.append(DetectionBox(
-                            bbox=(bx1, by1, bx2, by2),
-                            conf=conf,
-                            cls_id=32,
-                            cls_name="ball",
-                            team_id=-1
-                        ))
+                        bx1 = max(0.0, min(1.0, float(xyxy[0] / cs + offset_x) / pano_w))
+                        by1 = max(0.0, min(1.0, float(xyxy[1] / cs + offset_y) / pano_h))
+                        bx2 = max(0.0, min(1.0, float(xyxy[2] / cs + offset_x) / pano_w))
+                        by2 = max(0.0, min(1.0, float(xyxy[3] / cs + offset_y) / pano_h))
+
+                        # Deduplicate with existing balls (keep higher confidence)
+                        bcx = (bx1 + bx2) * 0.5
+                        bcy = (by1 + by2) * 0.5
+                        duplicate = False
+                        for eb in balls:
+                            if math.hypot(bcx - eb.center[0], bcy - eb.center[1]) < 0.025:
+                                if conf > eb.conf:
+                                    eb.conf = conf
+                                    eb.bbox = (bx1, by1, bx2, by2)
+                                duplicate = True
+                                break
+                        if not duplicate:
+                            balls.append(DetectionBox(
+                                bbox=(bx1, by1, bx2, by2),
+                                conf=conf,
+                                cls_id=32,
+                                cls_name="ball",
+                                team_id=-1
+                            ))
         except Exception as e:
             logger.warning(f"Fehler bei YOLO-Inferenz: {e}")
 
         # Early Aspect Ratio & Shape Filter
         if balls:
+            frame_ar = float(pano_w) / max(1.0, float(pano_h))
             balls = [
                 b for b in balls 
-                if BallPlausibilityFilter.validate_aspect_ratio_and_size(b.bbox[0], b.bbox[1], b.bbox[2], b.bbox[3])
+                if BallPlausibilityFilter.validate_aspect_ratio_and_size(
+                    b.bbox[0], b.bbox[1], b.bbox[2], b.bbox[3], frame_aspect_ratio=frame_ar
+                )
             ]
 
         return players, balls
@@ -299,12 +320,15 @@ class RTDETRBackend(BaseDetectorBackend):
                 offset_x: int = 0, 
                 offset_y: int = 0, 
                 pano_w: int = 1920, 
-                pano_h: int = 1080) -> Tuple[List[DetectionBox], List[DetectionBox]]:
+                pano_h: int = 1080,
+                crop_scale: float = 1.0) -> Tuple[List[DetectionBox], List[DetectionBox]]:
         players: List[DetectionBox] = []
         balls: List[DetectionBox] = []
 
         if not self.is_loaded or self.model is None:
             return players, balls
+
+        cs = max(1e-6, float(crop_scale))
 
         try:
             with torch.inference_mode():
@@ -313,7 +337,7 @@ class RTDETRBackend(BaseDetectorBackend):
                     device=self.device,
                     half=self.use_fp16,
                     verbose=False,
-                    imgsz=640,
+                    imgsz=1280,
                     conf=conf_thresh
                 )
             if results and len(results) > 0:
@@ -326,10 +350,10 @@ class RTDETRBackend(BaseDetectorBackend):
                     cls_name = names.get(cls_id, "").lower()
                     xyxy = box.xyxy[0].cpu().numpy()
 
-                    bx1 = max(0.0, min(1.0, float(xyxy[0] + offset_x) / pano_w))
-                    by1 = max(0.0, min(1.0, float(xyxy[1] + offset_y) / pano_h))
-                    bx2 = max(0.0, min(1.0, float(xyxy[2] + offset_x) / pano_w))
-                    by2 = max(0.0, min(1.0, float(xyxy[3] + offset_y) / pano_h))
+                    bx1 = max(0.0, min(1.0, float(xyxy[0] / cs + offset_x) / pano_w))
+                    by1 = max(0.0, min(1.0, float(xyxy[1] / cs + offset_y) / pano_h))
+                    bx2 = max(0.0, min(1.0, float(xyxy[2] / cs + offset_x) / pano_w))
+                    by2 = max(0.0, min(1.0, float(xyxy[3] / cs + offset_y) / pano_h))
 
                     is_ball = (cls_name in ["sports ball", "ball"] or cls_id == 32)
                     is_player = (cls_name in ["person", "player", "referee"] or cls_id == 0)
@@ -356,9 +380,12 @@ class RTDETRBackend(BaseDetectorBackend):
 
         # Early Aspect Ratio & Shape Filter
         if balls:
+            frame_ar = float(pano_w) / max(1.0, float(pano_h))
             balls = [
                 b for b in balls 
-                if BallPlausibilityFilter.validate_aspect_ratio_and_size(b.bbox[0], b.bbox[1], b.bbox[2], b.bbox[3])
+                if BallPlausibilityFilter.validate_aspect_ratio_and_size(
+                    b.bbox[0], b.bbox[1], b.bbox[2], b.bbox[3], frame_aspect_ratio=frame_ar
+                )
             ]
 
         return players, balls
@@ -413,12 +440,15 @@ class YOLOPoseBackend(BaseDetectorBackend):
                 offset_x: int = 0, 
                 offset_y: int = 0, 
                 pano_w: int = 1920, 
-                pano_h: int = 1080) -> Tuple[List[DetectionBox], List[DetectionBox]]:
+                pano_h: int = 1080,
+                crop_scale: float = 1.0) -> Tuple[List[DetectionBox], List[DetectionBox]]:
         players: List[DetectionBox] = []
         balls: List[DetectionBox] = []
 
         if not self.is_loaded or self.model is None:
             return players, balls
+
+        cs = max(1e-6, float(crop_scale))
 
         try:
             with torch.inference_mode():
@@ -427,7 +457,7 @@ class YOLOPoseBackend(BaseDetectorBackend):
                     device=self.device,
                     half=self.use_fp16,
                     verbose=False,
-                    imgsz=640,
+                    imgsz=1280,
                     conf=conf_thresh
                 )
             if results and len(results) > 0:
@@ -439,10 +469,10 @@ class YOLOPoseBackend(BaseDetectorBackend):
                     conf = float(box.conf[0])
                     xyxy = box.xyxy[0].cpu().numpy()
 
-                    bx1 = max(0.0, min(1.0, float(xyxy[0] + offset_x) / pano_w))
-                    by1 = max(0.0, min(1.0, float(xyxy[1] + offset_y) / pano_h))
-                    bx2 = max(0.0, min(1.0, float(xyxy[2] + offset_x) / pano_w))
-                    by2 = max(0.0, min(1.0, float(xyxy[3] + offset_y) / pano_h))
+                    bx1 = max(0.0, min(1.0, float(xyxy[0] / cs + offset_x) / pano_w))
+                    by1 = max(0.0, min(1.0, float(xyxy[1] / cs + offset_y) / pano_h))
+                    bx2 = max(0.0, min(1.0, float(xyxy[2] / cs + offset_x) / pano_w))
+                    by2 = max(0.0, min(1.0, float(xyxy[3] / cs + offset_y) / pano_h))
 
                     # Process 17 keypoints if available
                     norm_kpts = None
@@ -450,8 +480,8 @@ class YOLOPoseBackend(BaseDetectorBackend):
                     if has_kpts and len(res.keypoints) > i:
                         raw_kpts = res.keypoints[i].data[0].cpu().numpy() # (17, 3) -> [x, y, conf]
                         norm_kpts = np.zeros_like(raw_kpts)
-                        norm_kpts[:, 0] = np.clip((raw_kpts[:, 0] + offset_x) / pano_w, 0.0, 1.0)
-                        norm_kpts[:, 1] = np.clip((raw_kpts[:, 1] + offset_y) / pano_h, 0.0, 1.0)
+                        norm_kpts[:, 0] = np.clip((raw_kpts[:, 0] / cs + offset_x) / pano_w, 0.0, 1.0)
+                        norm_kpts[:, 1] = np.clip((raw_kpts[:, 1] / cs + offset_y) / pano_h, 0.0, 1.0)
                         norm_kpts[:, 2] = raw_kpts[:, 2] # confidence
 
                         # Estimate body orientation from left shoulder (5) and right shoulder (6)

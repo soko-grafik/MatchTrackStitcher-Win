@@ -434,6 +434,25 @@ class AIBroadcastTracker:
                 if is_point_in_pitch_polygon(p.center[0], p.center[1], corners)
             ]
 
+        # 1b. Adult Coach & Sideline Outlier Rejection (Youth games / sideline cameras)
+        # Compute median player height across candidates in active field area (cy < 0.52)
+        field_heights = [
+            (p.bbox[3] - p.bbox[1]) for p in valid_players 
+            if (p.bbox[1] + p.bbox[3]) * 0.5 < 0.52 and (p.bbox[3] - p.bbox[1]) > 0.01
+        ]
+        med_ph_field = float(np.median(field_heights)) if len(field_heights) >= 3 else None
+
+        filtered_players = []
+        for p in valid_players:
+            bh = p.bbox[3] - p.bbox[1]
+            foot_y = p.bbox[3]
+            # If person is an adult height outlier (> 1.50x median player height) standing in lower zone
+            if med_ph_field is not None and bh > (1.50 * med_ph_field) and foot_y > 0.52:
+                p.cls_name = "coach"
+                continue
+            filtered_players.append(p)
+        valid_players = filtered_players
+
         # 2. Pitch Boundary Filter for Balls
         valid_balls = [
             b for b in raw_balls 
@@ -453,9 +472,12 @@ class AIBroadcastTracker:
         # 4. Aspect Ratio & Relative Size Filter
         p_heights = [p.bbox[3] - p.bbox[1] for p in valid_players if (p.bbox[3] - p.bbox[1]) > 0.01]
         med_ph = float(np.median(p_heights)) if p_heights else None
+        frame_ar = float(pano_frame_bgr.shape[1]) / max(1.0, float(pano_frame_bgr.shape[0]))
         valid_balls = [
             b for b in valid_balls 
-            if BallPlausibilityFilter.validate_aspect_ratio_and_size(b.bbox[0], b.bbox[1], b.bbox[2], b.bbox[3], med_ph)
+            if BallPlausibilityFilter.validate_aspect_ratio_and_size(
+                b.bbox[0], b.bbox[1], b.bbox[2], b.bbox[3], med_ph, frame_aspect_ratio=frame_ar
+            )
         ]
 
         # 5. Color / Luminance Contrast Filter for low-confidence detections
@@ -487,29 +509,36 @@ class AIBroadcastTracker:
         # 1. Kalman Ball Prediction
         pred_bx, pred_by = self.kalman.predict(dt=1.0)
         
-        # 2. Downscale and crop to Pitch ROI Polygon bounding box for accelerated inference
+        # 2. High-Resolution Pitch-Crop direct from full-res pano_frame_bgr (preserves tiny 8px ball details)
         corners = getattr(self.config, 'pitch_corners', [[0.0, 0.05], [1.0, 0.05], [1.0, 0.95], [0.0, 0.95]])
         p_min_x, p_max_x, p_min_y, p_max_y = get_pitch_polygon_bbox(corners)
 
-        infer_w = 1280
-        infer_h = int(h * (infer_w / w))
-        infer_img = cv2.resize(pano_frame_bgr, (infer_w, infer_h), interpolation=cv2.INTER_AREA)
-
-        # Calculate pixel ROI within infer_img
-        rx0 = max(0, int(round(p_min_x * infer_w)))
-        rx1 = min(infer_w, int(round(p_max_x * infer_w)))
-        ry0 = max(0, int(round(p_min_y * infer_h)))
-        ry1 = min(infer_h, int(round(p_max_y * infer_h)))
+        rx0 = max(0, int(round(p_min_x * w)))
+        rx1 = min(w, int(round(p_max_x * w)))
+        ry0 = max(0, int(round(p_min_y * h)))
+        ry1 = min(h, int(round(p_max_y * h)))
+        crop_w = max(1, rx1 - rx0)
+        crop_h = max(1, ry1 - ry0)
 
         # Only crop if valid non-empty sub-box
-        if (rx1 - rx0) >= 120 and (ry1 - ry0) >= 80:
-            target_infer = infer_img[ry0:ry1, rx0:rx1]
+        if crop_w >= 120 and crop_h >= 80:
+            # Cap maximum width at 1920 to keep high inference speed (> 30-60 FPS)
+            # while retaining native pixel sharpness for small balls
+            max_w = 1920
+            if crop_w > max_w:
+                scale = max_w / float(crop_w)
+                target_infer = cv2.resize(pano_frame_bgr[ry0:ry1, rx0:rx1], (max_w, int(crop_h * scale)), interpolation=cv2.INTER_AREA)
+                infer_scale = scale
+            else:
+                target_infer = pano_frame_bgr[ry0:ry1, rx0:rx1]
+                infer_scale = 1.0
             offset_x = rx0
             offset_y = ry0
         else:
-            target_infer = infer_img
+            target_infer = pano_frame_bgr
             offset_x = 0
             offset_y = 0
+            infer_scale = 1.0
 
         player_positions: List[Tuple[float, float]] = []
         player_boxes: List[List[float]] = []
@@ -526,8 +555,9 @@ class AIBroadcastTracker:
                     conf_thresh=0.20,
                     offset_x=offset_x,
                     offset_y=offset_y,
-                    pano_w=infer_w,
-                    pano_h=infer_h
+                    pano_w=w,
+                    pano_h=h,
+                    crop_scale=infer_scale
                 )
                 valid_players, valid_balls = self._filter_players_and_balls(
                     raw_players, raw_balls, corners, pano_frame_bgr, f_idx
@@ -538,7 +568,7 @@ class AIBroadcastTracker:
                     player_boxes.append(list(p.bbox))
                     player_scores.append(p.conf)
                     player_teams.append(p.team_id)
-                    if p.cls_name != "goalkeeper":
+                    if p.cls_name not in ["goalkeeper", "coach", "staff"]:
                         player_positions.append(p.center)
 
                 for b in valid_balls:
@@ -555,7 +585,7 @@ class AIBroadcastTracker:
                         device=self.device,
                         half=use_fp16,
                         verbose=False,
-                        imgsz=640,
+                        imgsz=1280,
                         conf=0.20
                     )
                 if results and len(results) > 0:
@@ -563,34 +593,35 @@ class AIBroadcastTracker:
                     names = self.model.model.names if hasattr(self.model, "model") and hasattr(self.model.model, "names") else {}
                     raw_p = []
                     raw_b = []
+                    cs = max(1e-6, float(infer_scale))
                     for box in boxes:
                         cls_id = int(box.cls[0])
                         conf = float(box.conf[0])
                         cls_name = names.get(cls_id, "").lower()
                         xyxy = box.xyxy[0].cpu().numpy()
-                        bx1 = max(0.0, min(1.0, float(xyxy[0] + offset_x) / infer_w))
-                        by1 = max(0.0, min(1.0, float(xyxy[1] + offset_y) / infer_h))
-                        bx2 = max(0.0, min(1.0, float(xyxy[2] + offset_x) / infer_w))
-                        by2 = max(0.0, min(1.0, float(xyxy[3] + offset_y) / infer_h))
+                        bx1 = max(0.0, min(1.0, float(xyxy[0] / cs + offset_x) / w))
+                        by1 = max(0.0, min(1.0, float(xyxy[1] / cs + offset_y) / h))
+                        bx2 = max(0.0, min(1.0, float(xyxy[2] / cs + offset_x) / w))
+                        by2 = max(0.0, min(1.0, float(xyxy[3] / cs + offset_y) / h))
 
-                        is_ball = (cls_name == "ball" or cls_id == 32)
-                        is_player = (cls_name in ["player", "goalkeeper", "referee", "person"] or cls_id == 0)
+                        is_ball = ("ball" in cls_name or (cls_id == 32 and cls_name in ["sports ball", "ball", ""]))
+                        is_player = (cls_name in ["player", "goalkeeper", "referee", "person"]) or (cls_id == 0 and cls_name == "person")
 
-                        if is_player:
-                            raw_p.append(DetectionBox(
-                                bbox=(bx1, by1, bx2, by2),
-                                conf=conf,
-                                cls_id=cls_id,
-                                cls_name=cls_name,
-                                team_id=0
-                            ))
-                        elif is_ball:
+                        if is_ball:
                             raw_b.append(DetectionBox(
                                 bbox=(bx1, by1, bx2, by2),
                                 conf=conf,
                                 cls_id=cls_id,
                                 cls_name="ball",
                                 team_id=-1
+                            ))
+                        elif is_player:
+                            raw_p.append(DetectionBox(
+                                bbox=(bx1, by1, bx2, by2),
+                                conf=conf,
+                                cls_id=cls_id,
+                                cls_name=cls_name,
+                                team_id=0
                             ))
 
                     valid_players, valid_balls = self._filter_players_and_balls(
@@ -602,7 +633,7 @@ class AIBroadcastTracker:
                         player_boxes.append(list(p.bbox))
                         player_scores.append(p.conf)
                         player_teams.append(p.team_id)
-                        if p.cls_name != "goalkeeper":
+                        if p.cls_name not in ["goalkeeper", "coach", "staff"]:
                             player_positions.append(p.center)
 
                     for b in valid_balls:
@@ -643,20 +674,23 @@ class AIBroadcastTracker:
 
         # 4. Fallback Player Cluster via Motion / Pitch Mask if no AI players found
         if len(player_positions) == 0:
-            hsv = cv2.cvtColor(infer_img, cv2.COLOR_BGR2HSV)
+            th, tw = target_infer.shape[:2]
+            hsv = cv2.cvtColor(target_infer, cv2.COLOR_BGR2HSV)
             lower_green = np.array([22, 18, 18])
             upper_green = np.array([92, 255, 255])
             pitch_mask = cv2.inRange(hsv, lower_green, upper_green)
             
             # Mask out non-pitch regions with exact polygon
             poly_pts_px = np.array([
-                [int(round(c[0] * infer_w)), int(round(c[1] * infer_h))] for c in corners
+                [int(round(((c[0] * w) - offset_x) * infer_scale)), 
+                 int(round(((c[1] * h) - offset_y) * infer_scale))] 
+                for c in corners
             ], dtype=np.int32)
-            poly_mask = np.zeros((infer_h, infer_w), dtype=np.uint8)
+            poly_mask = np.zeros((th, tw), dtype=np.uint8)
             cv2.fillPoly(poly_mask, [poly_pts_px], 255)
             pitch_mask = cv2.bitwise_and(pitch_mask, poly_mask)
 
-            gray = cv2.cvtColor(infer_img, cv2.COLOR_BGR2GRAY)
+            gray = cv2.cvtColor(target_infer, cv2.COLOR_BGR2GRAY)
             gray_blur = cv2.GaussianBlur(gray, (11, 11), 0)
             if self.prev_gray is not None and self.prev_gray.shape == gray_blur.shape:
                 diff = cv2.absdiff(gray_blur, self.prev_gray)
@@ -664,14 +698,24 @@ class AIBroadcastTracker:
                 mmask = cv2.bitwise_and(mmask, pitch_mask)
                 moms = cv2.moments(mmask)
                 if moms["m00"] > 300:
-                    motion_cx = (moms["m10"] / moms["m00"]) / infer_w
-                    motion_cy = (moms["m01"] / moms["m00"]) / infer_h
+                    motion_cx = (moms["m10"] / moms["m00"] / infer_scale + offset_x) / w
+                    motion_cy = (moms["m01"] / moms["m00"] / infer_scale + offset_y) / h
                     if is_point_in_pitch_polygon(motion_cx, motion_cy, corners):
                         player_positions.append((motion_cx, motion_cy))
             self.prev_gray = gray_blur
 
-        # 5. Compute Rock-Solid Player Density Centroid
-        player_cx = self._compute_player_density_centroid(player_positions)
+        # 5. Compute Rock-Solid Player Density Centroid (ONLY active on-pitch players, EXCLUDING coaches & staff)
+        if self.current_player_tracks:
+            active_player_positions = [(cx, cy) for (cx, cy, _) in self.current_player_tracks]
+        else:
+            active_player_positions = [
+                p.center for p in valid_players 
+                if p.cls_name not in ["goalkeeper", "coach", "staff"]
+            ]
+        if not active_player_positions and player_positions:
+            active_player_positions = player_positions
+
+        player_cx = self._compute_player_density_centroid(active_player_positions)
         self.last_player_centroid = player_cx
 
         # 6. Physical Ball Verification & Plausibility Filter
@@ -688,21 +732,24 @@ class AIBroadcastTracker:
                 pred_bx, pred_by = player_cx, self.config.vertical_center_bias
 
         if ball_candidates:
-            # Score each candidate: Confidence + proximity to prediction + proximity to player cluster
+            # Score each candidate: Confidence + proximity to prediction + proximity to active players
             valid_candidates = []
             for cand in ball_candidates:
                 bx, by, bconf, bpx_x, bpx_y = cand
-                dist_to_players = abs(bx - player_cx)
+                if active_player_positions:
+                    dist_to_players = min(math.hypot(bx - px, by - py) for px, py in active_player_positions)
+                else:
+                    dist_to_players = abs(bx - player_cx)
                 dist_to_kalman = math.hypot(bx - pred_bx, by - pred_by)
 
                 # Plausibility check: Must be near play OR have physical trajectory continuity
-                is_near_play = (dist_to_players < 0.35)
+                is_near_play = (dist_to_players < 0.22)
                 is_kalman_plausible = self.kalman.is_plausible_measurement(bx, by)
 
                 if is_near_play or is_kalman_plausible:
                     motion_dist = math.hypot(bx - self.kalman.pos[0], by - self.kalman.pos[1])
                     motion_bonus = 0.25 if motion_dist > 0.005 else -0.20 # penalize complete immobility
-                    score = bconf * 1.6 - (dist_to_kalman * 1.5) - (dist_to_players * 0.4) + motion_bonus
+                    score = bconf * 1.8 - (dist_to_kalman * 1.5) - (dist_to_players * 1.5) + motion_bonus
                     valid_candidates.append((score, cand))
 
             if valid_candidates:

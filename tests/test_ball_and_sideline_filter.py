@@ -185,6 +185,31 @@ def test_end_to_end_tracker_filtering():
     assert valid_balls[0] == real_ball
 
 
+def test_adult_coach_scale_exclusion():
+    """Validates that an adult coach standing in the lower area is rejected even if polygon is relaxed."""
+    config = BroadcastConfig(
+        pitch_corners=[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]] # Full frame polygon
+    )
+    tracker = AIBroadcastTracker(config)
+    dummy_frame = np.zeros((100, 300, 3), dtype=np.uint8)
+
+    # Kids on the field: heights ~0.08
+    kids = [
+        DetectionBox(bbox=(0.20, 0.30, 0.23, 0.38), conf=0.85, cls_id=0, cls_name="player"),
+        DetectionBox(bbox=(0.35, 0.32, 0.38, 0.40), conf=0.85, cls_id=0, cls_name="player"),
+        DetectionBox(bbox=(0.50, 0.28, 0.53, 0.36), conf=0.85, cls_id=0, cls_name="player"),
+    ]
+    # Adult coach in lower zone: height = 0.20 (> 2.5x kids), foot_y = 0.65
+    coach = DetectionBox(bbox=(0.60, 0.45, 0.65, 0.65), conf=0.90, cls_id=0, cls_name="player")
+
+    raw_players = kids + [coach]
+    valid_players, _ = tracker._filter_players_and_balls(raw_players, [], config.pitch_corners, dummy_frame, f_idx=1)
+
+    assert len(valid_players) == 3
+    assert coach not in valid_players
+    assert coach.cls_name == "coach"
+
+
 if __name__ == "__main__":
     test_anti_jersey_torso_exclusion()
     print("✓ test_anti_jersey_torso_exclusion passed")
@@ -194,6 +219,8 @@ if __name__ == "__main__":
     print("✓ test_static_leaf_suppressor passed")
     test_sideline_coach_exclusion()
     print("✓ test_sideline_coach_exclusion passed")
+    test_adult_coach_scale_exclusion()
+    print("✓ test_adult_coach_scale_exclusion passed")
     test_end_to_end_tracker_filtering()
     print("✓ test_end_to_end_tracker_filtering passed")
     print("🎉 All ball and sideline filter tests passed successfully!")

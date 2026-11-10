@@ -185,26 +185,32 @@ class BallPlausibilityFilter:
 
     @staticmethod
     def validate_aspect_ratio_and_size(bx1: float, by1: float, bx2: float, by2: float, 
-                                       median_player_height: Optional[float] = None) -> bool:
+                                       median_player_height: Optional[float] = None,
+                                       frame_aspect_ratio: Optional[float] = None) -> bool:
         """
         Validates that the ball candidate is approximately circular and physiologically sized.
+        Takes optional frame_aspect_ratio (width / height, e.g. ~3.55 for stitched panorama)
+        to convert normalized coordinates to physical pixel aspect ratio.
         """
         bw = max(1e-4, bx2 - bx1)
         bh = max(1e-4, by2 - by1)
-        aspect_ratio = bw / bh
+        # Calculate normalized aspect ratio and physical pixel aspect ratio
+        norm_ar = bw / bh
+        pixel_ar = norm_ar * frame_aspect_ratio if (frame_aspect_ratio is not None and frame_aspect_ratio > 0.01) else norm_ar
 
-        # Soccer ball is spherical; allowing for motion blur between 0.50 and 1.85
-        if aspect_ratio < 0.45 or aspect_ratio > 2.00:
+        # Soccer ball is spherical; allow for motion blur / stretch either in physical or normalized space
+        is_circular = (0.38 <= norm_ar <= 2.40) or (0.38 <= pixel_ar <= 2.40)
+        if not is_circular:
             return False
 
-        # If median player height is known, ball height should not exceed ~32% of player height
-        # (FIFA ball = 22cm, player = 180cm -> ball is ~12% of height; with blur max 30%)
+        # If median player height is known, ball height should not exceed ~40% of player height
+        # (FIFA ball = 22cm, player = 180cm -> ball is ~12% of height; with blur max ~35-40%)
         if median_player_height is not None and median_player_height > 0.01:
-            if bh > (median_player_height * 0.35):
+            if bh > (median_player_height * 0.40):
                 return False
 
-        # Absolute upper limit in normalized coordinates (a ball is never > 4.5% of total frame height)
-        if bh > 0.045:
+        # Absolute upper limit in normalized coordinates (a ball is never > 5.5% of total frame height)
+        if bh > 0.055:
             return False
 
         return True
@@ -303,7 +309,8 @@ def is_point_in_pitch_polygon_with_margin(pt_x: float, pt_y: float,
 class SidelineStaffClassifier:
     """
     Detects and filters coaches, trainers, and substitutes who remain stationary
-    along the sideline / technical area during the match.
+    or pace along the sideline / technical area during the match.
+    Also identifies adult coach scale outliers in youth soccer / near-field sidelines.
     """
     def __init__(self, speed_threshold_kmh: float = 2.8, boundary_dist_threshold: float = 0.045):
         self.speed_threshold_kmh = speed_threshold_kmh
@@ -327,6 +334,10 @@ class SidelineStaffClassifier:
             for t in active_tracks:
                 result[t[0]] = False
             return result
+
+        # Compute median player height across tracks in active play zone (cy < 0.52)
+        field_heights = [h for (_, _, cy, _, h, _) in active_tracks if cy < 0.52 and h > 0.01]
+        med_track_h = float(np.median(field_heights)) if len(field_heights) >= 3 else None
 
         current_ids = set()
         for t in active_tracks:
@@ -354,16 +365,28 @@ class SidelineStaffClassifier:
             else:
                 hist['sideline_frames'] = max(0, hist['sideline_frames'] - 2)
 
-            # Check speed / range of motion over last 60-90 frames
-            is_staff = False
-            if hist['sideline_frames'] >= 45 and len(hist['positions']) >= 30:
+            # 1. Height-outlier adult coach check (in youth soccer or near-field camera perspective)
+            is_adult_coach = False
+            if med_track_h is not None and h > (1.50 * med_track_h) and foot_y > 0.52:
+                is_adult_coach = True
+
+            # 2. Sideline presence & motion check
+            is_staff = is_adult_coach
+            if not is_staff and len(hist['positions']) >= 25:
                 xs = [p[0] for p in hist['positions']]
                 ys = [p[1] for p in hist['positions']]
                 x_range = max(xs) - min(xs)
                 y_range = max(ys) - min(ys)
                 disp = math.hypot(x_range, y_range)
-                # If total movement over 1-3 seconds is minimal (< 0.015), they are stationary staff/coach
-                if disp < 0.018:
+
+                # Case A: Stationary near sideline
+                if hist['sideline_frames'] >= 45 and disp < 0.018:
+                    is_staff = True
+
+                # Case B: Lateral sideline pacing (coach walking back and forth along sideline)
+                # Has minimal vertical displacement (y_range < 0.020) and stands in lower zone (foot_y > 0.52)
+                # or near sideline boundary
+                if (min_boundary_dist < self.boundary_dist_threshold or foot_y > 0.52) and y_range < 0.020 and x_range < 0.08:
                     is_staff = True
 
             result[tid] = is_staff
