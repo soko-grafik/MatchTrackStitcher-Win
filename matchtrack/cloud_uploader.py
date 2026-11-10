@@ -8,9 +8,13 @@ Features:
 - Dual-Stream support (16:9 Standard Broadcast + 32:9 / 8:3 Panorama + AI Tracking JSONL)
 """
 import base64
+import collections
+import concurrent.futures
 import ctypes
 from ctypes import wintypes
+import dataclasses
 import hashlib
+import io
 import json
 import os
 import sys
@@ -20,14 +24,103 @@ from urllib.parse import urlparse
 from typing import Optional, Dict, Any, List, Callable
 
 import requests
+from requests.adapters import HTTPAdapter
 
 from .paths import get_cloud_credentials_path
 from .logger import get_logger
 
 logger = get_logger("cloud_upload")
 
-DEFAULT_CHUNK_SIZE_BYTES = 16 * 1024 * 1024  # 16 MB per chunk
+DEFAULT_CHUNK_SIZE_BYTES = 8 * 1024 * 1024  # 8 MB per chunk for multi-stream pipelining
 DPAPI_ENTROPY = b"MatchTrackStitcher_CloudAuth_v1_Entropy"
+
+
+class ChunkProgressStream(io.BytesIO):
+    """
+    Wraps chunk bytes in an io.BytesIO stream that reports byte-level progress
+    during HTTP transmission (e.g. to urllib3 / requests).
+    """
+    def __init__(self, data: bytes, on_bytes_read: Optional[Callable[[int], None]] = None):
+        super().__init__(data)
+        self._on_bytes_read = on_bytes_read
+        self._len = len(data)
+
+    def __len__(self) -> int:
+        return self._len
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = super().read(size)
+        if chunk and self._on_bytes_read:
+            self._on_bytes_read(len(chunk))
+        return chunk
+
+
+class RollingSpeedTracker:
+    """
+    Thread-safe tracker for rolling-window upload speed (MB/s) and sub-chunk progress.
+    Maintains a 2.0-second sliding window of transmitted bytes to measure actual real-time throughput.
+    """
+    def __init__(self, total_bytes: int, window_sec: float = 2.0):
+        self.total_bytes = max(1, total_bytes)
+        self.window_sec = window_sec
+        self.lock = threading.Lock()
+        self.active_chunk_progress: Dict[str, int] = {}
+        self.history: collections.deque[tuple[float, int]] = collections.deque()
+        self.confirmed_bytes: int = 0
+
+    def update_task_progress(self, task_id: str, bytes_sent: int):
+        now = time.time()
+        with self.lock:
+            old = self.active_chunk_progress.get(task_id, 0)
+            delta = bytes_sent - old
+            if delta > 0:
+                self.active_chunk_progress[task_id] = bytes_sent
+                self.history.append((now, delta))
+                cutoff = now - self.window_sec
+                while self.history and self.history[0][0] < cutoff:
+                    self.history.popleft()
+
+    def task_failed_reset(self, task_id: str):
+        with self.lock:
+            self.active_chunk_progress[task_id] = 0
+
+    def task_completed(self, task_id: str, chunk_size: int):
+        with self.lock:
+            self.active_chunk_progress.pop(task_id, None)
+            self.confirmed_bytes += chunk_size
+
+    def get_stats(self) -> tuple[int, float, float]:
+        now = time.time()
+        with self.lock:
+            cutoff = now - self.window_sec
+            while self.history and self.history[0][0] < cutoff:
+                self.history.popleft()
+
+            window_bytes = sum(b for _, b in self.history)
+            if self.history and len(self.history) >= 2:
+                dt = max(0.1, self.history[-1][0] - self.history[0][0])
+            elif self.history:
+                dt = max(0.1, now - self.history[0][0])
+            else:
+                dt = 1.0
+
+            speed_mb_s = (window_bytes / (1024 * 1024)) / dt if window_bytes > 0 else 0.0
+            in_flight = sum(self.active_chunk_progress.values())
+            total_current = min(self.total_bytes, self.confirmed_bytes + in_flight)
+            remaining_bytes = max(0, self.total_bytes - total_current)
+            eta_sec = (remaining_bytes / (1024 * 1024)) / max(speed_mb_s, 0.001) if speed_mb_s > 0.05 else 0.0
+            return total_current, speed_mb_s, eta_sec
+
+
+@dataclasses.dataclass
+class UploadChunkTask:
+    task_id: str
+    stream_type: str
+    file_path: str
+    chunk_index: int
+    offset: int
+    chunk_size: int
+    label: str
 
 
 class _DATA_BLOB(ctypes.Structure):
@@ -209,6 +302,13 @@ class MatchTrackOnlineClient:
         self.username: str = ""
         self.user_info: Dict[str, Any] = {}
         self.session = requests.Session()
+        adapter = HTTPAdapter(
+            pool_connections=20,
+            pool_maxsize=20,
+            max_retries=0
+        )
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
         self.session.headers.update({
             "User-Agent": "MatchTrack-Stitcher-Windows/1.5"
         })
@@ -420,12 +520,14 @@ class MatchTrackOnlineClient:
         password: Optional[str] = None,
         skip_conversion: bool = False,
         notify_team_members: bool = True,
+        concurrency: int = 3,
         stop_event: Optional[threading.Event] = None,
         progress_callback: Optional[Callable[[int, int, float, float, str], None]] = None
     ) -> Dict[str, Any]:
         """
         Uploads a match (16:9 Broadcast, 32:9/8:3 Panorama, or Both + AI Tracking)
-        using the Resumable Chunked Upload Session protocol with SHA-256 verification.
+        using the Resumable High-Speed Multi-Stream Chunked Upload Protocol with SHA-256 verification.
+        Uses concurrent threads, connection pooling, and sub-chunk byte streaming to maximize throughput.
         Automatically falls back to legacy multipart upload if the server has not been updated yet.
         """
         if not self.is_authenticated:
@@ -446,6 +548,7 @@ class MatchTrackOnlineClient:
             k: os.path.getsize(path) for k, path in streams_files.items()
         }
         total_bytes_all = sum(streams_sizes.values())
+        concurrency = max(1, min(6, int(concurrency or 3)))
 
         init_payload = {
             "match_id": match_id,
@@ -465,7 +568,7 @@ class MatchTrackOnlineClient:
         }
 
         if progress_callback:
-            progress_callback(0, total_bytes_all, 0.0, 0.0, "Initialisiere sichere Upload-Session...")
+            progress_callback(0, total_bytes_all, 0.0, 0.0, "Initialisiere sichere High-Speed Upload-Session...")
 
         init_url = f"{self.server_url}/api/upload/session/init"
         init_resp = self.session.post(
@@ -505,15 +608,13 @@ class MatchTrackOnlineClient:
         session_info = init_resp.json()
         upload_id = session_info["upload_id"]
         target_match_id = session_info["match_id"]
-        chunk_size = int(session_info.get("chunk_size_bytes", DEFAULT_CHUNK_SIZE_BYTES))
+        server_chunk_size = int(session_info.get("chunk_size_bytes", DEFAULT_CHUNK_SIZE_BYTES))
 
         logger.info(
             f"Upload-Session gestartet: upload_id={upload_id}, match_id={target_match_id}, "
-            f"Gesamtgröße={total_bytes_all / (1024**2):.1f} MB, Chunk-Größe={chunk_size / (1024**2):.0f} MB"
+            f"Gesamtgröße={total_bytes_all / (1024**2):.1f} MB, Chunk-Größe={server_chunk_size / (1024**2):.0f} MB, "
+            f"Streams={concurrency} parallel"
         )
-
-        start_time = time.time()
-        bytes_uploaded_so_far = 0
 
         stream_labels = {
             "16x9": "16:9 Broadcast",
@@ -521,106 +622,157 @@ class MatchTrackOnlineClient:
             "tracking": "KI-Tracking"
         }
 
+        # Build chunk upload task list
+        chunk_tasks: List[UploadChunkTask] = []
+        for stream_type, file_path in streams_files.items():
+            file_size = streams_sizes[stream_type]
+            total_chunks = max(1, (file_size + server_chunk_size - 1) // server_chunk_size)
+            label = stream_labels.get(stream_type, stream_type)
+            for idx in range(total_chunks):
+                offset = idx * server_chunk_size
+                this_size = min(server_chunk_size, file_size - offset)
+                chunk_tasks.append(
+                    UploadChunkTask(
+                        task_id=f"{stream_type}_{idx}",
+                        stream_type=stream_type,
+                        file_path=file_path,
+                        chunk_index=idx,
+                        offset=offset,
+                        chunk_size=this_size,
+                        label=f"{label} [{idx+1}/{total_chunks}]"
+                    )
+                )
+
+        tracker = RollingSpeedTracker(total_bytes=total_bytes_all, window_sec=2.0)
+        last_ui_update = 0.0
+        ui_lock = threading.Lock()
+        internal_stop_event = threading.Event()
+
+        def notify_ui(force: bool = False):
+            nonlocal last_ui_update
+            if not progress_callback:
+                return
+            now = time.time()
+            if not force and (now - last_ui_update < 0.12):
+                return
+            with ui_lock:
+                if not force and (now - last_ui_update < 0.12):
+                    return
+                last_ui_update = now
+                total_curr, speed_mb_s, eta_sec = tracker.get_stats()
+                mb_sent = total_curr / (1024 * 1024)
+                mb_total = total_bytes_all / (1024 * 1024)
+                if concurrency > 1:
+                    status_text = f"High-Speed Multi-Stream ({concurrency} parallel): {mb_sent:.1f}/{mb_total:.1f} MB"
+                else:
+                    status_text = f"Upload: {mb_sent:.1f}/{mb_total:.1f} MB"
+                try:
+                    progress_callback(total_curr, total_bytes_all, speed_mb_s, eta_sec, status_text)
+                except Exception:
+                    pass
+
+        def upload_single_chunk(task: UploadChunkTask):
+            if (stop_event and stop_event.is_set()) or internal_stop_event.is_set():
+                raise InterruptedError("Upload wurde vom Benutzer abgebrochen.")
+
+            with open(task.file_path, "rb") as f:
+                f.seek(task.offset)
+                chunk_bytes = f.read(task.chunk_size)
+
+            if not chunk_bytes:
+                return
+
+            chunk_sha256 = hashlib.sha256(chunk_bytes).hexdigest()
+            part_url = f"{self.server_url}/api/upload/session/{upload_id}/part"
+            params = {
+                "stream_type": task.stream_type,
+                "chunk_index": task.chunk_index,
+                "offset": task.offset
+            }
+            headers = self._auth_headers({
+                "Content-Type": "application/octet-stream",
+                "X-Chunk-SHA256": chunk_sha256
+            })
+
+            max_retries = 5
+            for attempt in range(1, max_retries + 1):
+                if (stop_event and stop_event.is_set()) or internal_stop_event.is_set():
+                    raise InterruptedError("Upload wurde vom Benutzer abgebrochen.")
+
+                bytes_sent_this_attempt = 0
+
+                def on_bytes_read(n: int):
+                    nonlocal bytes_sent_this_attempt
+                    bytes_sent_this_attempt += n
+                    tracker.update_task_progress(task.task_id, bytes_sent_this_attempt)
+                    notify_ui()
+
+                stream = ChunkProgressStream(chunk_bytes, on_bytes_read)
+
+                try:
+                    part_resp = self.session.put(
+                        part_url,
+                        params=params,
+                        data=stream,
+                        headers=headers,
+                        timeout=120,
+                        verify=True
+                    )
+                    if part_resp.status_code == 200:
+                        tracker.task_completed(task.task_id, len(chunk_bytes))
+                        notify_ui()
+                        return
+
+                    err_txt = part_resp.text[:200]
+                    try:
+                        err_txt = part_resp.json().get("detail", err_txt)
+                    except Exception:
+                        pass
+
+                    tracker.task_failed_reset(task.task_id)
+                    if attempt == max_retries:
+                        raise RuntimeError(
+                            f"Chunk {task.chunk_index + 1} ({task.label}) fehlgeschlagen "
+                            f"(HTTP {part_resp.status_code}): {err_txt}"
+                        )
+                    logger.warning(
+                        f"Chunk {task.chunk_index + 1} ({task.label}) HTTP {part_resp.status_code}, "
+                        f"Wiederholung {attempt}/{max_retries}..."
+                    )
+                except requests.exceptions.RequestException as net_err:
+                    tracker.task_failed_reset(task.task_id)
+                    if attempt == max_retries:
+                        raise RuntimeError(
+                            f"Netzwerkfehler bei Chunk {task.chunk_index + 1} ({task.label}) "
+                            f"nach {max_retries} Versuchen: {net_err}"
+                        )
+                    wait_sec = min(10.0, 1.2 * (2 ** (attempt - 1)))
+                    logger.warning(
+                        f"Verbindungsproblem bei Chunk {task.chunk_index + 1} ({task.label}): {net_err}. "
+                        f"Warte {wait_sec:.1f}s vor Versuch {attempt + 1}/{max_retries}..."
+                    )
+                    time.sleep(wait_sec)
+
         try:
-            for stream_type, file_path in streams_files.items():
-                file_size = streams_sizes[stream_type]
-                total_chunks = max(1, (file_size + chunk_size - 1) // chunk_size)
-                label = stream_labels.get(stream_type, stream_type)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+                futures = [executor.submit(upload_single_chunk, t) for t in chunk_tasks]
+                for future in concurrent.futures.as_completed(futures):
+                    if stop_event and stop_event.is_set():
+                        internal_stop_event.set()
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        self._cancel_session_quietly(upload_id)
+                        raise InterruptedError("Upload wurde vom Benutzer abgebrochen.")
 
-                with open(file_path, "rb") as f:
-                    for chunk_idx in range(total_chunks):
-                        if stop_event and stop_event.is_set():
-                            self._cancel_session_quietly(upload_id)
-                            raise InterruptedError("Upload wurde vom Benutzer abgebrochen.")
+                    exc = future.exception()
+                    if exc:
+                        internal_stop_event.set()
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        self._cancel_session_quietly(upload_id)
+                        if isinstance(exc, InterruptedError):
+                            raise exc
+                        raise exc
 
-                        offset = chunk_idx * chunk_size
-                        f.seek(offset)
-                        chunk_bytes = f.read(chunk_size)
-                        if not chunk_bytes:
-                            break
-
-                        chunk_sha256 = hashlib.sha256(chunk_bytes).hexdigest()
-                        part_url = f"{self.server_url}/api/upload/session/{upload_id}/part"
-                        params = {
-                            "stream_type": stream_type,
-                            "chunk_index": chunk_idx,
-                            "offset": offset
-                        }
-                        headers = self._auth_headers({
-                            "Content-Type": "application/octet-stream",
-                            "X-Chunk-SHA256": chunk_sha256
-                        })
-
-                        # Retry loop with exponential backoff for network resilience
-                        max_retries = 5
-                        for attempt in range(1, max_retries + 1):
-                            if stop_event and stop_event.is_set():
-                                self._cancel_session_quietly(upload_id)
-                                raise InterruptedError("Upload wurde vom Benutzer abgebrochen.")
-                            try:
-                                part_resp = self.session.put(
-                                    part_url,
-                                    params=params,
-                                    data=chunk_bytes,
-                                    headers=headers,
-                                    timeout=120,
-                                    verify=True
-                                )
-                                if part_resp.status_code == 200:
-                                    break
-                                err_txt = part_resp.text[:200]
-                                try:
-                                    err_txt = part_resp.json().get("detail", err_txt)
-                                except Exception:
-                                    pass
-                                if attempt == max_retries:
-                                    raise RuntimeError(
-                                        f"Chunk {chunk_idx + 1}/{total_chunks} ({label}) fehlgeschlagen "
-                                        f"(HTTP {part_resp.status_code}): {err_txt}"
-                                    )
-                                logger.warning(
-                                    f"Chunk {chunk_idx + 1}/{total_chunks} ({label}) HTTP {part_resp.status_code}, "
-                                    f"Wiederholung {attempt}/{max_retries}..."
-                                )
-                            except requests.exceptions.RequestException as net_err:
-                                if attempt == max_retries:
-                                    raise RuntimeError(
-                                        f"Netzwerkfehler bei Chunk {chunk_idx + 1}/{total_chunks} ({label}) "
-                                        f"nach {max_retries} Versuchen: {net_err}"
-                                    )
-                                wait_sec = min(15.0, 1.5 * (2 ** (attempt - 1)))
-                                logger.warning(
-                                    f"Verbindungsproblem bei Chunk {chunk_idx + 1}/{total_chunks} ({label}): {net_err}. "
-                                    f"Warte {wait_sec:.1f}s vor Versuch {attempt + 1}/{max_retries}..."
-                                )
-                                if progress_callback:
-                                    progress_callback(
-                                        bytes_uploaded_so_far,
-                                        total_bytes_all,
-                                        0.0,
-                                        0.0,
-                                        f"Verbindung unterbrochen – Wiederaufnahme ({attempt}/{max_retries})..."
-                                    )
-                                time.sleep(wait_sec)
-
-                        bytes_uploaded_so_far += len(chunk_bytes)
-                        elapsed = max(0.001, time.time() - start_time)
-                        speed_mb_s = (bytes_uploaded_so_far / (1024 * 1024)) / elapsed
-                        remaining_bytes = max(0, total_bytes_all - bytes_uploaded_so_far)
-                        eta_sec = (remaining_bytes / (1024 * 1024)) / max(speed_mb_s, 0.01)
-
-                        if progress_callback:
-                            status_msg = (
-                                f"Upload {label}: Chunk {chunk_idx + 1}/{total_chunks} "
-                                f"({bytes_uploaded_so_far / (1024**2):.0f}/{total_bytes_all / (1024**2):.0f} MB)"
-                            )
-                            progress_callback(
-                                bytes_uploaded_so_far,
-                                total_bytes_all,
-                                speed_mb_s,
-                                eta_sec,
-                                status_msg
-                            )
+            notify_ui(force=True)
 
             if progress_callback:
                 progress_callback(
@@ -635,7 +787,7 @@ class MatchTrackOnlineClient:
             comp_resp = self.session.post(
                 complete_url,
                 headers=self._auth_headers(),
-                timeout=60,
+                timeout=90,
                 verify=True
             )
             if comp_resp.status_code not in (200, 201):
@@ -648,6 +800,17 @@ class MatchTrackOnlineClient:
 
             result = comp_resp.json()
             final_match_id = result.get("match_id", target_match_id)
+            result["match_url"] = f"{self.server_url}/match/{final_match_id}"
+            logger.info(f"🎉 Cloud-Upload erfolgreich abgeschlossen! Match-URL: {result['match_url']}")
+            return result
+
+        except InterruptedError:
+            self._cancel_session_quietly(upload_id)
+            raise
+        except Exception as e:
+            self._cancel_session_quietly(upload_id)
+            logger.error(f"Fehler während des Cloud-Uploads: {e}", exc_info=True)
+            raise
             result["match_url"] = f"{self.server_url}/match/{final_match_id}"
             logger.info(f"🎉 Cloud-Upload erfolgreich abgeschlossen! Match-URL: {result['match_url']}")
             return result

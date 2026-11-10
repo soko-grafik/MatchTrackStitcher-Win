@@ -3432,6 +3432,25 @@ class MainWindow(QMainWindow):
         pw_prot_row.addWidget(self.txt_cloud_password, 1)
         cloud_box.addLayout(pw_prot_row)
 
+        # Multi-Stream Concurrency (Upload-Geschwindigkeit)
+        row_concurrency = QHBoxLayout()
+        lbl_concurrency = QLabel("⚡ Upload-Streams:")
+        lbl_concurrency.setStyleSheet("color: #38bdf8; font-weight: 600; font-size: 11px;")
+        self.combo_cloud_concurrency = QComboBox()
+        self.combo_cloud_concurrency.addItem("⚡ 3 Streams (Empfohlen - bis 50 Mbit/s)", 3)
+        self.combo_cloud_concurrency.addItem("🚀 4 Streams (High-Speed - 100+ Mbit/s)", 4)
+        self.combo_cloud_concurrency.addItem("⚡ 2 Streams (Ausgewogen)", 2)
+        self.combo_cloud_concurrency.addItem("🐢 1 Stream (Schonend)", 1)
+        self.combo_cloud_concurrency.setStyleSheet(
+            "background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6;"
+        )
+        self.combo_cloud_concurrency.setToolTip(
+            "Parallele Upload-Streams nutzen deine Internetleitung voll aus und verhindern Bandbreiten-Drosselungen einzelner TCP-Verbindungen."
+        )
+        row_concurrency.addWidget(lbl_concurrency)
+        row_concurrency.addWidget(self.combo_cloud_concurrency, 1)
+        cloud_box.addLayout(row_concurrency)
+
         # Dedicated file pickers for finished Broadcast (16:9) & Panorama (32:9 / 8:3) videos
         files_frame = QFrame()
         files_frame.setStyleSheet(
@@ -5283,7 +5302,8 @@ class MainWindow(QMainWindow):
                 "category": self.combo_cloud_category.currentData() if hasattr(self, 'combo_cloud_category') else "Punktspiel",
                 "auto_upload": self.chk_cloud_auto_upload.isChecked() if hasattr(self, 'chk_cloud_auto_upload') else False,
                 "notify_team": self.chk_cloud_notify.isChecked() if hasattr(self, 'chk_cloud_notify') else True,
-                "fast_hls": self.chk_cloud_fast_hls.isChecked() if hasattr(self, 'chk_cloud_fast_hls') else False
+                "fast_hls": self.chk_cloud_fast_hls.isChecked() if hasattr(self, 'chk_cloud_fast_hls') else False,
+                "concurrency": self.combo_cloud_concurrency.currentData() if hasattr(self, 'combo_cloud_concurrency') else 3
             },
             "ui_view": ui_dict
         }
@@ -5611,6 +5631,10 @@ class MainWindow(QMainWindow):
                 self.chk_cloud_notify.setChecked(bool(cld["notify_team"]))
             if hasattr(self, 'chk_cloud_fast_hls') and "fast_hls" in cld:
                 self.chk_cloud_fast_hls.setChecked(bool(cld["fast_hls"]))
+            if hasattr(self, 'combo_cloud_concurrency') and "concurrency" in cld:
+                idx = self.combo_cloud_concurrency.findData(cld["concurrency"])
+                if idx >= 0:
+                    self.combo_cloud_concurrency.setCurrentIndex(idx)
 
         # 5. UI Preferences & Overlays
         if "ui_view" in data and isinstance(data["ui_view"], dict):
@@ -6325,6 +6349,8 @@ class MainWindow(QMainWindow):
         is_pw = self.chk_cloud_password.isChecked() and bool(self.txt_cloud_password.text().strip())
         pw_val = self.txt_cloud_password.text().strip() if is_pw else None
 
+        concurrency_val = self.combo_cloud_concurrency.currentData() if hasattr(self, 'combo_cloud_concurrency') else 3
+
         upload_kwargs = {
             "name": match_name,
             "team_id": team_id,
@@ -6337,7 +6363,8 @@ class MainWindow(QMainWindow):
             "is_password_protected": is_pw,
             "password": pw_val,
             "skip_conversion": self.chk_cloud_fast_hls.isChecked(),
-            "notify_team_members": self.chk_cloud_notify.isChecked()
+            "notify_team_members": self.chk_cloud_notify.isChecked(),
+            "concurrency": concurrency_val or 3
         }
 
         self.btn_cloud_upload_now.setEnabled(False)

@@ -4,14 +4,14 @@
     "rig": {
         "name": "DJI Action 4 Dual-Rig 2.7K Dewarp (80 deg, 15 deg tilt)",
         "left_camera": {
-            "name": "DJI Action 4 2.7K Standard/Dewarp (16:9)",
+            "name": "DJI Action 4 1080p 4:3 Dewarp (RockSteady ON, 30fps)",
             "sensor_width": 9.6,
             "sensor_height": 7.2,
-            "image_width": 1920,
+            "image_width": 1440,
             "image_height": 1080,
-            "fx": 824.2738002085052,
-            "fy": 824.2738002085052,
-            "cx": 960.0,
+            "fx": 828.0,
+            "fy": 828.0,
+            "cx": 720.0,
             "cy": 540.0,
             "k1": 0.0,
             "k2": 0.0,
@@ -20,14 +20,14 @@
             "model_type": "pinhole"
         },
         "right_camera": {
-            "name": "DJI Action 4 2.7K Standard/Dewarp (16:9)",
+            "name": "DJI Action 4 1080p 4:3 Dewarp (RockSteady ON, 30fps)",
             "sensor_width": 9.6,
             "sensor_height": 7.2,
-            "image_width": 1920,
+            "image_width": 1440,
             "image_height": 1080,
-            "fx": 824.2738002085052,
-            "fy": 824.2738002085052,
-            "cx": 960.0,
+            "fx": 828.0,
+            "fy": 828.0,
+            "cx": 720.0,
             "cy": 540.0,
             "k1": 0.0,
             "k2": 0.0,
@@ -107,25 +107,25 @@
     "autocam": {
         "ai_tracking": false,
         "tracking_mode": "ball_centric",
-        "ball_weight": 0.7,
-        "players_weight": 0.15,
+        "ball_weight": 0.9,
+        "players_weight": 0.3,
         "enable_dynamic_zoom": false,
-        "fixed_zoom_factor": 1.15,
+        "fixed_zoom_factor": 1.0,
         "min_zoom": 1.15,
-        "max_zoom": 1.6,
+        "max_zoom": 1.75,
         "zoom_speed": 0.04,
-        "anticipation_lead": 0.2,
-        "smoothing_factor": 0.86,
-        "deadband_width": 0.12,
-        "max_pan_speed": 0.065,
+        "anticipation_lead": 0.05,
+        "smoothing_factor": 0.99,
+        "deadband_width": 0.21,
+        "max_pan_speed": 0.03,
         "vertical_center_bias": 0.36,
         "enable_zone_damping": true,
-        "zone_boost_factor": 1.0,
+        "zone_boost_factor": 1.8,
         "tactical_margin": 0.0,
         "pitch_corners": [
             [
-                0.256,
-                0.23800000000000002
+                0.285,
+                0.22899999999999998
             ],
             [
                 0.5,
@@ -136,16 +136,16 @@
                 0.23800000000000002
             ],
             [
-                0.9790000000000001,
-                0.4
-            ],
-            [
-                0.506,
-                0.631
-            ],
-            [
-                0.028999999999999998,
+                0.98,
                 0.382
+            ],
+            [
+                0.503,
+                0.612
+            ],
+            [
+                0.033,
+                0.363
             ]
         ],
         "scan_step": 2,
@@ -160,22 +160,31 @@
         "enable_skeletons": false,
         "enable_speed_badges": false,
         "enable_anti_jersey_filter": true,
-        "enable_static_leaf_filter": true,
+        "enable_static_leaf_filter": false,
         "enable_sideline_filter": true,
-        "pitch_margin_pct": 1.0,
+        "pitch_margin_pct": 0.0,
         "enable_strict_ball_centering": true
     },
     "export": {
-        "format": "21:10",
-        "resolution_width": 3360,
-        "resolution_height": 1600,
-        "codec": "hevc_nvenc",
+        "format": "16:9_autocam",
+        "resolution_width": 1920,
+        "resolution_height": 1080,
+        "codec": "h264_nvenc",
         "bitrate_mbps": 30,
         "trim_only": true,
         "audio_source": "left"
     },
+    "cloud": {
+        "server_url": "https://matchtrack.de",
+        "team_id": "team_b2dd2fd6f5",
+        "category": "Pokalspiel",
+        "auto_upload": false,
+        "notify_team": false,
+        "fast_hls": false,
+        "concurrency": 3
+    },
     "ui_view": {
-        "view_mode": "32:9",
+        "view_mode": "8:3",
         "show_frame": false,
         "frame_opacity": 50.0,
         "show_center_line": false,
