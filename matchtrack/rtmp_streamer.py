@@ -39,6 +39,7 @@ class RTMPChannelConfig:
     keyframe_interval_sec: float = 2.0   # Standard GOP size for RTMP/HLS (2 seconds)
     audio_enabled: bool = True
     audio_device_name: str = ""          # DirectShow audio device name, e.g. "Mikrofon (DJI Action 4)"
+    source_feed: str = "broadcast_16x9"  # "broadcast_16x9", "panorama_8x3", "cam1", "cam2"
 
 
 @dataclass
@@ -384,6 +385,27 @@ class MultiStreamManager:
         streamer = self.streamers.get(channel_id)
         if streamer and streamer.is_running:
             streamer.push_frame(frame)
+
+    def push_feeds(self, feeds: Dict[str, Optional[np.ndarray]]):
+        """
+        Routes incoming video feeds (e.g. 'broadcast_16x9', 'panorama_8x3', 'cam1', 'cam2')
+        to all active channel streamers according to their configured source_feed.
+        """
+        for streamer in self.streamers.values():
+            if not streamer.is_running:
+                continue
+            feed_name = streamer.config.source_feed
+            frame = feeds.get(feed_name)
+            # Graceful fallbacks if a specific feed is missing (e.g. cam2 in single-cam mode)
+            if frame is None:
+                if feed_name == "cam2":
+                    frame = feeds.get("cam1")
+                elif feed_name == "panorama_8x3":
+                    frame = feeds.get("broadcast_16x9")
+                elif feed_name == "broadcast_16x9":
+                    frame = feeds.get("cam1")
+            if frame is not None:
+                streamer.push_frame(frame)
 
     def is_any_live(self) -> bool:
         return any(s.is_running for s in self.streamers.values())

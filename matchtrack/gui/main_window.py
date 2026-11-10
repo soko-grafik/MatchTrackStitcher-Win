@@ -5390,14 +5390,19 @@ class MainWindow(QMainWindow):
             },
             "livestream": {
                 "server_url": self.txt_rtmp_server_url.text().strip() if hasattr(self, 'txt_rtmp_server_url') else "rtmp://matchtrack.de:1935/live",
-                "stream_key_bcast": self.txt_stream_key_bcast.text().strip() if hasattr(self, 'txt_stream_key_bcast') else "broadcast_1",
-                "stream_key_pano": self.txt_stream_key_pano.text().strip() if hasattr(self, 'txt_stream_key_pano') else "panorama_1",
-                "stream_key_cam1": self.txt_stream_key_cam1.text().strip() if hasattr(self, 'txt_stream_key_cam1') else "cam1",
-                "stream_key_cam2": self.txt_stream_key_cam2.text().strip() if hasattr(self, 'txt_stream_key_cam2') else "cam2",
-                "chan_bcast_enabled": self.chk_chan_bcast.isChecked() if hasattr(self, 'chk_chan_bcast') else True,
-                "chan_pano_enabled": self.chk_chan_pano.isChecked() if hasattr(self, 'chk_chan_pano') else True,
-                "chan_cam1_enabled": self.chk_chan_cam1.isChecked() if hasattr(self, 'chk_chan_cam1') else False,
-                "chan_cam2_enabled": self.chk_chan_cam2.isChecked() if hasattr(self, 'chk_chan_cam2') else False,
+                "resolution": self.combo_stream_resolution.currentData() if hasattr(self, 'combo_stream_resolution') else "1080p",
+                "stream_key_c1": self.txt_stream_key_c1.text().strip() if hasattr(self, 'txt_stream_key_c1') else "broadcast_1",
+                "stream_key_c2": self.txt_stream_key_c2.text().strip() if hasattr(self, 'txt_stream_key_c2') else "panorama_1",
+                "stream_key_c3": self.txt_stream_key_c3.text().strip() if hasattr(self, 'txt_stream_key_c3') else "cam1",
+                "stream_key_c4": self.txt_stream_key_c4.text().strip() if hasattr(self, 'txt_stream_key_c4') else "cam2",
+                "source_c1": self.combo_feed_c1.currentData() if hasattr(self, 'combo_feed_c1') else "broadcast_16x9",
+                "source_c2": self.combo_feed_c2.currentData() if hasattr(self, 'combo_feed_c2') else "panorama_8x3",
+                "source_c3": self.combo_feed_c3.currentData() if hasattr(self, 'combo_feed_c3') else "cam1",
+                "source_c4": self.combo_feed_c4.currentData() if hasattr(self, 'combo_feed_c4') else "cam2",
+                "chan_c1_enabled": self.chk_chan_1.isChecked() if hasattr(self, 'chk_chan_1') else True,
+                "chan_c2_enabled": self.chk_chan_2.isChecked() if hasattr(self, 'chk_chan_2') else True,
+                "chan_c3_enabled": self.chk_chan_3.isChecked() if hasattr(self, 'chk_chan_3') else False,
+                "chan_c4_enabled": self.chk_chan_4.isChecked() if hasattr(self, 'chk_chan_4') else False,
                 "encoder": self.combo_stream_encoder.currentText() if hasattr(self, 'combo_stream_encoder') else "h264_nvenc",
                 "bitrate_kbps": self.combo_stream_bitrate.currentData() if hasattr(self, 'combo_stream_bitrate') else 6000,
                 "wifi_ssid": self.txt_dji_wifi_ssid.text().strip() if hasattr(self, 'txt_dji_wifi_ssid') else ""
@@ -5738,22 +5743,45 @@ class MainWindow(QMainWindow):
             ls = data["livestream"]
             if hasattr(self, 'txt_rtmp_server_url') and "server_url" in ls and ls["server_url"]:
                 self.txt_rtmp_server_url.setText(str(ls["server_url"]))
-            if hasattr(self, 'txt_stream_key_bcast') and "stream_key_bcast" in ls:
-                self.txt_stream_key_bcast.setText(str(ls["stream_key_bcast"]))
-            if hasattr(self, 'txt_stream_key_pano') and "stream_key_pano" in ls:
-                self.txt_stream_key_pano.setText(str(ls["stream_key_pano"]))
-            if hasattr(self, 'txt_stream_key_cam1') and "stream_key_cam1" in ls:
-                self.txt_stream_key_cam1.setText(str(ls["stream_key_cam1"]))
-            if hasattr(self, 'txt_stream_key_cam2') and "stream_key_cam2" in ls:
-                self.txt_stream_key_cam2.setText(str(ls["stream_key_cam2"]))
-            if hasattr(self, 'chk_chan_bcast') and "chan_bcast_enabled" in ls:
-                self.chk_chan_bcast.setChecked(bool(ls["chan_bcast_enabled"]))
-            if hasattr(self, 'chk_chan_pano') and "chan_pano_enabled" in ls:
-                self.chk_chan_pano.setChecked(bool(ls["chan_pano_enabled"]))
-            if hasattr(self, 'chk_chan_cam1') and "chan_cam1_enabled" in ls:
-                self.chk_chan_cam1.setChecked(bool(ls["chan_cam1_enabled"]))
-            if hasattr(self, 'chk_chan_cam2') and "chan_cam2_enabled" in ls:
-                self.chk_chan_cam2.setChecked(bool(ls["chan_cam2_enabled"]))
+
+            if hasattr(self, 'combo_stream_resolution') and "resolution" in ls:
+                idx = self.combo_stream_resolution.findData(ls["resolution"])
+                if idx >= 0:
+                    self.combo_stream_resolution.setCurrentIndex(idx)
+
+            # Keys
+            k1 = ls.get("stream_key_c1", ls.get("stream_key_bcast", "broadcast_1"))
+            k2 = ls.get("stream_key_c2", ls.get("stream_key_pano", "panorama_1"))
+            k3 = ls.get("stream_key_c3", ls.get("stream_key_cam1", "cam1"))
+            k4 = ls.get("stream_key_c4", ls.get("stream_key_cam2", "cam2"))
+            if hasattr(self, 'txt_stream_key_c1'): self.txt_stream_key_c1.setText(str(k1))
+            if hasattr(self, 'txt_stream_key_c2'): self.txt_stream_key_c2.setText(str(k2))
+            if hasattr(self, 'txt_stream_key_c3'): self.txt_stream_key_c3.setText(str(k3))
+            if hasattr(self, 'txt_stream_key_c4'): self.txt_stream_key_c4.setText(str(k4))
+
+            # Feeds / Sources
+            for combo, key, default in [
+                (getattr(self, 'combo_feed_c1', None), "source_c1", "broadcast_16x9"),
+                (getattr(self, 'combo_feed_c2', None), "source_c2", "panorama_8x3"),
+                (getattr(self, 'combo_feed_c3', None), "source_c3", "cam1"),
+                (getattr(self, 'combo_feed_c4', None), "source_c4", "cam2")
+            ]:
+                if combo is not None:
+                    src = ls.get(key, default)
+                    idx = combo.findData(src)
+                    if idx >= 0:
+                        combo.setCurrentIndex(idx)
+
+            # Channels Enabled
+            e1 = ls.get("chan_c1_enabled", ls.get("chan_bcast_enabled", True))
+            e2 = ls.get("chan_c2_enabled", ls.get("chan_pano_enabled", True))
+            e3 = ls.get("chan_c3_enabled", ls.get("chan_cam1_enabled", False))
+            e4 = ls.get("chan_c4_enabled", ls.get("chan_cam2_enabled", False))
+            if hasattr(self, 'chk_chan_1'): self.chk_chan_1.setChecked(bool(e1))
+            if hasattr(self, 'chk_chan_2'): self.chk_chan_2.setChecked(bool(e2))
+            if hasattr(self, 'chk_chan_3'): self.chk_chan_3.setChecked(bool(e3))
+            if hasattr(self, 'chk_chan_4'): self.chk_chan_4.setChecked(bool(e4))
+
             if hasattr(self, 'txt_dji_wifi_ssid') and "wifi_ssid" in ls:
                 self.txt_dji_wifi_ssid.setText(str(ls["wifi_ssid"]))
             if hasattr(self, 'combo_stream_bitrate') and "bitrate_kbps" in ls:
@@ -6714,9 +6742,9 @@ class MainWindow(QMainWindow):
         live_layout.addWidget(grp_input)
 
         # ---------------------------------------------------------------------
-        # 3. Multi-Destination RTMP Targets Group
+        # 3. Multi-Destination RTMP Targets Group & Channel Mapping
         # ---------------------------------------------------------------------
-        grp_targets = QGroupBox("🌐 Live-Stream Kanäle (Multi-Stream)")
+        grp_targets = QGroupBox("🌐 Live-Stream Kanäle & Kamera-Zuordnung (Multi-Stream)")
         grp_targets.setStyleSheet("QGroupBox { font-weight: bold; color: #a78bfa; border: 1px solid #282839; border-radius: 8px; margin-top: 6px; padding-top: 10px; }")
         targets_layout = QVBoxLayout(grp_targets)
         targets_layout.setSpacing(6)
@@ -6740,88 +6768,130 @@ class MainWindow(QMainWindow):
         row_server_url.addWidget(self.txt_rtmp_server_url, 1)
         targets_layout.addLayout(row_server_url)
 
-        # Channel 1: 16:9 Broadcast
+        def make_feed_combo(default_idx: int):
+            cb = QComboBox()
+            cb.addItem("🎯 16:9 Regie (Ball-Follow KI)", "broadcast_16x9")
+            cb.addItem("🏟️ 8:3 / 32:9 Taktik-Panorama", "panorama_8x3")
+            cb.addItem("📹 Cam 1 (Links / Einzelkamera)", "cam1")
+            cb.addItem("📹 Cam 2 (Rechts)", "cam2")
+            cb.setCurrentIndex(default_idx)
+            cb.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6; font-size: 11px;")
+            return cb
+
+        # Channel 1
         row_c1 = QHBoxLayout()
-        self.chk_chan_bcast = QCheckBox("📺 16:9 Regie (Ball-Follow KI):")
-        self.chk_chan_bcast.setChecked(True)
-        self.chk_chan_bcast.setStyleSheet("color: #38bdf8; font-weight: 600; font-size: 11px;")
-        self.txt_stream_key_bcast = QLineEdit("broadcast_1")
-        self.txt_stream_key_bcast.setPlaceholderText("Stream-Key...")
-        self.txt_stream_key_bcast.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
-        row_c1.addWidget(self.chk_chan_bcast, 1)
-        row_c1.addWidget(self.txt_stream_key_bcast, 1)
+        self.chk_chan_1 = QCheckBox("Kanal 1:")
+        self.chk_chan_1.setChecked(True)
+        self.chk_chan_1.setStyleSheet("color: #38bdf8; font-weight: 700; font-size: 11px;")
+        self.combo_feed_c1 = make_feed_combo(0)  # broadcast_16x9
+        self.txt_stream_key_c1 = QLineEdit("broadcast_1")
+        self.txt_stream_key_c1.setPlaceholderText("Stream-Key...")
+        self.txt_stream_key_c1.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6; font-size: 11px;")
+        row_c1.addWidget(self.chk_chan_1, 2)
+        row_c1.addWidget(self.combo_feed_c1, 3)
+        row_c1.addWidget(self.txt_stream_key_c1, 2)
         targets_layout.addLayout(row_c1)
 
-        # Channel 2: 8:3 / 32:9 Panorama
+        # Channel 2
         row_c2 = QHBoxLayout()
-        self.chk_chan_pano = QCheckBox("📐 8:3 / 32:9 Taktik-Panorama:")
-        self.chk_chan_pano.setChecked(True)
-        self.chk_chan_pano.setStyleSheet("color: #a78bfa; font-weight: 600; font-size: 11px;")
-        self.txt_stream_key_pano = QLineEdit("panorama_1")
-        self.txt_stream_key_pano.setPlaceholderText("Stream-Key...")
-        self.txt_stream_key_pano.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
-        row_c2.addWidget(self.chk_chan_pano, 1)
-        row_c2.addWidget(self.txt_stream_key_pano, 1)
+        self.chk_chan_2 = QCheckBox("Kanal 2:")
+        self.chk_chan_2.setChecked(True)
+        self.chk_chan_2.setStyleSheet("color: #a78bfa; font-weight: 700; font-size: 11px;")
+        self.combo_feed_c2 = make_feed_combo(1)  # panorama_8x3
+        self.txt_stream_key_c2 = QLineEdit("panorama_1")
+        self.txt_stream_key_c2.setPlaceholderText("Stream-Key...")
+        self.txt_stream_key_c2.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6; font-size: 11px;")
+        row_c2.addWidget(self.chk_chan_2, 2)
+        row_c2.addWidget(self.combo_feed_c2, 3)
+        row_c2.addWidget(self.txt_stream_key_c2, 2)
         targets_layout.addLayout(row_c2)
 
-        # Channel 3: Cam 1 Raw
+        # Channel 3
         row_c3 = QHBoxLayout()
-        self.chk_chan_cam1 = QCheckBox("📹 Cam 1 (Roh-Feed Links):")
-        self.chk_chan_cam1.setChecked(False)
-        self.chk_chan_cam1.setStyleSheet("color: #cbd5e1; font-size: 11px;")
-        self.txt_stream_key_cam1 = QLineEdit("cam1")
-        self.txt_stream_key_cam1.setPlaceholderText("Stream-Key...")
-        self.txt_stream_key_cam1.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
-        row_c3.addWidget(self.chk_chan_cam1, 1)
-        row_c3.addWidget(self.txt_stream_key_cam1, 1)
+        self.chk_chan_3 = QCheckBox("Kanal 3:")
+        self.chk_chan_3.setChecked(False)
+        self.chk_chan_3.setStyleSheet("color: #cbd5e1; font-weight: 600; font-size: 11px;")
+        self.combo_feed_c3 = make_feed_combo(2)  # cam1
+        self.txt_stream_key_c3 = QLineEdit("cam1")
+        self.txt_stream_key_c3.setPlaceholderText("Stream-Key...")
+        self.txt_stream_key_c3.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6; font-size: 11px;")
+        row_c3.addWidget(self.chk_chan_3, 2)
+        row_c3.addWidget(self.combo_feed_c3, 3)
+        row_c3.addWidget(self.txt_stream_key_c3, 2)
         targets_layout.addLayout(row_c3)
 
-        # Channel 4: Cam 2 Raw
+        # Channel 4
         row_c4 = QHBoxLayout()
-        self.chk_chan_cam2 = QCheckBox("📹 Cam 2 (Roh-Feed Rechts):")
-        self.chk_chan_cam2.setChecked(False)
-        self.chk_chan_cam2.setStyleSheet("color: #cbd5e1; font-size: 11px;")
-        self.txt_stream_key_cam2 = QLineEdit("cam2")
-        self.txt_stream_key_cam2.setPlaceholderText("Stream-Key...")
-        self.txt_stream_key_cam2.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
-        row_c4.addWidget(self.chk_chan_cam2, 1)
-        row_c4.addWidget(self.txt_stream_key_cam2, 1)
+        self.chk_chan_4 = QCheckBox("Kanal 4:")
+        self.chk_chan_4.setChecked(False)
+        self.chk_chan_4.setStyleSheet("color: #cbd5e1; font-weight: 600; font-size: 11px;")
+        self.combo_feed_c4 = make_feed_combo(3)  # cam2
+        self.txt_stream_key_c4 = QLineEdit("cam2")
+        self.txt_stream_key_c4.setPlaceholderText("Stream-Key...")
+        self.txt_stream_key_c4.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6; font-size: 11px;")
+        row_c4.addWidget(self.chk_chan_4, 2)
+        row_c4.addWidget(self.combo_feed_c4, 3)
+        row_c4.addWidget(self.txt_stream_key_c4, 2)
         targets_layout.addLayout(row_c4)
+
+        # Backwards compatibility aliases
+        self.chk_chan_bcast = self.chk_chan_1
+        self.chk_chan_pano = self.chk_chan_2
+        self.chk_chan_cam1 = self.chk_chan_3
+        self.chk_chan_cam2 = self.chk_chan_4
+        self.txt_stream_key_bcast = self.txt_stream_key_c1
+        self.txt_stream_key_pano = self.txt_stream_key_c2
+        self.txt_stream_key_cam1 = self.txt_stream_key_c3
+        self.txt_stream_key_cam2 = self.txt_stream_key_c4
 
         live_layout.addWidget(grp_targets)
 
         # ---------------------------------------------------------------------
-        # 4. Hardware Encoder Settings
+        # 4. Hardware Encoder, Resolution & LTE/Mobile Settings
         # ---------------------------------------------------------------------
-        grp_enc = QGroupBox("⚙️ Streaming-Encoder Einstellungen (wie OBS)")
+        grp_enc = QGroupBox("⚙️ Streaming-Encoder, Auflösung & Mobilfunk (LTE)")
         grp_enc.setStyleSheet("QGroupBox { font-weight: bold; color: #f59e0b; border: 1px solid #282839; border-radius: 8px; margin-top: 6px; padding-top: 10px; }")
         enc_layout = QGridLayout(grp_enc)
         enc_layout.setSpacing(6)
 
-        enc_layout.addWidget(QLabel("Encoder:"), 0, 0)
+        enc_layout.addWidget(QLabel("Auflösung (Profil):"), 0, 0)
+        self.combo_stream_resolution = QComboBox()
+        self.combo_stream_resolution.addItem("🚀 1080p Full HD (1920x1080 - DSL/Glasfaser/LAN)", "1080p")
+        self.combo_stream_resolution.addItem("📶 720p HD (1280x720 - Empfohlen für LTE/Mobilfunk)", "720p")
+        self.combo_stream_resolution.addItem("📱 480p SD (854x480 - Sehr sparsam / Schwaches LTE)", "480p")
+        self.combo_stream_resolution.currentIndexChanged.connect(self._on_stream_resolution_changed)
+        self.combo_stream_resolution.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        enc_layout.addWidget(self.combo_stream_resolution, 0, 1)
+
+        enc_layout.addWidget(QLabel("Bitrate:"), 1, 0)
+        self.combo_stream_bitrate = QComboBox()
+        self.combo_stream_bitrate.addItem("6000 kbps (1080p Standard - DSL/Glasfaser)", 6000)
+        self.combo_stream_bitrate.addItem("8000 kbps (1080p High Quality)", 8000)
+        self.combo_stream_bitrate.addItem("4000 kbps (1080p Daten-Schonend)", 4000)
+        self.combo_stream_bitrate.addItem("2500 kbps (720p HQ - Schnelles LTE)", 2500)
+        self.combo_stream_bitrate.addItem("1500 kbps (720p Standard - Normales LTE)", 1500)
+        self.combo_stream_bitrate.addItem("1000 kbps (480p HQ - Mobiles Netz)", 1000)
+        self.combo_stream_bitrate.addItem("600 kbps (480p Sparsam - Schwaches LTE)", 600)
+        self.combo_stream_bitrate.addItem("350 kbps (Notfall-Modus / Minimal)", 350)
+        self.combo_stream_bitrate.addItem("10000 kbps (Ultra High-Bitrate)", 10000)
+        self.combo_stream_bitrate.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        enc_layout.addWidget(self.combo_stream_bitrate, 1, 1)
+
+        enc_layout.addWidget(QLabel("Encoder:"), 2, 0)
         self.combo_stream_encoder = QComboBox()
         self.combo_stream_encoder.addItem("h264_nvenc (NVIDIA GPU - Empfohlen)", "h264_nvenc")
         self.combo_stream_encoder.addItem("h264_qsv (Intel QuickSync)", "h264_qsv")
         self.combo_stream_encoder.addItem("libx264 (Software CPU)", "libx264")
         self.combo_stream_encoder.addItem("hevc_nvenc (H.265 / HEVC)", "hevc_nvenc")
         self.combo_stream_encoder.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
-        enc_layout.addWidget(self.combo_stream_encoder, 0, 1)
+        enc_layout.addWidget(self.combo_stream_encoder, 2, 1)
 
-        enc_layout.addWidget(QLabel("Bitrate:"), 1, 0)
-        self.combo_stream_bitrate = QComboBox()
-        self.combo_stream_bitrate.addItem("6000 kbps (1080p Standard)", 6000)
-        self.combo_stream_bitrate.addItem("8000 kbps (1080p High Quality)", 8000)
-        self.combo_stream_bitrate.addItem("4000 kbps (1080p Daten-Schonend)", 4000)
-        self.combo_stream_bitrate.addItem("10000 kbps (Ultra High-Bitrate)", 10000)
-        self.combo_stream_bitrate.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
-        enc_layout.addWidget(self.combo_stream_bitrate, 1, 1)
-
-        enc_layout.addWidget(QLabel("Framerate:"), 2, 0)
+        enc_layout.addWidget(QLabel("Framerate:"), 3, 0)
         self.combo_stream_fps = QComboBox()
-        self.combo_stream_fps.addItem("30 FPS", 30)
-        self.combo_stream_fps.addItem("60 FPS", 60)
+        self.combo_stream_fps.addItem("30 FPS (Standard für Live-Sport)", 30)
+        self.combo_stream_fps.addItem("60 FPS (Sehr flüssig)", 60)
         self.combo_stream_fps.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
-        enc_layout.addWidget(self.combo_stream_fps, 2, 1)
+        enc_layout.addWidget(self.combo_stream_fps, 3, 1)
 
         live_layout.addWidget(grp_enc)
 
@@ -6841,6 +6911,21 @@ class MainWindow(QMainWindow):
 
         # Initial device enumeration
         self._refresh_uvc_devices()
+
+    def _on_stream_resolution_changed(self, idx: int):
+        res = self.combo_stream_resolution.currentData()
+        if res == "720p":
+            target_idx = self.combo_stream_bitrate.findData(2500)
+            if target_idx >= 0:
+                self.combo_stream_bitrate.setCurrentIndex(target_idx)
+        elif res == "480p":
+            target_idx = self.combo_stream_bitrate.findData(1000)
+            if target_idx >= 0:
+                self.combo_stream_bitrate.setCurrentIndex(target_idx)
+        elif res == "1080p":
+            target_idx = self.combo_stream_bitrate.findData(6000)
+            if target_idx >= 0:
+                self.combo_stream_bitrate.setCurrentIndex(target_idx)
 
     def _on_rtmp_preset_changed(self, idx: int):
         data = self.combo_rtmp_preset.currentData()
@@ -6912,28 +6997,40 @@ class MainWindow(QMainWindow):
         if frame_l is None:
             return
 
+        res_mode = self.combo_stream_resolution.currentData() if hasattr(self, 'combo_stream_resolution') else "1080p"
+        is_4_3 = self.is_4_3_mode()
+
+        if res_mode == "480p":
+            pw, ph = (1280, 480) if is_4_3 else (1706, 480)
+            bw, bh = 854, 480
+        elif res_mode == "720p":
+            pw, ph = (1920, 720) if is_4_3 else (2560, 720)
+            bw, bh = 1280, 720
+        else:
+            pw, ph = (2560, 960) if is_4_3 else (3840, 1080)
+            bw, bh = 1920, 1080
+
         try:
-            is_4_3 = self.is_4_3_mode()
-            pw = 2560 if is_4_3 else 3840
-            ph = 960 if is_4_3 else 1080
             pano_frame, bcast_frame, crop_box = self.engine.stitch_live_pair(
                 frame_l, frame_r,
                 pano_width=pw,
                 pano_height=ph,
-                broadcast_width=1920,
-                broadcast_height=1080
+                broadcast_width=bw,
+                broadcast_height=bh
             )
         except Exception as e:
             logger.warning(f"Fehler beim Live-Stitching/Capture: {e}")
             return
 
-        # Push to active RTMP streaming channels
+        # Push to active RTMP streaming channels via dynamic feed routing
         if self.stream_manager.is_any_live():
-            self.stream_manager.push_frame("broadcast_16x9", bcast_frame)
-            self.stream_manager.push_frame("panorama_8x3", pano_frame)
-            self.stream_manager.push_frame("cam1", frame_l)
-            if frame_r is not None:
-                self.stream_manager.push_frame("cam2", frame_r)
+            feeds = {
+                "broadcast_16x9": bcast_frame,
+                "panorama_8x3": pano_frame,
+                "cam1": frame_l,
+                "cam2": frame_r
+            }
+            self.stream_manager.push_feeds(feeds)
 
         # Update viewport preview
         display_frame = bcast_frame if self.view_mode.startswith("16:9") else pano_frame
@@ -7034,70 +7131,58 @@ class MainWindow(QMainWindow):
             bitrate = self.combo_stream_bitrate.currentData() or 6000
             fps = self.combo_stream_fps.currentData() or 30
 
-            # 1. Channel Broadcast 16:9
-            if self.chk_chan_bcast.isChecked():
-                cfg_bcast = RTMPChannelConfig(
-                    channel_id="broadcast_16x9",
-                    name="16:9 Broadcast",
-                    stream_url=base_url,
-                    stream_key=self.txt_stream_key_bcast.text().strip(),
-                    enabled=True,
-                    width=1920,
-                    height=1080,
-                    fps=fps,
-                    bitrate_kbps=bitrate,
-                    codec=codec
-                )
-                self.stream_manager.configure_channel(cfg_bcast)
+            res_mode = self.combo_stream_resolution.currentData() if hasattr(self, 'combo_stream_resolution') else "1080p"
+            is_4_3 = self.is_4_3_mode()
 
-            # 2. Channel Panorama 8:3 / 32:9
-            if self.chk_chan_pano.isChecked():
-                is_4_3 = self.is_4_3_mode()
-                cfg_pano = RTMPChannelConfig(
-                    channel_id="panorama_8x3",
-                    name="Taktik-Panorama",
-                    stream_url=base_url,
-                    stream_key=self.txt_stream_key_pano.text().strip(),
-                    enabled=True,
-                    width=2560 if is_4_3 else 3840,
-                    height=960 if is_4_3 else 1080,
-                    fps=fps,
-                    bitrate_kbps=bitrate,
-                    codec=codec
-                )
-                self.stream_manager.configure_channel(cfg_pano)
+            if res_mode == "480p":
+                w_16x9, h_16x9 = 854, 480
+                w_pano = 1280 if is_4_3 else 1706
+                h_pano = 480
+            elif res_mode == "720p":
+                w_16x9, h_16x9 = 1280, 720
+                w_pano = 1920 if is_4_3 else 2560
+                h_pano = 720
+            else:  # "1080p"
+                w_16x9, h_16x9 = 1920, 1080
+                w_pano = 2560 if is_4_3 else 3840
+                h_pano = 960 if is_4_3 else 1080
 
-            # 3. Channel Cam 1
-            if self.chk_chan_cam1.isChecked():
-                cfg_c1 = RTMPChannelConfig(
-                    channel_id="cam1",
-                    name="Cam 1 (Links)",
-                    stream_url=base_url,
-                    stream_key=self.txt_stream_key_cam1.text().strip(),
-                    enabled=True,
-                    width=1920,
-                    height=1080,
-                    fps=fps,
-                    bitrate_kbps=bitrate // 2,
-                    codec=codec
-                )
-                self.stream_manager.configure_channel(cfg_c1)
+            channels_data = [
+                (1, getattr(self, 'chk_chan_1', self.chk_chan_bcast), getattr(self, 'combo_feed_c1', None), getattr(self, 'txt_stream_key_c1', self.txt_stream_key_bcast), "broadcast_16x9"),
+                (2, getattr(self, 'chk_chan_2', self.chk_chan_pano), getattr(self, 'combo_feed_c2', None), getattr(self, 'txt_stream_key_c2', self.txt_stream_key_pano), "panorama_8x3"),
+                (3, getattr(self, 'chk_chan_3', self.chk_chan_cam1), getattr(self, 'combo_feed_c3', None), getattr(self, 'txt_stream_key_c3', self.txt_stream_key_cam1), "cam1"),
+                (4, getattr(self, 'chk_chan_4', self.chk_chan_cam2), getattr(self, 'combo_feed_c4', None), getattr(self, 'txt_stream_key_c4', self.txt_stream_key_cam2), "cam2"),
+            ]
 
-            # 4. Channel Cam 2
-            if self.chk_chan_cam2.isChecked():
-                cfg_c2 = RTMPChannelConfig(
-                    channel_id="cam2",
-                    name="Cam 2 (Rechts)",
-                    stream_url=base_url,
-                    stream_key=self.txt_stream_key_cam2.text().strip(),
-                    enabled=True,
-                    width=1920,
-                    height=1080,
-                    fps=fps,
-                    bitrate_kbps=bitrate // 2,
-                    codec=codec
-                )
-                self.stream_manager.configure_channel(cfg_c2)
+            active_count = 0
+            for chan_num, chk, combo, txt, default_feed in channels_data:
+                if chk and chk.isChecked():
+                    feed = combo.currentData() if combo else default_feed
+                    key = txt.text().strip() if txt else f"chan_{chan_num}"
+                    cw, ch = (w_pano, h_pano) if feed == "panorama_8x3" else (w_16x9, h_16x9)
+
+                    # In multi-stream, secondary feeds can slightly scale bitrate to preserve bandwidth
+                    chan_bitrate = bitrate if (feed == "broadcast_16x9" or active_count == 0) else max(400, int(bitrate * 0.75))
+
+                    cfg = RTMPChannelConfig(
+                        channel_id=f"channel_{chan_num}",
+                        name=f"Kanal {chan_num} ({feed})",
+                        stream_url=base_url,
+                        stream_key=key,
+                        enabled=True,
+                        width=cw,
+                        height=ch,
+                        fps=fps,
+                        bitrate_kbps=chan_bitrate,
+                        codec=codec,
+                        source_feed=feed
+                    )
+                    self.stream_manager.configure_channel(cfg)
+                    active_count += 1
+
+            if active_count == 0:
+                QMessageBox.warning(self, "Keine Kanäle aktiv", "Bitte aktiviere mindestens einen Live-Stream Kanal (Kanal 1-4).")
+                return
 
             self.stream_manager.start_all_enabled()
 
@@ -7109,11 +7194,11 @@ class MainWindow(QMainWindow):
             self.btn_master_stream_toggle.setStyleSheet(
                 "background-color: #059669; color: white; font-weight: 800; font-size: 13px; padding: 12px; border-radius: 10px;"
             )
-            self.lbl_stream_tally.setText("🔴 LIVE")
+            self.lbl_stream_tally.setText(f"🔴 LIVE ({res_mode.upper()})")
             self.lbl_stream_tally.setStyleSheet(
                 "background-color: #dc2626; color: white; font-weight: 900; font-size: 13px; padding: 6px 14px; border-radius: 8px;"
             )
-            self.status_bar.showMessage("OBS-Stream aktiv!")
+            self.status_bar.showMessage(f"OBS-Stream aktiv ({active_count} Kanäle @ {res_mode.upper()})")
 
     def _handle_stream_telemetry(self, stats_dict: dict):
         """Thread-safe slot updating GUI with current live stream telemetry."""
