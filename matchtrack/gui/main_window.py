@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, Slot, QPoint, QPointF, QRectF, QObject, QEvent, QDate, QUrl
-from PySide6.QtGui import QImage, QPixmap, QIcon, QFont, QColor, QPainter, QPen, QWheelEvent, QMouseEvent, QPolygonF, QDesktopServices, QShortcut, QKeySequence
+from PySide6.QtGui import QImage, QPixmap, QIcon, QFont, QColor, QPainter, QPen, QWheelEvent, QMouseEvent, QPolygonF, QDesktopServices, QShortcut, QKeySequence, QPainterPath
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QSlider, QSpinBox, QDoubleSpinBox, QComboBox, QAbstractSpinBox,
@@ -47,6 +47,7 @@ from ..rtmp_streamer import MultiStreamManager, RTMPChannelConfig, StreamStats
 from ..live_capture import DualLiveCaptureManager, enumerate_video_devices
 from ..dji_ble import DjiBLEManager, DjiCameraDevice
 from .tactics_dialog import TacticsDashboardDialog
+from ..wide_angle_rectifier import WideAngleConfig, WideAngleRectifier
 
 logger = get_logger("gui")
 
@@ -358,7 +359,8 @@ class RenderWorker(QThread):
                  start_frame: int = 0, 
                  end_frame: Optional[int] = None, 
                  audio_source: str = "left",
-                 use_lookahead: bool = True):
+                 use_lookahead: bool = True,
+                 wide_angle_rectifier: Optional[Any] = None):
         super().__init__()
         self.engine = engine
         self.out_path = out_path
@@ -371,6 +373,7 @@ class RenderWorker(QThread):
         self.end_frame = end_frame
         self.audio_source = audio_source
         self.use_lookahead = use_lookahead
+        self.wide_angle_rectifier = wide_angle_rectifier
         self.rendered_16x9_path: Optional[str] = None
         self.rendered_32x9_path: Optional[str] = None
 
@@ -379,7 +382,20 @@ class RenderWorker(QThread):
             def callback(processed, total, fps, eta, stage_text=""):
                 self.progress_signal.emit(processed, total, fps, eta, stage_text)
 
-            if self.engine.is_panorama_mode():
+            if self.mode == "wide_angle":
+                self.rendered_16x9_path = self.out_path
+                success = self.engine.render_wide_angle_video(
+                    output_filepath=self.out_path,
+                    out_width=self.width,
+                    out_height=self.height,
+                    codec=self.codec,
+                    bitrate_mbps=self.bitrate,
+                    start_frame=self.start_frame,
+                    end_frame=self.end_frame,
+                    wide_angle_rectifier=self.wide_angle_rectifier,
+                    progress_callback=callback
+                )
+            elif self.engine.is_panorama_mode():
                 if self.mode == "21:10":
                     self.rendered_32x9_path = self.out_path
                     success = self.engine.convert_panorama_to_21x10(
@@ -814,6 +830,8 @@ class InteractivePanoramaViewport(QWidget):
     corner_drag_finished = Signal()
     pitch_corners_changed = Signal(list) # 6 freely movable pitch polygon corners [[x_tl, y_tl], [x_tc, y_tc], [x_tr, y_tr], [x_br, y_br], [x_bc, y_bc], [x_bl, y_bl]]
     grid_quadrant_clicked = Signal(int) # 1, 2, 3, 4 (or 0 for toggle back to grid)
+    wide_angle_corners_changed = Signal(list) # 4 pitch corners [[x_tl, y_tl], [x_tr, y_tr], [x_br, y_br], [x_bl, y_bl]]
+    wide_angle_step_changed = Signal(int) # 0..3 for sequential click step, or -1 when finished
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -891,6 +909,60 @@ class InteractivePanoramaViewport(QWidget):
         self.last_framing_pos = QPoint()
 
         self.dynamic_zoom: float = 1.35
+
+        # 4-Point Wide-Angle Calibration & Trapezoid View (DJI Action 4)
+        self.wide_angle_edit_mode = False
+        self.wide_angle_step: int = -1  # 0..3 for sequential click placement, -1 when inactive
+        self.wide_angle_corners: List[List[float]] = [
+            [0.15, 0.25],  # 0: TL (Top-Left, hinten links)
+            [0.85, 0.25],  # 1: TR (Top-Right, hinten rechts)
+            [0.95, 0.88],  # 2: BR (Bottom-Right, vorne rechts)
+            [0.05, 0.88]   # 3: BL (Bottom-Left, vorne links)
+        ]
+        self.hovered_wa_corner: Optional[int] = None
+        self.dragging_wa_corner: Optional[int] = None
+
+    def set_wide_angle_corners(self, corners: List[List[float]]):
+        """Sets normalized 4-point pitch corners for wide-angle trapezoid rectification."""
+        if corners and len(corners) == 4:
+            self.wide_angle_corners = [[float(c[0]), float(c[1])] for c in corners]
+            self.update()
+
+    def set_wide_angle_edit_mode(self, enabled: bool):
+        """Toggles interactive wide-angle 4-point corner drag and drop."""
+        self.wide_angle_edit_mode = enabled
+        if not enabled:
+            self.hovered_wa_corner = None
+            self.dragging_wa_corner = None
+            self.wide_angle_step = -1
+            self.setCursor(Qt.ArrowCursor)
+        self.update()
+
+    def start_wide_angle_marking(self):
+        """Initiates sequential 4-point click-to-place calibration (TL -> TR -> BR -> BL)."""
+        self.wide_angle_edit_mode = True
+        self.wide_angle_step = 0
+        self.setCursor(Qt.CrossCursor)
+        self.wide_angle_step_changed.emit(0)
+        self.update()
+
+    def _get_wa_corner_screen_points(self, target_rect: QRectF) -> List[QPointF]:
+        """Calculates viewport screen pixel coordinates for the 4 normalized wide-angle corners."""
+        pts = []
+        for x_norm, y_norm in self.wide_angle_corners:
+            sx = target_rect.left() + x_norm * target_rect.width()
+            sy = target_rect.top() + y_norm * target_rect.height()
+            pts.append(QPointF(sx, sy))
+        return pts
+
+    def _hit_test_wa_corner(self, pos: QPoint, target_rect: QRectF, radius: float = 18.0) -> Optional[int]:
+        """Returns corner index (0..3) if mouse click/hover is within threshold radius."""
+        pts = self._get_wa_corner_screen_points(target_rect)
+        for idx, pt in enumerate(pts):
+            dist = math.hypot(pos.x() - pt.x(), pos.y() - pt.y())
+            if dist <= radius:
+                return idx
+        return None
 
     def set_pitch_corners(self, corners: List[List[float]]):
         """Sets normalized pitch polygon points."""
@@ -1732,6 +1804,10 @@ class InteractivePanoramaViewport(QWidget):
                 offside_line=self.current_offside_line if self.show_offside_line else None
             )
 
+        # 8. Wide-Angle 4-Point Pitch Trapezoid Overlay & Loupe
+        if self.wide_angle_edit_mode or self.view_mode in ("wide_angle", "wide_angle_raw") or self.wide_angle_step >= 0:
+            self._render_wide_angle_overlay(painter, target_rect)
+
         # HUD in top-left
         painter.setPen(QColor(220, 220, 220, 220))
         painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
@@ -1747,6 +1823,12 @@ class InteractivePanoramaViewport(QWidget):
         elif self.view_mode == "cam2":
             mode_str = "📹 Cam 2 Rechts (Live-Feed)"
             hud_text = f"{mode_str} ({iw}x{ih}) | Doppelklick: Zurück zum 4er-Grid"
+        elif self.view_mode == "wide_angle":
+            mode_str = "📐 Weitwinkel Begradigt (DJI Action 4 Trapez)"
+            hud_text = f"{mode_str} ({iw}x{ih}) | 4-Punkt Kalibrierung aktiv"
+        elif self.view_mode == "wide_angle_raw":
+            mode_str = "📷 Weitwinkel Original (4-Punkt Ecken)"
+            hud_text = f"{mode_str} ({iw}x{ih}) | Klicken Sie auf die Eckfahnen"
         elif self.view_mode == "32:9":
             mode_str = "🌟 8:3 Taktik-Panorama" if is_8x3 else "🌟 32:9 Taktik-Panorama"
             hud_text = f"{mode_str} ({iw}x{ih}) | 🎬 TV-Zoom: {self.dynamic_zoom:.2f}x | Viewport: {int(self.zoom_level*100)}%"
@@ -1761,6 +1843,136 @@ class InteractivePanoramaViewport(QWidget):
             hud_text = f"{mode_str} ({iw}x{ih}) | 🎬 TV-Zoom: {self.dynamic_zoom:.2f}x | Viewport: {int(self.zoom_level*100)}%"
         painter.drawText(14, 24 if (not self.pick_center_mode and not self.corner_pin_mode and not self.pitch_roi_mode and self.view_mode != "16:9_tactical") else 48, hud_text)
 
+    def _render_wide_angle_overlay(self, painter: QPainter, target_rect: QRectF):
+        """Renders the 4-corner pitch calibration polygon, handles, and precision zoom loupe."""
+        if target_rect is None:
+            return
+
+        pts = self._get_wa_corner_screen_points(target_rect)
+        if len(pts) == 4:
+            qpoly = QPolygonF(pts)
+            # Translucent pitch fill
+            painter.setBrush(QColor(56, 189, 248, 25))
+            painter.setPen(Qt.NoPen)
+            painter.drawPolygon(qpoly)
+
+            # Dashed pitch border
+            painter.setPen(QPen(QColor(56, 189, 248, 230), 2, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPolygon(qpoly)
+
+            # Halfway line (Mittellinie) between top and bottom sidelines
+            pt_tc = QPointF((pts[0].x() + pts[1].x()) * 0.5, (pts[0].y() + pts[1].y()) * 0.5)
+            pt_bc = QPointF((pts[3].x() + pts[2].x()) * 0.5, (pts[3].y() + pts[2].y()) * 0.5)
+            painter.setPen(QPen(QColor(241, 196, 15, 220), 2, Qt.DashDotLine))
+            painter.drawLine(pt_tc, pt_bc)
+
+            # Center circle
+            mid_x = (pt_tc.x() + pt_bc.x()) * 0.5
+            mid_y = (pt_tc.y() + pt_bc.y()) * 0.5
+            painter.setPen(QPen(QColor(241, 196, 15, 170), 1.5, Qt.DotLine))
+            painter.drawEllipse(QPointF(mid_x, mid_y), 24, 24)
+
+            # Center badge
+            badge_w, badge_h = 190.0, 20.0
+            badge_rect = QRectF(mid_x - badge_w * 0.5, mid_y - badge_h * 0.5, badge_w, badge_h)
+            painter.fillRect(badge_rect, QColor(0, 0, 0, 200))
+            painter.setPen(QColor(56, 189, 248))
+            painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
+            painter.drawText(badge_rect, Qt.AlignCenter, "📐 Weitwinkel-Trapez (4m Stativ)")
+
+            # Corner configuration: [TL, TR, BR, BL]
+            corner_configs = [
+                ("🚩 Eckfahne TL (Hinten Links)", QColor(241, 196, 15)),   # Gold/Yellow
+                ("🚩 Eckfahne TR (Hinten Rechts)", QColor(56, 189, 248)),  # Cyan
+                ("🚩 Eckfahne BR (Vorne Rechts)", QColor(239, 68, 68)),    # Red/Coral
+                ("🚩 Eckfahne BL (Vorne Links)", QColor(34, 197, 94)),     # Green
+            ]
+
+            for idx, pt in enumerate(pts):
+                is_active = (self.hovered_wa_corner == idx or self.dragging_wa_corner == idx or self.wide_angle_step == idx)
+                label, col = corner_configs[idx]
+                radius = 14 if is_active else 10
+
+                if is_active:
+                    painter.setPen(Qt.NoPen)
+                    glow_col = QColor(col.red(), col.green(), col.blue(), 100)
+                    painter.setBrush(glow_col)
+                    painter.drawEllipse(pt, 26, 26)
+
+                painter.setPen(QPen(QColor(255, 255, 255), 2))
+                painter.setBrush(col)
+                painter.drawEllipse(pt, radius, radius)
+
+                # Crosshair inside dot
+                painter.setPen(QPen(QColor(0, 0, 0, 230), 1.5))
+                painter.drawLine(QPointF(pt.x() - 5, pt.y()), QPointF(pt.x() + 5, pt.y()))
+                painter.drawLine(QPointF(pt.x(), pt.y() - 5), QPointF(pt.x(), pt.y() + 5))
+
+                # Corner Label Badge
+                bx = pt.x() + (14 if idx in (0, 3) else -180)
+                by = pt.y() + (16 if idx in (0, 1) else -26)
+                cbadge = QRectF(bx, by, 168, 20)
+                painter.fillRect(cbadge, QColor(0, 0, 0, 215))
+                painter.setPen(col)
+                painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
+                nx, ny = self.wide_angle_corners[idx]
+                painter.drawText(cbadge, Qt.AlignCenter, f"{label} ({int(nx*100)}%, {int(ny*100)}%)")
+
+            # Magnifier / Loupe (Zoom Callout)
+            active_idx = self.dragging_wa_corner if self.dragging_wa_corner is not None else self.hovered_wa_corner
+            if active_idx is not None and self.current_qimage is not None and 0 <= active_idx < 4:
+                pt_scr = pts[active_idx]
+                nx, ny = self.wide_angle_corners[active_idx]
+                iw = self.current_qimage.width()
+                ih = self.current_qimage.height()
+                src_cx = int(nx * iw)
+                src_cy = int(ny * ih)
+
+                # Loupe window geometry
+                loupe_diam = 110.0
+                lx = pt_scr.x() + (40.0 if pt_scr.x() < self.width() - 160 else -140.0)
+                ly = pt_scr.y() - (70.0 if pt_scr.y() > 140 else -40.0)
+                loupe_rect = QRectF(lx, ly, loupe_diam, loupe_diam)
+
+                # Crop around source center
+                crop_size = 48
+                crop_x = max(0, min(iw - crop_size, src_cx - crop_size // 2))
+                crop_y = max(0, min(ih - crop_size, src_cy - crop_size // 2))
+                cropped_img = self.current_qimage.copy(crop_x, crop_y, crop_size, crop_size)
+
+                painter.save()
+                path = QPainterPath()
+                path.addEllipse(loupe_rect)
+                painter.setClipPath(path)
+                painter.drawImage(loupe_rect, cropped_img)
+                painter.restore()
+
+                # Loupe border & crosshair
+                painter.setPen(QPen(corner_configs[active_idx][1], 2.5))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawEllipse(loupe_rect)
+
+                center_loupe = loupe_rect.center()
+                painter.setPen(QPen(QColor(255, 255, 255, 230), 1.5))
+                painter.drawLine(QPointF(center_loupe.x() - 14, center_loupe.y()), QPointF(center_loupe.x() + 14, center_loupe.y()))
+                painter.drawLine(QPointF(center_loupe.x(), center_loupe.y() - 14), QPointF(center_loupe.x(), center_loupe.y() + 14))
+
+        # Top sequential step banner
+        if self.wide_angle_step >= 0:
+            step_texts = [
+                "🎯 Klick 1/4: Klicken Sie auf die Eckfahne OBEN LINKS (TL - Hinten Links)",
+                "🎯 Klick 2/4: Klicken Sie auf die Eckfahne OBEN RECHTS (TR - Hinten Rechts)",
+                "🎯 Klick 3/4: Klicken Sie auf die Eckfahne UNTEN RECHTS (BR - Vorne Rechts)",
+                "🎯 Klick 4/4: Klicken Sie auf die Eckfahne UNTEN LINKS (BL - Vorne Links)",
+            ]
+            banner_txt = step_texts[self.wide_angle_step] if self.wide_angle_step < len(step_texts) else "Markierung abgeschlossen!"
+            banner_rect = QRectF(0, 0, self.width(), 36)
+            painter.fillRect(banner_rect, QColor(234, 88, 12, 245))  # Orange
+            painter.setPen(QColor(255, 255, 255))
+            painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
+            painter.drawText(banner_rect, Qt.AlignCenter, banner_txt)
+
     def wheelEvent(self, event: QWheelEvent):
         delta = event.angleDelta().y()
         if delta > 0:
@@ -1771,6 +1983,35 @@ class InteractivePanoramaViewport(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent):
         target_rect = self._get_target_rect()
+
+        # WA-1. Wide-Angle Sequential 4-Click Mode
+        if self.wide_angle_step >= 0 and target_rect is not None and event.button() == Qt.LeftButton:
+            pos = event.pos()
+            if target_rect.contains(pos):
+                nx = float((pos.x() - target_rect.left()) / max(1.0, target_rect.width()))
+                ny = float((pos.y() - target_rect.top()) / max(1.0, target_rect.height()))
+                self.wide_angle_corners[self.wide_angle_step] = [
+                    float(np.clip(nx, 0.0, 1.0)),
+                    float(np.clip(ny, 0.0, 1.0))
+                ]
+                self.wide_angle_step += 1
+                if self.wide_angle_step >= 4:
+                    self.wide_angle_step = -1
+                    self.setCursor(Qt.ArrowCursor)
+                    self.wide_angle_step_changed.emit(-1)
+                else:
+                    self.wide_angle_step_changed.emit(self.wide_angle_step)
+                self.wide_angle_corners_changed.emit(self.wide_angle_corners)
+                self.update()
+                return
+
+        # WA-2. Wide-Angle Corner Dragging
+        if (self.wide_angle_edit_mode or self.view_mode in ("wide_angle", "wide_angle_raw")) and target_rect is not None and event.button() == Qt.LeftButton:
+            hit = self._hit_test_wa_corner(event.pos(), target_rect)
+            if hit is not None:
+                self.dragging_wa_corner = hit
+                self.update()
+                return
 
         # 0. Grid Quadrant Click (Slot 1, 2, 3, 4 Zoom-In)
         if self.view_mode == "grid" and target_rect is not None and event.button() == Qt.LeftButton:
@@ -1816,6 +2057,18 @@ class InteractivePanoramaViewport(QWidget):
 
     def mouseMoveEvent(self, event: QMouseEvent):
         target_rect = self._get_target_rect()
+
+        # WA-1. Active Wide-Angle Corner Dragging
+        if self.dragging_wa_corner is not None and target_rect is not None:
+            norm_x = float((event.pos().x() - target_rect.left()) / max(target_rect.width(), 1.0))
+            norm_y = float((event.pos().y() - target_rect.top()) / max(target_rect.height(), 1.0))
+            idx = int(self.dragging_wa_corner)
+            norm_x = float(np.clip(norm_x, 0.0, 1.0))
+            norm_y = float(np.clip(norm_y, 0.0, 1.0))
+            self.wide_angle_corners[idx] = [norm_x, norm_y]
+            self.wide_angle_corners_changed.emit(self.wide_angle_corners)
+            self.update()
+            return
 
         # 1. Active Pitch ROI / Tactical 16:9 Corner Dragging
         if self.dragging_pitch_corner is not None and target_rect is not None:
@@ -1864,6 +2117,20 @@ class InteractivePanoramaViewport(QWidget):
             self.framing_dragged.emit(dh_deg, dv_shift)
             return
 
+        # WA-Hover Detection
+        if (self.wide_angle_edit_mode or self.view_mode in ("wide_angle", "wide_angle_raw")) and target_rect is not None and self.dragging_wa_corner is None:
+            hit = self._hit_test_wa_corner(event.pos(), target_rect)
+            if hit != self.hovered_wa_corner:
+                self.hovered_wa_corner = hit
+                if hit is not None:
+                    self.setCursor(Qt.SizeAllCursor)
+                elif self.wide_angle_step >= 0:
+                    self.setCursor(Qt.CrossCursor)
+                else:
+                    self.setCursor(Qt.ArrowCursor)
+                self.update()
+                return
+
         # 5. Pitch ROI / Tactical 16:9 Corner Hover Detection
         if (self.pitch_roi_mode or self.view_mode == "16:9_tactical") and target_rect is not None and self.dragging_pitch_corner is None:
             hit = self._hit_test_pitch_roi(event.pos(), target_rect)
@@ -1888,6 +2155,11 @@ class InteractivePanoramaViewport(QWidget):
                 self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
+        if self.dragging_wa_corner is not None:
+            self.dragging_wa_corner = None
+            self.wide_angle_corners_changed.emit(self.wide_angle_corners)
+            self.update()
+
         if self.dragging_pitch_corner is not None:
             self.dragging_pitch_corner = None
             self.update()
@@ -1903,6 +2175,10 @@ class InteractivePanoramaViewport(QWidget):
             self.is_framing_dragging = False
 
     def leaveEvent(self, event):
+        if self.hovered_wa_corner is not None:
+            self.hovered_wa_corner = None
+            self.setCursor(Qt.ArrowCursor)
+            self.update()
         if self.hovered_pitch_corner is not None:
             self.hovered_pitch_corner = None
             if not self.pick_center_mode and not self.corner_pin_mode:
@@ -2738,6 +3014,10 @@ class MainWindow(QMainWindow):
         self.live_capture_manager = DualLiveCaptureManager()
         self.dji_ble_manager = DjiBLEManager()
 
+        # Wide-Angle Rectifier & Pitch Trapezoid Engine (DJI Action 4)
+        self.wide_angle_config = WideAngleConfig()
+        self.wide_angle_rectifier = WideAngleRectifier(self.wide_angle_config)
+
         # Connect thread-safe background signals to GUI slots
         self.stream_telemetry_signal.connect(self._handle_stream_telemetry)
         self.ble_device_found_signal.connect(self._on_dji_ble_device_found)
@@ -2781,6 +3061,11 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(icon_path))
 
         self.init_ui()
+
+        # Connect Viewport Wide-Angle Signals
+        self.viewport.wide_angle_corners_changed.connect(self._on_viewport_wa_corners_changed)
+        self.viewport.wide_angle_step_changed.connect(self._on_viewport_wa_step_changed)
+
         self.apply_dark_theme()
         self.load_default_startup_settings()
         self.show_landing_page()
@@ -2836,6 +3121,7 @@ class MainWindow(QMainWindow):
 
         self.btn_nav_home = QPushButton("🏠 Zentrale")
         self.btn_nav_stitch = QPushButton("🧵 Stitching")
+        self.btn_nav_wide = QPushButton("📐 Weitwinkel")
         self.btn_nav_ai = QPushButton("🎯 KI-Broadcast")
         self.btn_nav_export = QPushButton("🚀 Export")
         self.btn_nav_live = QPushButton("🔴 Live-Stream")
@@ -2843,12 +3129,13 @@ class MainWindow(QMainWindow):
 
         self.btn_nav_home.clicked.connect(self.show_landing_page)
         self.btn_nav_stitch.clicked.connect(lambda: self.show_workspace(0))
-        self.btn_nav_ai.clicked.connect(lambda: self.show_workspace(1))
-        self.btn_nav_export.clicked.connect(lambda: self.show_workspace(2))
-        self.btn_nav_live.clicked.connect(lambda: self.show_workspace(3))
-        self.btn_nav_cloud.clicked.connect(lambda: self.show_workspace(4))
+        self.btn_nav_wide.clicked.connect(lambda: self.show_workspace(1))
+        self.btn_nav_ai.clicked.connect(lambda: self.show_workspace(2))
+        self.btn_nav_export.clicked.connect(lambda: self.show_workspace(3))
+        self.btn_nav_live.clicked.connect(lambda: self.show_workspace(4))
+        self.btn_nav_cloud.clicked.connect(lambda: self.show_workspace(5))
 
-        for btn in [self.btn_nav_home, self.btn_nav_stitch, self.btn_nav_ai, self.btn_nav_export, self.btn_nav_live, self.btn_nav_cloud]:
+        for btn in [self.btn_nav_home, self.btn_nav_stitch, self.btn_nav_wide, self.btn_nav_ai, self.btn_nav_export, self.btn_nav_live, self.btn_nav_cloud]:
             btn.setStyleSheet("background-color: transparent; border: none; border-radius: 6px; font-weight: 700; font-size: 11px; padding: 5px 12px; color: #94a3b8;")
             nav_layout.addWidget(btn)
 
@@ -2865,6 +3152,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+3"), self, lambda: self.show_workspace(2))
         QShortcut(QKeySequence("Ctrl+4"), self, lambda: self.show_workspace(3))
         QShortcut(QKeySequence("Ctrl+5"), self, lambda: self.show_workspace(4))
+        QShortcut(QKeySequence("Ctrl+6"), self, lambda: self.show_workspace(5))
 
         # Profile / Settings Management Buttons
         self.btn_load_prof_tb = QPushButton("📁 Profil")
@@ -2916,6 +3204,8 @@ class MainWindow(QMainWindow):
         self.combo_view_mode.addItem("🌟 8:3 Taktik-Panorama (4:3 Profil)", "8:3")
         self.combo_view_mode.addItem("📐 21:10 Gestauchtes Panorama (Gesamt)", "21:10")
         self.combo_view_mode.addItem("📐 16:9 Taktik-Warp (Spielfeld entzerrt)", "16:9_tactical")
+        self.combo_view_mode.addItem("📐 Weitwinkel Begradigt (DJI Action 4 Trapez)", "wide_angle")
+        self.combo_view_mode.addItem("📷 Weitwinkel Original (4-Punkt Ecken)", "wide_angle_raw")
         self.combo_view_mode.addItem("🎥 16:9 Auto-Broadcast (Follow-Cam)", "16:9")
         self.combo_view_mode.addItem("📹 Cam 1 Links (Live-Feed)", "cam1")
         self.combo_view_mode.addItem("📹 Cam 2 Rechts (Live-Feed)", "cam2")
@@ -3765,7 +4055,13 @@ class MainWindow(QMainWindow):
         self.right_pane.addTab(self.tab_stitching, "🧵 1. Stitching")
 
         # -------------------------------------------------------------------------
-        # TAB 2: 🎯 KI-Broadcast & Follow-Cam (Samsung One UI Style)
+        # TAB 2: 📐 Weitwinkel-Studio & 4-Punkt Spielfeld-Trapez
+        # -------------------------------------------------------------------------
+        self._init_wide_angle_tab()
+        self.right_pane.addTab(self.tab_wide_angle, "📐 2. Weitwinkel")
+
+        # -------------------------------------------------------------------------
+        # TAB 3: 🎯 KI-Broadcast & Follow-Cam (Samsung One UI Style)
         # -------------------------------------------------------------------------
         self.tab_autocam = QWidget()
         autocam_layout = QVBoxLayout(self.tab_autocam)
@@ -4144,10 +4440,10 @@ class MainWindow(QMainWindow):
         scroll_layout_ac.addStretch()
         scroll_area_ac.setWidget(scroll_widget_ac)
         autocam_layout.addWidget(scroll_area_ac)
-        self.right_pane.addTab(self.tab_autocam, "🎯 2. KI-Broadcast")
+        self.right_pane.addTab(self.tab_autocam, "🎯 3. KI-Broadcast")
 
         # -------------------------------------------------------------------------
-        # TAB 3: 🚀 Export (Samsung One UI Style)
+        # TAB 4: 🚀 Export (Samsung One UI Style)
         # -------------------------------------------------------------------------
         self.tab_export = QWidget()
         layout_tab_exp = QVBoxLayout(self.tab_export)
@@ -4228,6 +4524,7 @@ class MainWindow(QMainWindow):
         self.combo_exp_format.addItem("📐 21:10 Gestaucht (Taktik-Panorama / Ganzes Feld gestaucht)", "21:10")
         self.combo_exp_format.addItem("📐 16:9 Taktik-Warp (Entzerrtes Spielfeld ohne Schwenk)", "16:9_tactical")
         self.combo_exp_format.addItem("🎥 16:9 AutoCam (TV-Broadcast mit automatischer Kameraführung)", "16:9_autocam")
+        self.combo_exp_format.addItem("📐 Weitwinkel Begradigt (DJI Action 4 Trapez)", "wide_angle")
         self.combo_exp_format.addItem("🔄 Beides exportieren", "both")
         self.combo_exp_format.currentIndexChanged.connect(self.on_export_format_changed)
         exp_form.addWidget(self.combo_exp_format)
@@ -4304,19 +4601,19 @@ class MainWindow(QMainWindow):
         scroll_exp.setWidget(widget_exp)
         layout_tab_exp.addWidget(scroll_exp)
 
-        self.right_pane.addTab(self.tab_export, "🚀 3. Export")
+        self.right_pane.addTab(self.tab_export, "🚀 4. Export")
 
         # -------------------------------------------------------------------------
-        # TAB 4: OBS-STYLE RTMP LIVE-STREAMING & CAMERA DIRECT CONNECT
+        # TAB 5: OBS-STYLE RTMP LIVE-STREAMING & CAMERA DIRECT CONNECT
         # -------------------------------------------------------------------------
         self._init_livestream_tab()
-        self.right_pane.addTab(self.tab_livestream, "🔴 4. Live-Stream")
+        self.right_pane.addTab(self.tab_livestream, "🔴 5. Live-Stream")
 
         # -------------------------------------------------------------------------
-        # TAB 5: MATCHTRACK ONLINE CLOUD-UPLOAD
+        # TAB 6: MATCHTRACK ONLINE CLOUD-UPLOAD
         # -------------------------------------------------------------------------
         self._init_cloud_tab()
-        self.right_pane.addTab(self.tab_cloud, "☁️ 5. Cloud-Upload")
+        self.right_pane.addTab(self.tab_cloud, "☁️ 6. Cloud-Upload")
 
         splitter.addWidget(self.right_pane)
 
@@ -5271,14 +5568,29 @@ class MainWindow(QMainWindow):
         """Handles sidebar tab switching and updates top step navigation pills."""
         tab_key_map = {
             0: "stitch",
-            1: "ai",
-            2: "export",
-            3: "live",
-            4: "cloud",
+            1: "wide",
+            2: "ai",
+            3: "export",
+            4: "live",
+            5: "cloud",
         }
         self._update_nav_highlight(tab_key_map.get(index, "stitch"))
 
-        if index == 3:  # Live-Stream tab
+        if index == 1:  # Weitwinkel tab
+            if hasattr(self, 'viewport'):
+                self.viewport.set_wide_angle_edit_mode(True)
+            if hasattr(self, 'combo_view_mode'):
+                cur_vm = self.combo_view_mode.currentData()
+                if cur_vm not in ("wide_angle", "wide_angle_raw"):
+                    self.set_view_mode_by_id("wide_angle")
+                self.refresh_preview()
+        else:
+            if hasattr(self, 'combo_view_mode'):
+                cur_vm = self.combo_view_mode.currentData()
+                if cur_vm not in ("wide_angle", "wide_angle_raw") and hasattr(self, 'viewport'):
+                    self.viewport.set_wide_angle_edit_mode(False)
+
+        if index == 4:  # Live-Stream tab
             if hasattr(self, 'combo_view_mode') and self.combo_view_mode.findData("grid") >= 0:
                 self.set_view_mode_by_id("grid")
             if hasattr(self, 'live_capture_manager') and not self.live_capture_manager.is_running:
@@ -5292,6 +5604,7 @@ class MainWindow(QMainWindow):
         pills = {
             "home": getattr(self, "btn_nav_home", None),
             "stitch": getattr(self, "btn_nav_stitch", None),
+            "wide": getattr(self, "btn_nav_wide", None),
             "ai": getattr(self, "btn_nav_ai", None),
             "export": getattr(self, "btn_nav_export", None),
             "live": getattr(self, "btn_nav_live", None),
@@ -5414,6 +5727,9 @@ class MainWindow(QMainWindow):
             self.btn_toggle_tactical_view.blockSignals(False)
         if mode == "16:9_tactical":
             self.status_bar.showMessage("📐 16:9 Taktik-Warp aktiv: Ziehen Sie die 4 Ecken & 2 Mittellinien-Punkte direkt im Bild, um das Video live zu verzerren!")
+        elif mode in ("wide_angle", "wide_angle_raw"):
+            self.viewport.set_wide_angle_edit_mode(True)
+            self.status_bar.showMessage("📐 Weitwinkel-Entzerrung aktiv: Setzen oder ziehen Sie die 4 Spielfeldecken direkt im Bild!")
         self.refresh_preview()
 
     def zoom_to_seam(self):
@@ -6021,6 +6337,16 @@ class MainWindow(QMainWindow):
             self.combo_resolution.addItem("1512 x 720 (720p 21:10 - Schnell / Kompakt)", (1512, 720))
             self.combo_resolution.addItem("4200 x 2000 (2K/4K 21:10 - Maximale Details)", (4200, 2000))
             self.combo_resolution.addItem("2100 x 1000 (1000p 21:10 - Schnell)", (2100, 1000))
+        elif fmt == "wide_angle":
+            w = self.wide_angle_config.target_width if hasattr(self, 'wide_angle_config') else 1920
+            h = self.wide_angle_config.target_height if hasattr(self, 'wide_angle_config') else 1080
+            self.combo_resolution.addItem(f"{w} x {h} (Aktuelles Weitwinkel-Zielformat)", (w, h))
+            self.combo_resolution.addItem("1920 x 1080 (16:9 Full HD 1080p)", (1920, 1080))
+            self.combo_resolution.addItem("3840 x 2160 (16:9 4K UHD)", (3840, 2160))
+            self.combo_resolution.addItem("2560 x 1080 (21:9 UltraWide Cinema)", (2560, 1080))
+            self.combo_resolution.addItem("3440 x 1440 (21:9 UWQHD Cinema)", (3440, 1440))
+            self.combo_resolution.addItem("3840 x 1080 (32:9 SuperWide Panorama)", (3840, 1080))
+            self.combo_resolution.addItem("2880 x 2160 (4:3 Vollsensor)", (2880, 2160))
         elif fmt == "both":
             if self.is_4_3_mode():
                 self.combo_resolution.addItem("1920 x 1080 (1080p Broadcast + 2880x1080 8:3 Master)", (1920, 1080))
@@ -6052,13 +6378,22 @@ class MainWindow(QMainWindow):
         self.viewport.set_rig(self.rig)
         self.viewport.is_4_3 = self.is_4_3_mode()
         vm = getattr(self.viewport, 'view_mode', '32:9')
-        if vm == "21:10":
+        if vm in ("wide_angle", "wide_angle_raw"):
+            pw = 1280
+            ar = self.wide_angle_config.aspect_ratio if hasattr(self, 'wide_angle_config') else (16.0 / 9.0)
+            ph = int(pw / max(0.1, ar))
+            if ph % 2 != 0:
+                ph += 1
+        elif vm == "21:10":
             pw, ph = 1260, 600
         elif vm == "8:3" or (vm != "32:9" and self.is_4_3_mode()):
             pw, ph = 1280, 480
         else:
             pw, ph = 1280, 360
-        frame, autocam_box, ball_px, cur_zoom = self.engine.render_preview_frame(self.current_frame_idx, preview_width=pw, preview_height=ph, view_mode=vm)
+        frame, autocam_box, ball_px, cur_zoom = self.engine.render_preview_frame(
+            self.current_frame_idx, preview_width=pw, preview_height=ph, view_mode=vm,
+            wide_angle_rectifier=self.wide_angle_rectifier
+        )
         ai_tracker = getattr(self.engine, 'ai_broadcast', None)
         players = ai_tracker.active_players if ai_tracker else None
         ball_norm = ai_tracker.current_ball_norm if ai_tracker else None
@@ -6076,13 +6411,22 @@ class MainWindow(QMainWindow):
         self.viewport.set_rig(self.rig)
         self.viewport.is_4_3 = self.is_4_3_mode()
         vm = getattr(self.viewport, 'view_mode', '32:9')
-        if vm == "21:10":
+        if vm in ("wide_angle", "wide_angle_raw"):
+            pw = 1920
+            ar = self.wide_angle_config.aspect_ratio if hasattr(self, 'wide_angle_config') else (16.0 / 9.0)
+            ph = int(pw / max(0.1, ar))
+            if ph % 2 != 0:
+                ph += 1
+        elif vm == "21:10":
             pw, ph = 2100, 1000
         elif vm == "8:3" or (vm != "32:9" and self.is_4_3_mode()):
             pw, ph = 1920, 720
         else:
             pw, ph = 2560, 720
-        frame, autocam_box, ball_px, cur_zoom = self.engine.render_preview_frame(self.current_frame_idx, preview_width=pw, preview_height=ph, view_mode=vm)
+        frame, autocam_box, ball_px, cur_zoom = self.engine.render_preview_frame(
+            self.current_frame_idx, preview_width=pw, preview_height=ph, view_mode=vm,
+            wide_angle_rectifier=self.wide_angle_rectifier
+        )
         ai_tracker = getattr(self.engine, 'ai_broadcast', None)
         players = ai_tracker.active_players if ai_tracker else None
         ball_norm = ai_tracker.current_ball_norm if ai_tracker else None
@@ -6099,13 +6443,22 @@ class MainWindow(QMainWindow):
         self.viewport.set_rig(self.rig)
         self.viewport.is_4_3 = self.is_4_3_mode()
         vm = getattr(self.viewport, 'view_mode', '32:9')
-        if vm == "21:10":
+        if vm in ("wide_angle", "wide_angle_raw"):
+            pw = 1920
+            ar = self.wide_angle_config.aspect_ratio if hasattr(self, 'wide_angle_config') else (16.0 / 9.0)
+            ph = int(pw / max(0.1, ar))
+            if ph % 2 != 0:
+                ph += 1
+        elif vm == "21:10":
             pw, ph = 2100, 1000
         elif vm == "8:3" or (vm != "32:9" and self.is_4_3_mode()):
             pw, ph = 1920, 720
         else:
             pw, ph = 2560, 720
-        frame, autocam_box, ball_px, cur_zoom = self.engine.render_preview_frame(self.current_frame_idx, preview_width=pw, preview_height=ph, view_mode=vm)
+        frame, autocam_box, ball_px, cur_zoom = self.engine.render_preview_frame(
+            self.current_frame_idx, preview_width=pw, preview_height=ph, view_mode=vm,
+            wide_angle_rectifier=self.wide_angle_rectifier
+        )
         ai_tracker = getattr(self.engine, 'ai_broadcast', None)
         players = ai_tracker.active_players if ai_tracker else None
         ball_norm = ai_tracker.current_ball_norm if ai_tracker else None
@@ -6230,6 +6583,7 @@ class MainWindow(QMainWindow):
                 "wifi_ssid": self.txt_dji_wifi_ssid.text().strip() if hasattr(self, 'txt_dji_wifi_ssid') else "",
                 "obs_settings": self.obs_settings_widget.get_settings() if hasattr(self, 'obs_settings_widget') else {}
             },
+            "wide_angle": self.wide_angle_config.to_dict() if hasattr(self, 'wide_angle_config') else {},
             "ui_view": ui_dict
         }
 
@@ -6538,6 +6892,18 @@ class MainWindow(QMainWindow):
                 idx = self.combo_audio_source.findData(exp["audio_source"])
                 if idx >= 0:
                     self.combo_audio_source.setCurrentIndex(idx)
+
+        # 4b. Wide-Angle Settings
+        if "wide_angle" in data and isinstance(data["wide_angle"], dict) and hasattr(self, 'wide_angle_config'):
+            try:
+                self.wide_angle_config = WideAngleConfig.from_dict(data["wide_angle"])
+                self.wide_angle_rectifier.config = self.wide_angle_config
+                self.wide_angle_rectifier.update_maps()
+                self._sync_wide_angle_ui_from_config()
+                if hasattr(self, 'viewport'):
+                    self.viewport.set_wide_angle_corners(self.wide_angle_config.corners)
+            except Exception as e:
+                logger.warning(f"Konnte Weitwinkel-Konfiguration nicht laden: {e}")
 
         # 4b. Cloud Settings (Non-sensitive preferences only)
         if "cloud" in data and isinstance(data["cloud"], dict):
@@ -6970,12 +7336,17 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export", "Bitte zuerst Videos laden (2 Kameras oder 32:9 Panorama)!")
             return
 
-        if not self.engine.is_panorama_mode() and (not self.engine.video_left or not self.engine.video_right):
-            QMessageBox.warning(self, "Export", "Bitte zuerst beide Kameras öffnen oder ein 32:9 Panorama laden!")
-            return
-
         fmt = self.combo_exp_format.currentData()
-        if fmt == "32:9":
+        if not self.engine.is_panorama_mode() and (not self.engine.video_left or not self.engine.video_right):
+            if fmt == "wide_angle" and (self.engine.video_left or self.engine.video_right):
+                pass
+            else:
+                QMessageBox.warning(self, "Export", "Bitte zuerst beide Kameras öffnen oder ein 32:9 Panorama laden!")
+                return
+
+        if fmt == "wide_angle":
+            default_name = "weitwinkel_begradigt.mp4"
+        elif fmt == "32:9":
             default_name = "fussball_panorama_8x3.mp4" if self.is_4_3_mode() else "fussball_panorama_32x9.mp4"
         elif fmt == "21:10":
             default_name = "fussball_panorama_21x10.mp4"
@@ -7019,7 +7390,8 @@ class MainWindow(QMainWindow):
             start_frame=start_frame, 
             end_frame=end_frame, 
             audio_source=audio_src,
-            use_lookahead=use_lookahead
+            use_lookahead=use_lookahead,
+            wide_angle_rectifier=self.wide_angle_rectifier
         )
         self.render_worker.progress_signal.connect(self.on_render_progress)
         self.render_worker.finished_signal.connect(self.on_render_finished)
@@ -7406,6 +7778,441 @@ class MainWindow(QMainWindow):
     def open_last_uploaded_match_in_browser(self):
         if self.last_uploaded_match_url:
             QDesktopServices.openUrl(QUrl(self.last_uploaded_match_url))
+
+    # =========================================================================
+    # TAB 2: 📐 WEITWINKEL-STUDIO & 4-PUNKT SPIELFELD-TRAPEZ
+    # =========================================================================
+
+    def _init_wide_angle_tab(self):
+        """Initializes Tab 2: Wide-Angle Optical Dewarping and 4-Point Pitch Trapezoid Calibration."""
+        self.tab_wide_angle = QWidget()
+        layout_tab_wa = QVBoxLayout(self.tab_wide_angle)
+        layout_tab_wa.setContentsMargins(4, 4, 4, 4)
+
+        scroll_wa = QScrollArea()
+        scroll_wa.setWidgetResizable(True)
+        widget_wa = QWidget()
+        wa_layout = QVBoxLayout(widget_wa)
+        wa_layout.setSpacing(10)
+        wa_layout.setContentsMargins(8, 8, 8, 8)
+
+        # 1. Header Card
+        grp_hdr = QGroupBox("📐 WEITWINKEL & SPIELFELD-TRAPEZ")
+        grp_hdr.setStyleSheet("QGroupBox { font-weight: bold; color: #38bdf8; border: 1px solid #1e293b; border-radius: 8px; margin-top: 6px; padding-top: 10px; background-color: #0f172a; }")
+        hdr_layout = QVBoxLayout(grp_hdr)
+        hdr_layout.setSpacing(6)
+
+        lbl_hdr_desc = QLabel(
+            "Optische Begradigung extremer Weitwinkel-Objektive (155° Fisheye der DJI Osmo Action 4) "
+            "und Entzerrung der Spielfeldlinien zu einem mathematisch perfekten Trapez aus 4m Kamerahöhe."
+        )
+        lbl_hdr_desc.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        lbl_hdr_desc.setWordWrap(True)
+        hdr_layout.addWidget(lbl_hdr_desc)
+        wa_layout.addWidget(grp_hdr)
+
+        # 2. Source Video & Camera Profile
+        grp_source = QGroupBox("📹 Quellvideo & Kamera-Profil")
+        source_layout = QVBoxLayout(grp_source)
+        source_layout.setSpacing(8)
+
+        self.btn_wa_open_video = QPushButton("📁 155° Ultra-Weitwinkel Video öffnen")
+        self.btn_wa_open_video.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; padding: 9px; font-size: 12px; border-radius: 8px;")
+        self.btn_wa_open_video.clicked.connect(lambda: self.open_wide_angle_video())
+        source_layout.addWidget(self.btn_wa_open_video)
+
+        self.lbl_wa_video_info = QLabel("Kein Weitwinkel-Video geladen.")
+        self.lbl_wa_video_info.setStyleSheet("color: #94a3b8; font-size: 11px; font-style: italic;")
+        self.lbl_wa_video_info.setWordWrap(True)
+        source_layout.addWidget(self.lbl_wa_video_info)
+
+        source_layout.addWidget(QLabel("Kamera-Profil & Optik-Voreinstellung:"))
+        self.combo_wa_preset = QComboBox()
+        self.combo_wa_preset.addItem("DJI Osmo Action 4 (155° Ultrawide - 4m Stativ)", "action4_155")
+        self.combo_wa_preset.addItem("DJI Osmo Action 3 / 5 Pro (155° Ultrawide)", "action35_155")
+        self.combo_wa_preset.addItem("GoPro Hero 11/12 (HyperView / SuperView)", "gopro_hyper")
+        self.combo_wa_preset.addItem("Generisches Fisheye (150°-170°)", "generic_fisheye")
+        self.combo_wa_preset.addItem("Benutzerdefiniert (Manuelle Parameter)", "custom")
+        self.combo_wa_preset.currentIndexChanged.connect(self._on_wa_preset_changed)
+        source_layout.addWidget(self.combo_wa_preset)
+
+        wa_layout.addWidget(grp_source)
+
+        # 3. Optical Dewarping Group
+        grp_optics = QGroupBox("🔍 1. Optische Begradigung (Fisheye-Entzerrung)")
+        optics_layout = QVBoxLayout(grp_optics)
+        optics_layout.setSpacing(6)
+
+        self.ctrl_wa_strength = LabeledSliderSpinBox("Fisheye-Begradigung:", 0.0, 1.20, 0.85, 0.01, "", decimals=2)
+        self.ctrl_wa_strength.setToolTip("Stärke der optischen Fisheye-Korrektur (0.0 = Aus/Fisheye, 0.85 = DJI Action 4 Ideal)")
+        self.ctrl_wa_strength.valueChanged.connect(self._on_wa_param_changed)
+        optics_layout.addWidget(self.ctrl_wa_strength)
+
+        self.ctrl_wa_hfov = LabeledSliderSpinBox("Horizontales FOV:", 90.0, 170.0, 138.0, 1.0, "°", decimals=1)
+        self.ctrl_wa_hfov.setToolTip("Sichtfeld der Kamera in Grad (DJI Action 4 Ultrawide ca. 138°-145°)")
+        self.ctrl_wa_hfov.valueChanged.connect(self._on_wa_param_changed)
+        optics_layout.addWidget(self.ctrl_wa_hfov)
+
+        self.ctrl_wa_zoom = LabeledSliderSpinBox("Brennweite / Zoom:", 0.70, 2.00, 1.05, 0.01, "x", decimals=2)
+        self.ctrl_wa_zoom.setToolTip("Skaliert das Bild zur Vermeidung schwarzer Ecken nach der Begradigung")
+        self.ctrl_wa_zoom.valueChanged.connect(self._on_wa_param_changed)
+        optics_layout.addWidget(self.ctrl_wa_zoom)
+
+        self.ctrl_wa_tilt = LabeledSliderSpinBox("Kamera-Neigung (Tilt):", -25.0, 25.0, 0.0, 0.5, "°", decimals=1)
+        self.ctrl_wa_tilt.setToolTip("Kompensiert den Neigungswinkel des Stativs nach unten/oben")
+        self.ctrl_wa_tilt.valueChanged.connect(self._on_wa_param_changed)
+        optics_layout.addWidget(self.ctrl_wa_tilt)
+
+        self.ctrl_wa_roll = LabeledSliderSpinBox("Horizont-Neigung (Roll):", -10.0, 10.0, 0.0, 0.1, "°", decimals=1)
+        self.ctrl_wa_roll.setToolTip("Dreht das Bild feinfühlig, um schiefe Stative waagerecht zu stellen")
+        self.ctrl_wa_roll.valueChanged.connect(self._on_wa_param_changed)
+        optics_layout.addWidget(self.ctrl_wa_roll)
+
+        self.ctrl_wa_v_offset = LabeledSliderSpinBox("Vertikaler Bildversatz:", -0.30, 0.30, 0.0, 0.01, "", decimals=2)
+        self.ctrl_wa_v_offset.setToolTip("Verschiebt den Bildmittelpunkt nach oben oder unten")
+        self.ctrl_wa_v_offset.valueChanged.connect(self._on_wa_param_changed)
+        optics_layout.addWidget(self.ctrl_wa_v_offset)
+
+        wa_layout.addWidget(grp_optics)
+
+        # 4. 4-Point Pitch Trapezoid Calibration Group
+        grp_calib = QGroupBox("⚽ 2. 4-Punkt Spielfeld-Kalibrierung (Trapez)")
+        calib_layout = QVBoxLayout(grp_calib)
+        calib_layout.setSpacing(8)
+
+        row_status = QHBoxLayout()
+        self.lbl_wa_calib_status = QLabel("● 4/4 Ecken aktiv")
+        self.lbl_wa_calib_status.setStyleSheet("background-color: #064e3b; color: #34d399; font-weight: 700; font-size: 11px; padding: 4px 8px; border-radius: 6px;")
+        row_status.addWidget(self.lbl_wa_calib_status)
+        row_status.addStretch()
+        calib_layout.addLayout(row_status)
+
+        self.btn_wa_mark_corners = QPushButton("🎯 4 Ecken nacheinander anklicken (1-4)")
+        self.btn_wa_mark_corners.setStyleSheet("background-color: #f59e0b; color: #1e1e2d; font-weight: 800; padding: 8px; font-size: 11px; border-radius: 8px;")
+        self.btn_wa_mark_corners.setToolTip("Klicken Sie nacheinander auf: 1. Eckfahne TL (Gelb) -> 2. TR (Blau) -> 3. BR (Rot) -> 4. BL (Grün)")
+        self.btn_wa_mark_corners.clicked.connect(self._on_wa_start_marking)
+        calib_layout.addWidget(self.btn_wa_mark_corners)
+
+        row_calib_actions = QHBoxLayout()
+        self.btn_wa_reset_corners = QPushButton("↺ Ecken zurücksetzen")
+        self.btn_wa_reset_corners.setStyleSheet("background-color: #1a1a28; border: 1px solid #2a2a3e; padding: 6px; font-size: 11px; border-radius: 6px; color: #cbd5e1;")
+        self.btn_wa_reset_corners.clicked.connect(self._on_wa_reset_corners)
+        row_calib_actions.addWidget(self.btn_wa_reset_corners)
+
+        self.chk_wa_edit_mode = QCheckBox("✏️ Ecken-Ziehen im Bild aktiv")
+        self.chk_wa_edit_mode.setChecked(True)
+        self.chk_wa_edit_mode.setStyleSheet("font-weight: 600; color: #38bdf8;")
+        self.chk_wa_edit_mode.toggled.connect(self._on_wa_edit_toggled)
+        row_calib_actions.addWidget(self.chk_wa_edit_mode)
+        calib_layout.addLayout(row_calib_actions)
+
+        # Geometry mode
+        calib_layout.addWidget(QLabel("Geometrie-Modus der Linien-Entzerrung:"))
+        self.radio_geom_trapezoid = QRadioButton("📐 Symmetrisches Trapez (Perspektive aus 4m Stativ)")
+        self.radio_geom_trapezoid.setChecked(True)
+        self.radio_geom_trapezoid.setStyleSheet("color: #f8fafc; font-weight: 600;")
+        self.radio_geom_trapezoid.toggled.connect(self._on_wa_geom_mode_toggled)
+        calib_layout.addWidget(self.radio_geom_trapezoid)
+
+        self.radio_geom_planar = QRadioButton("⚽ Planare Aufsicht (FIFA 105 × 68 m Rechteck)")
+        self.radio_geom_planar.setStyleSheet("color: #cbd5e1;")
+        self.radio_geom_planar.toggled.connect(self._on_wa_geom_mode_toggled)
+        calib_layout.addWidget(self.radio_geom_planar)
+
+        self.ctrl_wa_top_ratio = LabeledSliderSpinBox("Trapez-Breite Oben:", 0.40, 1.00, 0.72, 0.01, "", decimals=2)
+        self.ctrl_wa_top_ratio.setToolTip("Fluchtverhältnis der hinteren Auslinie gegenüber der vorderen Auslinie (typisch 0.65 - 0.75 bei 4m Höhe)")
+        self.ctrl_wa_top_ratio.valueChanged.connect(self._on_wa_param_changed)
+        calib_layout.addWidget(self.ctrl_wa_top_ratio)
+
+        self.ctrl_wa_margin = LabeledSliderSpinBox("Spielfeld-Randabstand:", 0.0, 0.30, 0.08, 0.01, "", decimals=2)
+        self.ctrl_wa_margin.setToolTip("Sicherheitsabstand um das Feld, damit Trainerbänke und Eckfahnen sichtbar bleiben")
+        self.ctrl_wa_margin.valueChanged.connect(self._on_wa_param_changed)
+        calib_layout.addWidget(self.ctrl_wa_margin)
+
+        wa_layout.addWidget(grp_calib)
+
+        # 5. Target Aspect Ratio & Framing Group
+        grp_target = QGroupBox("📺 3. Zielformat & Framing")
+        target_layout = QVBoxLayout(grp_target)
+        target_layout.setSpacing(6)
+
+        target_layout.addWidget(QLabel("Ziel-Seitenverhältnis & Bildformat:"))
+        self.combo_wa_target_format = QComboBox()
+        self.combo_wa_target_format.addItem("📺 16:9 Broadcast Full HD (1920x1080)", (1920, 1080))
+        self.combo_wa_target_format.addItem("📺 16:9 Broadcast 4K UHD (3840x2160)", (3840, 2160))
+        self.combo_wa_target_format.addItem("🎞️ 21:9 UltraWide Cinema (2560x1080)", (2560, 1080))
+        self.combo_wa_target_format.addItem("🎞️ 21:9 UWQHD Cinema (3440x1440)", (3440, 1440))
+        self.combo_wa_target_format.addItem("🏟️ 32:9 SuperWide Panorama (3840x1080)", (3840, 1080))
+        self.combo_wa_target_format.addItem("📷 4:3 Classic (Vollsensor 2880x2160)", (2880, 2160))
+        self.combo_wa_target_format.addItem("⚙️ Benutzerdefiniert (Breite x Höhe)", "custom")
+        self.combo_wa_target_format.currentIndexChanged.connect(self._on_wa_target_format_changed)
+        target_layout.addWidget(self.combo_wa_target_format)
+
+        self.widget_wa_custom_res = QWidget()
+        row_custom_res = QHBoxLayout(self.widget_wa_custom_res)
+        row_custom_res.setContentsMargins(0, 0, 0, 0)
+        self.spin_wa_custom_w = NoWheelSpinBox()
+        self.spin_wa_custom_w.setRange(640, 7680)
+        self.spin_wa_custom_w.setValue(1920)
+        self.spin_wa_custom_w.setSuffix(" px")
+        self.spin_wa_custom_w.valueChanged.connect(self._on_wa_custom_res_changed)
+        self.spin_wa_custom_h = NoWheelSpinBox()
+        self.spin_wa_custom_h.setRange(360, 4320)
+        self.spin_wa_custom_h.setValue(1080)
+        self.spin_wa_custom_h.setSuffix(" px")
+        self.spin_wa_custom_h.valueChanged.connect(self._on_wa_custom_res_changed)
+        row_custom_res.addWidget(QLabel("Breite:"))
+        row_custom_res.addWidget(self.spin_wa_custom_w)
+        row_custom_res.addWidget(QLabel("Höhe:"))
+        row_custom_res.addWidget(self.spin_wa_custom_h)
+        self.widget_wa_custom_res.setVisible(False)
+        target_layout.addWidget(self.widget_wa_custom_res)
+
+        wa_layout.addWidget(grp_target)
+
+        # 6. Action Buttons
+        grp_actions = QGroupBox("🚀 Aktionen & Export")
+        actions_layout = QVBoxLayout(grp_actions)
+        actions_layout.setSpacing(8)
+
+        self.btn_wa_save_preset = QPushButton("💾 Kalibrierung als Standard sichern")
+        self.btn_wa_save_preset.setStyleSheet("background-color: #1e1e2d; border: 1px solid #3b3b54; padding: 8px; font-size: 11px; border-radius: 8px; color: #cbd5e1; font-weight: 600;")
+        self.btn_wa_save_preset.clicked.connect(self.save_as_default_settings)
+        actions_layout.addWidget(self.btn_wa_save_preset)
+
+        self.btn_wa_export = QPushButton("🚀 Begradigtes Video exportieren")
+        self.btn_wa_export.setStyleSheet("background-color: #2563eb; color: white; font-weight: 800; padding: 10px; font-size: 12px; border-radius: 8px;")
+        self.btn_wa_export.clicked.connect(self._on_wa_export_clicked)
+        actions_layout.addWidget(self.btn_wa_export)
+
+        wa_layout.addWidget(grp_actions)
+
+        wa_layout.addStretch()
+        scroll_wa.setWidget(widget_wa)
+        layout_tab_wa.addWidget(scroll_wa)
+
+    def _on_wa_start_marking(self):
+        """Starts 4-point sequential corner placement in the viewport."""
+        self.set_view_mode_by_id("wide_angle_raw")
+        self.viewport.start_wide_angle_marking()
+        self.status_bar.showMessage("🎯 Klicken Sie nacheinander auf die 4 Eckfahnen: TL (Gelb) -> TR (Blau) -> BR (Rot) -> BL (Grün)")
+
+    def _on_wa_reset_corners(self):
+        """Resets the 4 pitch corners to standard default positions."""
+        default_corners = [[0.15, 0.25], [0.85, 0.25], [0.95, 0.90], [0.05, 0.90]]
+        self.wide_angle_config.corners = default_corners
+        self.viewport.set_wide_angle_corners(default_corners)
+        self.wide_angle_rectifier.config = self.wide_angle_config
+        self.wide_angle_rectifier.update_maps()
+        if hasattr(self, 'lbl_wa_calib_status'):
+            self.lbl_wa_calib_status.setText("● 4/4 Ecken aktiv (Standard)")
+            self.lbl_wa_calib_status.setStyleSheet("background-color: #064e3b; color: #34d399; font-weight: 700; font-size: 11px; padding: 4px 8px; border-radius: 6px;")
+        self.refresh_preview()
+
+    def _on_wa_edit_toggled(self, checked: bool):
+        """Toggles direct mouse drag editing of corners in viewport."""
+        self.viewport.set_wide_angle_edit_mode(checked)
+
+    def _on_viewport_wa_corners_changed(self, corners: list):
+        """Handles corner repositioning from viewport drag or click."""
+        if hasattr(self, 'wide_angle_config'):
+            self.wide_angle_config.corners = [[float(c[0]), float(c[1])] for c in corners]
+            self.wide_angle_rectifier.config = self.wide_angle_config
+            self.wide_angle_rectifier.update_maps()
+            self.refresh_preview()
+            if hasattr(self, 'lbl_wa_calib_status'):
+                self.lbl_wa_calib_status.setText("● 4/4 Ecken aktiv")
+                self.lbl_wa_calib_status.setStyleSheet("background-color: #064e3b; color: #34d399; font-weight: 700; font-size: 11px; padding: 4px 8px; border-radius: 6px;")
+
+    def _on_viewport_wa_step_changed(self, step: int):
+        """Updates UI status during sequential 4-point placement."""
+        if not hasattr(self, 'lbl_wa_calib_status'):
+            return
+        step_names = [
+            "1/4: Eckfahne OBEN LINKS (TL)",
+            "2/4: Eckfahne OBEN RECHTS (TR)",
+            "3/4: Eckfahne UNTEN RECHTS (BR)",
+            "4/4: Eckfahne UNTEN LINKS (BL)"
+        ]
+        if 0 <= step < 4:
+            self.lbl_wa_calib_status.setText(f"⏳ Schritt {step_names[step]}")
+            self.lbl_wa_calib_status.setStyleSheet("background-color: #78350f; color: #fbbf24; font-weight: 700; font-size: 11px; padding: 4px 8px; border-radius: 6px;")
+            if hasattr(self, 'combo_view_mode') and self.combo_view_mode.currentData() != "wide_angle_raw":
+                self.set_view_mode_by_id("wide_angle_raw")
+        else:
+            self.lbl_wa_calib_status.setText("● 4/4 Ecken aktiv (Trapez kalibriert)")
+            self.lbl_wa_calib_status.setStyleSheet("background-color: #064e3b; color: #34d399; font-weight: 700; font-size: 11px; padding: 4px 8px; border-radius: 6px;")
+            if hasattr(self, 'combo_view_mode') and self.combo_view_mode.currentData() != "wide_angle":
+                self.set_view_mode_by_id("wide_angle")
+            self.refresh_preview()
+
+    def _on_wa_preset_changed(self, index: int):
+        """Applies lens and geometry presets."""
+        preset_data = self.combo_wa_preset.currentData()
+        if preset_data == "action4_155":
+            self.wide_angle_config.hfov_deg = 138.0
+            self.wide_angle_config.fisheye_k1 = 0.85
+            self.wide_angle_config.zoom = 1.05
+            self.wide_angle_config.top_width_ratio = 0.72
+        elif preset_data == "action35_155":
+            self.wide_angle_config.hfov_deg = 136.0
+            self.wide_angle_config.fisheye_k1 = 0.82
+            self.wide_angle_config.zoom = 1.05
+            self.wide_angle_config.top_width_ratio = 0.72
+        elif preset_data == "gopro_hyper":
+            self.wide_angle_config.hfov_deg = 130.0
+            self.wide_angle_config.fisheye_k1 = 0.78
+            self.wide_angle_config.zoom = 1.08
+            self.wide_angle_config.top_width_ratio = 0.70
+        elif preset_data == "generic_fisheye":
+            self.wide_angle_config.hfov_deg = 140.0
+            self.wide_angle_config.fisheye_k1 = 0.90
+            self.wide_angle_config.zoom = 1.00
+            self.wide_angle_config.top_width_ratio = 0.72
+
+        self._sync_wide_angle_ui_from_config()
+        self.wide_angle_rectifier.config = self.wide_angle_config
+        self.wide_angle_rectifier.update_maps()
+        self.refresh_preview()
+
+    def _on_wa_param_changed(self, *args):
+        """Updates WideAngleConfig and remap LUTs when sliders change."""
+        if not hasattr(self, 'ctrl_wa_strength'):
+            return
+        self.wide_angle_config.fisheye_k1 = float(self.ctrl_wa_strength.value())
+        self.wide_angle_config.hfov_deg = float(self.ctrl_wa_hfov.value())
+        self.wide_angle_config.zoom = float(self.ctrl_wa_zoom.value())
+        self.wide_angle_config.tilt_deg = float(self.ctrl_wa_tilt.value())
+        self.wide_angle_config.roll_deg = float(self.ctrl_wa_roll.value())
+        self.wide_angle_config.v_offset = float(self.ctrl_wa_v_offset.value())
+        self.wide_angle_config.top_width_ratio = float(self.ctrl_wa_top_ratio.value())
+        self.wide_angle_config.pitch_margin = float(self.ctrl_wa_margin.value())
+
+        self.wide_angle_rectifier.config = self.wide_angle_config
+        self.wide_angle_rectifier.update_maps()
+        self.refresh_preview()
+
+    def _on_wa_geom_mode_toggled(self, checked: bool):
+        """Toggles between trapezoid perspective and FIFA planar rectangle."""
+        if self.radio_geom_planar.isChecked():
+            self.wide_angle_config.trapezoid_mode = False
+            if hasattr(self, 'ctrl_wa_top_ratio'):
+                self.ctrl_wa_top_ratio.setEnabled(False)
+        else:
+            self.wide_angle_config.trapezoid_mode = True
+            if hasattr(self, 'ctrl_wa_top_ratio'):
+                self.ctrl_wa_top_ratio.setEnabled(True)
+        self.wide_angle_rectifier.config = self.wide_angle_config
+        self.wide_angle_rectifier.update_maps()
+        self.refresh_preview()
+
+    def _on_wa_target_format_changed(self, index: int):
+        """Updates target aspect ratio and resolution."""
+        data = self.combo_wa_target_format.currentData()
+        if data == "custom":
+            if hasattr(self, 'widget_wa_custom_res'):
+                self.widget_wa_custom_res.setVisible(True)
+            w = self.spin_wa_custom_w.value()
+            h = self.spin_wa_custom_h.value()
+            self.wide_angle_config.target_width = w
+            self.wide_angle_config.target_height = h
+            self.wide_angle_config.aspect_ratio = w / max(1, h)
+        else:
+            if hasattr(self, 'widget_wa_custom_res'):
+                self.widget_wa_custom_res.setVisible(False)
+            if isinstance(data, (tuple, list)) and len(data) == 2:
+                w, h = data
+                self.wide_angle_config.target_width = w
+                self.wide_angle_config.target_height = h
+                self.wide_angle_config.aspect_ratio = w / max(1, h)
+
+        self.wide_angle_rectifier.config = self.wide_angle_config
+        self.wide_angle_rectifier.update_maps()
+        self.update_resolution_dropdown()
+        self.refresh_preview()
+
+    def _on_wa_custom_res_changed(self, val: int):
+        """Handles custom resolution spinbox changes."""
+        w = self.spin_wa_custom_w.value()
+        h = self.spin_wa_custom_h.value()
+        self.wide_angle_config.target_width = w
+        self.wide_angle_config.target_height = h
+        self.wide_angle_config.aspect_ratio = w / max(1, h)
+        self.wide_angle_rectifier.config = self.wide_angle_config
+        self.wide_angle_rectifier.update_maps()
+        self.update_resolution_dropdown()
+        self.refresh_preview()
+
+    def _on_wa_export_clicked(self):
+        """Switches to export tab pre-configured for Wide-Angle export."""
+        self.show_workspace(3) # Export Tab
+        idx = self.combo_exp_format.findData("wide_angle")
+        if idx >= 0:
+            self.combo_exp_format.setCurrentIndex(idx)
+
+    def _sync_wide_angle_ui_from_config(self):
+        """Synchronizes GUI sliders and selectors with self.wide_angle_config."""
+        cfg = self.wide_angle_config
+        widgets = [
+            (getattr(self, 'ctrl_wa_strength', None), cfg.fisheye_k1),
+            (getattr(self, 'ctrl_wa_hfov', None), cfg.hfov_deg),
+            (getattr(self, 'ctrl_wa_zoom', None), cfg.zoom),
+            (getattr(self, 'ctrl_wa_tilt', None), cfg.tilt_deg),
+            (getattr(self, 'ctrl_wa_roll', None), cfg.roll_deg),
+            (getattr(self, 'ctrl_wa_v_offset', None), cfg.v_offset),
+            (getattr(self, 'ctrl_wa_top_ratio', None), cfg.top_width_ratio),
+            (getattr(self, 'ctrl_wa_margin', None), cfg.pitch_margin),
+        ]
+        for ctrl, val in widgets:
+            if ctrl is not None:
+                ctrl.blockSignals(True)
+                ctrl.setValue(val)
+                ctrl.blockSignals(False)
+
+        if hasattr(self, 'radio_geom_trapezoid') and hasattr(self, 'radio_geom_planar'):
+            self.radio_geom_trapezoid.blockSignals(True)
+            self.radio_geom_planar.blockSignals(True)
+            self.radio_geom_trapezoid.setChecked(cfg.trapezoid_mode)
+            self.radio_geom_planar.setChecked(not cfg.trapezoid_mode)
+            self.radio_geom_trapezoid.blockSignals(False)
+            self.radio_geom_planar.blockSignals(False)
+            if hasattr(self, 'ctrl_wa_top_ratio'):
+                self.ctrl_wa_top_ratio.setEnabled(cfg.trapezoid_mode)
+
+    def open_wide_angle_video(self, file_path: Optional[str] = None):
+        """Opens a single ultra-wide angle video file for dewarping and pitch calibration."""
+        if not file_path:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "155° Weitwinkel-Video öffnen", "",
+                "Video Files (*.mp4 *.mov *.mkv *.avi *.ts);;All Files (*.*)"
+            )
+        if not file_path or not os.path.exists(file_path):
+            return
+
+        try:
+            self.video_path_l = file_path
+            self.video_path_r = None
+            self.panorama_path = None
+            self.engine.load_videos(file_path, None)
+            self._after_videos_loaded()
+
+            fn = os.path.basename(file_path)
+            w = self.engine.video_left.width if self.engine.video_left else 0
+            h = self.engine.video_left.height if self.engine.video_left else 0
+            fps = self.engine.get_fps()
+            if hasattr(self, 'lbl_wa_video_info'):
+                self.lbl_wa_video_info.setText(f"📹 {fn} ({w}x{h} @ {fps:.1f} fps)")
+                self.lbl_wa_video_info.setStyleSheet("color: #10b981; font-weight: 700; font-size: 11px;")
+            if hasattr(self, 'lbl_video_status'):
+                self.lbl_video_status.setText(f"📐 Weitwinkel: {fn}")
+                self.lbl_video_status.setStyleSheet("color: #38bdf8; font-weight: 600;")
+
+            self.set_view_mode_by_id("wide_angle")
+            self.show_workspace(1)
+            self.seek_frame(0)
+            self.status_bar.showMessage(f"📐 Weitwinkel-Video geladen: {fn}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler beim Laden", f"Video konnte nicht geöffnet werden: {e}")
 
     # =========================================================================
     # TAB 5: OBS-STYLE RTMP LIVE-STREAMING & CAMERA DIRECT CONNECT
@@ -8163,6 +8970,78 @@ class MainWindow(QMainWindow):
         card1_layout.addStretch()
         grid.addWidget(card1, 0, 0)
 
+        # ------------------ CARD 5: Weitwinkel & Einzelkamera-Entzerrung ------------------
+        card5 = QFrame()
+        card5.setStyleSheet(card_style_base)
+        card5_layout = QVBoxLayout(card5)
+        card5_layout.setSpacing(10)
+
+        c5_head = QHBoxLayout()
+        lbl_c5_icon = QLabel("📐")
+        lbl_c5_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
+        c5_title_box = QVBoxLayout()
+        lbl_c5_title = QLabel("2. Weitwinkel & Spielfeld-Trapez")
+        lbl_c5_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
+        lbl_c5_sub = QLabel("DJI Action 4 (155° Ultrawide) • Begradigung • 4-Punkt Kalibrierung")
+        lbl_c5_sub.setStyleSheet("font-size: 11px; color: #38bdf8; font-weight: 600; border: none; background: transparent;")
+        c5_title_box.addWidget(lbl_c5_title)
+        c5_title_box.addWidget(lbl_c5_sub)
+        c5_head.addWidget(lbl_c5_icon)
+        c5_head.addLayout(c5_title_box, 1)
+        card5_layout.addLayout(c5_head)
+
+        lbl_c5_desc = QLabel(
+            "Begradigt stark gekrümmte Ultra-Weitwinkel-Aufnahmen (155° Fisheye der DJI Action 4 auf einem 4m-Stativ) "
+            "und passt das Video per 4-Punkt Ecken-Markierung so an, dass die Spielfeldlinien ein exaktes Trapez oder Rechteck bilden."
+        )
+        lbl_c5_desc.setWordWrap(True)
+        lbl_c5_desc.setStyleSheet("font-size: 12px; color: #94a3b8; border: none; background: transparent;")
+        card5_layout.addWidget(lbl_c5_desc)
+
+        lbl_c5_pick = QLabel("🎥 Einzelkamera-Video wählen & direkt starten:")
+        lbl_c5_pick.setStyleSheet("font-size: 11px; font-weight: 700; color: #cbd5e1; margin-top: 4px; border: none; background: transparent;")
+        card5_layout.addWidget(lbl_c5_pick)
+
+        row_c5_btns = QHBoxLayout()
+        btn_open_wa = QPushButton("🎥 155° Video öffnen")
+        btn_open_wa.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #0284c7, stop:1 #0369a1);
+                color: #ffffff;
+                font-weight: 800;
+                font-size: 11px;
+                padding: 10px 8px;
+                border-radius: 9px;
+                border: none;
+                text-align: center;
+            }
+            QPushButton:hover { background: #0ea5e9; }
+        """)
+        btn_open_wa.clicked.connect(lambda: self.open_wide_angle_video())
+
+        btn_wa_action = QPushButton("📐 Weitwinkel-Studio ➔")
+        btn_wa_action.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #2563eb, stop:1 #1d4ed8);
+                color: #ffffff;
+                font-weight: 800;
+                font-size: 11px;
+                padding: 10px 8px;
+                border-radius: 9px;
+                border: none;
+                text-align: center;
+            }
+            QPushButton:hover { background: #3b82f6; }
+        """)
+        btn_wa_action.clicked.connect(lambda: self.show_workspace(1))
+
+        row_c5_btns.addWidget(btn_open_wa)
+        row_c5_btns.addWidget(btn_wa_action)
+        card5_layout.addLayout(row_c5_btns)
+
+        card5_layout.addStretch()
+        grid.addWidget(card5, 0, 1)
+
         # ------------------ CARD 2: KI-Broadcast & Tracking ------------------
         card2 = QFrame()
         card2.setStyleSheet(card_style_base)
@@ -8173,7 +9052,7 @@ class MainWindow(QMainWindow):
         lbl_c2_icon = QLabel("🎯")
         lbl_c2_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
         c2_title_box = QVBoxLayout()
-        lbl_c2_title = QLabel("2. KI-Broadcast & Follow-Cam")
+        lbl_c2_title = QLabel("3. KI-Broadcast & Follow-Cam")
         lbl_c2_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
         lbl_c2_sub = QLabel("Virtuelle 16:9 TV-Kamera • Ball- & Spielertracking")
         lbl_c2_sub.setStyleSheet("font-size: 11px; color: #a78bfa; font-weight: 600; border: none; background: transparent;")
@@ -8215,10 +9094,10 @@ class MainWindow(QMainWindow):
             }
             QPushButton:hover { background-color: #3b82f6; }
         """)
-        btn_c2_action.clicked.connect(lambda: self.show_workspace(1))
+        btn_c2_action.clicked.connect(lambda: self.show_workspace(2))
         card2_layout.addWidget(btn_c2_action)
 
-        grid.addWidget(card2, 0, 1)
+        grid.addWidget(card2, 1, 0)
 
         # ------------------ CARD 3: Live-Streaming ------------------
         card3 = QFrame()
@@ -8230,7 +9109,7 @@ class MainWindow(QMainWindow):
         lbl_c3_icon = QLabel("🔴")
         lbl_c3_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
         c3_title_box = QVBoxLayout()
-        lbl_c3_title = QLabel("3. Live-Streaming Studio")
+        lbl_c3_title = QLabel("4. Live-Streaming Studio")
         lbl_c3_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
         lbl_c3_sub = QLabel("OBS-Style RTMP Multi-Stream • Ohne Mimo App")
         lbl_c3_sub.setStyleSheet("font-size: 11px; color: #f43f5e; font-weight: 600; border: none; background: transparent;")
@@ -8271,10 +9150,10 @@ class MainWindow(QMainWindow):
             }
             QPushButton:hover { background-color: #f43f5e; }
         """)
-        btn_c3_action.clicked.connect(lambda: self.show_workspace(3))
+        btn_c3_action.clicked.connect(lambda: self.show_workspace(4))
         card3_layout.addWidget(btn_c3_action)
 
-        grid.addWidget(card3, 1, 0)
+        grid.addWidget(card3, 1, 1)
 
         # ------------------ CARD 4: Cloud-Upload ------------------
         card4 = QFrame()
@@ -8286,7 +9165,7 @@ class MainWindow(QMainWindow):
         lbl_c4_icon = QLabel("☁️")
         lbl_c4_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
         c4_title_box = QVBoxLayout()
-        lbl_c4_title = QLabel("4. MatchTrack Cloud-Upload")
+        lbl_c4_title = QLabel("5. MatchTrack Cloud-Upload")
         lbl_c4_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
         lbl_c4_sub = QLabel("Fertige Videos hochladen & Matches verwalten")
         lbl_c4_sub.setStyleSheet("font-size: 11px; color: #34d399; font-weight: 600; border: none; background: transparent;")
@@ -8327,10 +9206,10 @@ class MainWindow(QMainWindow):
             }
             QPushButton:hover { background-color: #10b981; }
         """)
-        btn_c4_action.clicked.connect(lambda: self.show_workspace(4))
+        btn_c4_action.clicked.connect(lambda: self.show_workspace(5))
         card4_layout.addWidget(btn_c4_action)
 
-        grid.addWidget(card4, 1, 1)
+        grid.addWidget(card4, 2, 0, 1, 2)
 
         layout_main.addLayout(grid)
 

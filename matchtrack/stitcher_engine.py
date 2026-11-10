@@ -164,23 +164,25 @@ class StitcherEngine:
         self.ai_broadcast.reset()
         logger.info(f"32:9 Panorama-Mastervideo geladen: '{os.path.basename(path_pano)}' ({self.video_panorama.width}x{self.video_panorama.height}, {self.video_panorama.total_frames} Frames)")
 
-    def load_videos(self, path_left: str, path_right: str):
+    def load_videos(self, path_left: Optional[str], path_right: Optional[str] = None):
         """Opens left and right camera video files and adapts intrinsics to video resolution."""
         if self.video_panorama:
             self.video_panorama.release()
             self.video_panorama = None
         if self.video_left:
             self.video_left.release()
+            self.video_left = None
         if self.video_right:
             self.video_right.release()
+            self.video_right = None
 
-        self.video_left = VideoSource(path_left)
-        self.video_right = VideoSource(path_right)
+        self.video_left = VideoSource(path_left) if path_left else None
+        self.video_right = VideoSource(path_right) if path_right else None
 
         # Automatically update camera intrinsics to match actual video stream dimensions
-        if self.video_left.width > 0 and self.video_left.height > 0:
+        if self.video_left and self.video_left.width > 0 and self.video_left.height > 0:
             self.rig.left_camera.set_resolution(self.video_left.width, self.video_left.height)
-        if self.video_right.width > 0 and self.video_right.height > 0:
+        if self.video_right and self.video_right.width > 0 and self.video_right.height > 0:
             self.rig.right_camera.set_resolution(self.video_right.width, self.video_right.height)
 
         self.ai_broadcast.reset()
@@ -214,12 +216,37 @@ class StitcherEngine:
         """Forces recalculation of LUTs when rig parameters change."""
         self.cached_luts = None
 
-    def render_preview_frame(self, frame_index: int, preview_width: int = 2560, preview_height: int = 720, view_mode: str = "32:9", tactical_mode: str = "points") -> Tuple[Optional[np.ndarray], Tuple[int, int, int, int], Optional[Tuple[int, int]], float]:
+    def render_preview_frame(self, frame_index: int, preview_width: int = 2560, preview_height: int = 720, view_mode: str = "32:9", tactical_mode: str = "points", wide_angle_rectifier: Optional[Any] = None) -> Tuple[Optional[np.ndarray], Tuple[int, int, int, int], Optional[Tuple[int, int]], float]:
         """
         Renders or extracts a panorama frame and returns:
         (stitched_frame, (crop_x, crop_y, crop_w, crop_h), (ball_x, ball_y), current_zoom).
-        Supports view_mode='16:9_tactical' with tactical_mode='points' (interactive setup) or 'full' (fullscreen output).
+        Supports view_mode='16:9_tactical' with tactical_mode='points' (interactive setup) or 'full' (fullscreen output),
+        as well as view_mode='wide_angle' / 'wide_angle_raw' for single-camera action cam rectification.
         """
+        # Mode Wide-Angle (155° Action Cam Rectification)
+        if view_mode in ("wide_angle", "wide_angle_raw"):
+            raw_src = None
+            if self.video_panorama is not None:
+                raw_src = self.video_panorama.get_frame(frame_index)
+            elif self.video_left is not None:
+                raw_src = self.video_left.get_frame(frame_index)
+
+            if raw_src is None:
+                return None, (0, 0, 0, 0), None, 1.0
+
+            if view_mode == "wide_angle" and wide_angle_rectifier is not None:
+                wa_frame = wide_angle_rectifier.apply(raw_src, dst_w=preview_width, dst_h=preview_height)
+            else:
+                if (raw_src.shape[1], raw_src.shape[0]) != (preview_width, preview_height):
+                    wa_frame = cv2.resize(raw_src, (preview_width, preview_height), interpolation=cv2.INTER_LINEAR)
+                else:
+                    wa_frame = raw_src
+
+            tx, ty, tz, ball_found, ball_px = self.ai_broadcast.detect_action(wa_frame)
+            self.ai_broadcast.update_camera(tx, ty, tz)
+            crop_box = self.ai_broadcast.get_crop_rect(preview_width, preview_height)
+            return wa_frame, crop_box, ball_px, self.ai_broadcast.cam_zoom
+
         # Mode 1: Single 32:9 Panorama Video
         if self.video_panorama is not None:
             raw_frame = self.video_panorama.get_frame(frame_index)
@@ -336,12 +363,29 @@ class StitcherEngine:
                              start_frame: int = 0,
                              end_frame: Optional[int] = None,
                              audio_source: str = "left",
-                             progress_callback: Optional[Callable[[int, int, float, float], None]] = None) -> bool:
+                             progress_callback: Optional[Callable[[int, int, float, float], None]] = None,
+                             wide_angle_rectifier: Optional[Any] = None) -> bool:
         """
         Hardware-accelerated multi-threaded batch render pipeline.
         Uses non-blocking parallel reader, multi-threaded worker pool, and live FFmpeg error logging.
         Strictly renders only from start_frame up to end_frame with synchronized audio track.
         """
+        if mode == "wide_angle":
+            def cb_wrapper(p, t, f, eta, stage_text=""):
+                if progress_callback:
+                    progress_callback(p, t, f, eta)
+            return self.render_wide_angle_video(
+                output_filepath=output_filepath,
+                out_width=out_width,
+                out_height=out_height,
+                codec=codec,
+                bitrate_mbps=bitrate_mbps,
+                start_frame=start_frame,
+                end_frame=end_frame,
+                wide_angle_rectifier=wide_angle_rectifier,
+                progress_callback=cb_wrapper
+            )
+
         # If in Standalone Panorama mode, delegate to direct panorama processor
         if self.is_panorama_mode():
             def cb_wrapper(p, t, f, eta, stage_text=""):
@@ -1467,6 +1511,174 @@ class StitcherEngine:
                     pass
             proc.wait()
             cap.release()
+
+        return render_success
+
+    def render_wide_angle_video(
+        self,
+        output_filepath: str,
+        source_filepath: Optional[str] = None,
+        out_width: int = 1920,
+        out_height: int = 1080,
+        codec: str = "hevc_nvenc",
+        bitrate_mbps: int = 50,
+        start_frame: int = 0,
+        end_frame: Optional[int] = None,
+        wide_angle_rectifier: Optional[Any] = None,
+        progress_callback: Optional[Callable[[int, int, float, float, str], None]] = None
+    ) -> bool:
+        """
+        Renders an ultra-wide angle video (e.g. DJI Action 4 155°) into a rectified, dewarped,
+        and pitch-trapezoid aligned video file using single-pass Remap LUTs and hardware acceleration.
+        """
+        src_path = source_filepath or (self.video_panorama.filepath if self.video_panorama else (self.video_left.filepath if self.video_left else None))
+        if not src_path or not os.path.exists(src_path):
+            logger.error("Weitwinkel-Render abgebrochen: Kein Quellvideo angegeben.")
+            return False
+
+        self._stop_render.clear()
+
+        cap_info = cv2.VideoCapture(src_path, cv2.CAP_FFMPEG)
+        if not cap_info.isOpened():
+            cap_info = cv2.VideoCapture(src_path)
+        if not cap_info.isOpened():
+            logger.error(f"Konnte Quellvideo nicht öffnen: {src_path}")
+            return False
+
+        fps = float(cap_info.get(cv2.CAP_PROP_FPS)) or 30.0
+        total_frames = int(cap_info.get(cv2.CAP_PROP_FRAME_COUNT))
+        src_w = int(cap_info.get(cv2.CAP_PROP_FRAME_WIDTH))
+        src_h = int(cap_info.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap_info.release()
+
+        start_frame = max(0, start_frame)
+        if end_frame is None or end_frame > total_frames:
+            end_frame = total_frames
+
+        frames_to_process = max(0, end_frame - start_frame)
+        if frames_to_process == 0:
+            logger.warning(f"Keine Frames zu rendern: start_frame={start_frame}, end_frame={end_frame}")
+            return False
+
+        logger.info(f"=== Weitwinkel-Trapezoid Render gestartet ===")
+        logger.info(f"Quelle:              {src_path} ({src_w}x{src_h} @ {fps:.2f} FPS)")
+        logger.info(f"Ziel:                {output_filepath} ({out_width}x{out_height})")
+        logger.info(f"Frame-Bereich:       {start_frame} bis {end_frame} (Gesamt: {frames_to_process} Frames)")
+        logger.info(f"Encoder / Bitrate:   {codec} @ {bitrate_mbps} Mbps")
+
+        # Check target disk space
+        target_dir = os.path.dirname(os.path.abspath(output_filepath))
+        try:
+            total_disk, used_disk, free_disk = shutil.disk_usage(target_dir)
+            free_gb = free_disk / (1024**3)
+            logger.info(f"Ziel-Speicherplatz ({target_dir}): {free_gb:.1f} GB frei")
+            if free_gb < 1.0:
+                logger.error(f"Kritisch wenig Speicherplatz auf {target_dir}: Nur {free_gb:.2f} GB frei!")
+        except Exception as e:
+            logger.warning(f"Konnte Speicherplatz nicht prüfen: {e}")
+
+        # Compute single-pass Remap LUTs once
+        if wide_angle_rectifier is not None:
+            map_x, map_y = wide_angle_rectifier.compute_remap_luts(src_w, src_h, out_width, out_height)
+        else:
+            grid_x, grid_y = np.meshgrid(np.arange(out_width, dtype=np.float32), np.arange(out_height, dtype=np.float32))
+            map_x = grid_x * (src_w / float(out_width))
+            map_y = grid_y * (src_h / float(out_height))
+
+        from .lut_generator import get_encoder_flags
+        ffmpeg_bin = get_ffmpeg_path()
+        codec_flags = get_encoder_flags(codec, bitrate_mbps)
+
+        duration_sec = frames_to_process / max(fps, 1.0)
+        t_start = start_frame / max(fps, 1.0)
+        has_audio = has_audio_stream(src_path)
+
+        if has_audio:
+            audio_inputs = ["-ss", f"{t_start:.4f}", "-t", f"{duration_sec:.4f}", "-i", src_path]
+            audio_mapping = ["-map", "0:v:0", "-map", "1:a:0"]
+            audio_codec_flags = ["-c:a", "aac", "-b:a", "192k"]
+        else:
+            audio_inputs = []
+            audio_mapping = ["-map", "0:v:0", "-an"]
+            audio_codec_flags = []
+
+        ffmpeg_cmd = [
+            ffmpeg_bin,
+            "-y",
+            "-f", "rawvideo",
+            "-vcodec", "rawvideo",
+            "-s", f"{out_width}x{out_height}",
+            "-pix_fmt", "bgr24",
+            "-r", str(fps),
+            "-i", "-",
+        ]
+        ffmpeg_cmd.extend(audio_inputs)
+        ffmpeg_cmd.extend(audio_mapping)
+        ffmpeg_cmd.extend(codec_flags)
+        ffmpeg_cmd.extend(audio_codec_flags)
+        ffmpeg_cmd.extend(["-pix_fmt", "yuv420p", "-shortest", output_filepath])
+
+        logger.info(f"FFmpeg Befehl: {' '.join(ffmpeg_cmd)}")
+        proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        ffmpeg_stderr_lines = []
+        def monitor_ffmpeg():
+            try:
+                for raw_line in iter(proc.stderr.readline, b''):
+                    decoded = raw_line.decode('utf-8', errors='replace').strip()
+                    if decoded:
+                        ffmpeg_stderr_lines.append(decoded)
+            except Exception:
+                pass
+
+        thread_err = threading.Thread(target=monitor_ffmpeg, daemon=True)
+        thread_err.start()
+
+        cap = cv2.VideoCapture(src_path)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
+        processed = 0
+        t_start_render = time.time()
+        render_success = False
+
+        try:
+            while processed < frames_to_process:
+                if self._stop_render.is_set():
+                    logger.info("Weitwinkel-Render durch Benutzer abgebrochen.")
+                    break
+
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    break
+
+                rectified = cv2.remap(frame, map_x, map_y, interpolation=cv2.INTER_LINEAR)
+                proc.stdin.write(rectified.tobytes())
+                processed += 1
+
+                if progress_callback and (processed % 15 == 0 or processed == frames_to_process):
+                    elapsed = time.time() - t_start_render
+                    cur_fps = processed / max(elapsed, 0.001)
+                    eta = (frames_to_process - processed) / max(cur_fps, 0.001)
+                    progress_callback(processed, frames_to_process, cur_fps, eta, "Weitwinkel-Trapezoid wird gerendert...")
+
+            proc.stdin.close()
+            proc.wait()
+            cap.release()
+            thread_err.join(timeout=2.0)
+
+            if proc.returncode == 0:
+                logger.info(f"Weitwinkel-Export erfolgreich abgeschlossen: {output_filepath}")
+                render_success = True
+            else:
+                logger.error(f"FFmpeg Export mit Fehler {proc.returncode} beendet.")
+        except Exception as e:
+            logger.error(f"Fehler während Weitwinkel-Export: {e}")
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        finally:
+            self._stop_render.set()
 
         return render_success
 
