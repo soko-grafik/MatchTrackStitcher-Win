@@ -1908,6 +1908,7 @@ class MainWindow(QMainWindow):
         self.saved_cloud_team_id: str = ""
 
         # Live-Streaming and Hardware Capture Managers
+        self._view_mode: str = "32:9"
         self.stream_manager = MultiStreamManager()
         self.live_capture_manager = DualLiveCaptureManager()
         self.dji_ble_manager = DjiBLEManager()
@@ -2030,7 +2031,9 @@ class MainWindow(QMainWindow):
         top_layout.addStretch()
 
         # Hide native menubar and use clean global shortcuts
+        self.menuBar().clear()
         self.menuBar().setVisible(False)
+        self.menuBar().hide()
         QShortcut(QKeySequence("Ctrl+H"), self, self.show_landing_page)
         QShortcut(QKeySequence("Ctrl+1"), self, lambda: self.show_workspace(0))
         QShortcut(QKeySequence("Ctrl+2"), self, lambda: self.show_workspace(1))
@@ -4531,6 +4534,22 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Error loading rig JSON {resolved_path}: {e}")
             return False
+
+    @property
+    def view_mode(self) -> str:
+        """Returns the current active viewport presentation mode (e.g. '32:9', '8:3', '16:9', '16:9_tactical')."""
+        if hasattr(self, 'combo_view_mode') and self.combo_view_mode is not None:
+            data = self.combo_view_mode.currentData()
+            if data:
+                return str(data)
+        if hasattr(self, 'viewport') and hasattr(self.viewport, 'view_mode') and self.viewport.view_mode:
+            return str(self.viewport.view_mode)
+        return getattr(self, '_view_mode', "32:9")
+
+    @view_mode.setter
+    def view_mode(self, mode: str):
+        self._view_mode = mode
+        self.set_view_mode_by_id(mode)
 
     def set_view_mode_by_id(self, mode_id: str):
         """Switches the viewport presentation mode by identifier (e.g. '32:9', '16:9_tactical', '16:9')."""
@@ -7599,8 +7618,10 @@ class MainWindow(QMainWindow):
             self.stream_manager.push_feeds(feeds)
 
         # Update viewport preview
-        display_frame = bcast_frame if self.view_mode.startswith("16:9") else pano_frame
-        self.viewport.update_preview_image(display_frame)
+        vm = self.view_mode
+        display_frame = bcast_frame if (bcast_frame is not None and vm.startswith("16:9")) else pano_frame
+        if display_frame is not None and hasattr(self, 'viewport') and self.viewport is not None:
+            self.viewport.update_preview_image(display_frame)
 
     def _on_ble_scan_clicked(self):
         self.btn_ble_scan.setEnabled(False)
