@@ -107,69 +107,70 @@
     "autocam": {
         "ai_tracking": true,
         "tracking_mode": "hybrid_fusion",
-        "ball_weight": 1.0,
-        "players_weight": 0.65,
-        "enable_dynamic_zoom": true,
-        "fixed_zoom_factor": 1.0,
+        "ball_weight": 0.7,
+        "players_weight": 0.3,
+        "enable_dynamic_zoom": false,
+        "fixed_zoom_factor": 1.35,
         "min_zoom": 1.15,
         "max_zoom": 1.6,
         "zoom_speed": 0.04,
-        "anticipation_lead": 0.25,
-        "smoothing_factor": 0.93,
-        "deadband_width": 0.05,
-        "max_pan_speed": 0.05,
-        "vertical_center_bias": 0.55,
+        "anticipation_lead": 0.15,
+        "smoothing_factor": 0.94,
+        "deadband_width": 0.08,
+        "max_pan_speed": 0.04,
+        "vertical_center_bias": 0.5,
         "enable_zone_damping": true,
-        "zone_boost_factor": 1.8,
-        "tactical_margin": 5.0,
+        "zone_boost_factor": 1.0,
+        "tactical_margin": 0.0,
         "pitch_corners": [
             [
-                0.298,
-                0.228
+                0.256,
+                0.23800000000000002
             ],
             [
                 0.5,
-                0.228
+                0.24
             ],
             [
-                0.6990000000000001,
-                0.233
+                0.743,
+                0.23800000000000002
             ],
             [
-                0.9520000000000001,
-                0.414
+                0.9790000000000001,
+                0.4
             ],
             [
-                0.501,
-                0.6920000000000001
+                0.506,
+                0.631
             ],
             [
-                0.053,
-                0.387
+                0.028999999999999998,
+                0.382
             ]
         ],
         "scan_step": 5,
-        "use_fp16": false,
+        "use_fp16": true,
         "enable_radar": false,
         "radar_position": "top_right",
         "radar_width": 320,
         "radar_opacity": 0.85,
         "burn_radar_in_export": false,
-        "ai_backend": "rtdetr",
+        "ai_backend": "yolo11",
         "enable_offside_line": false,
         "enable_skeletons": false,
         "enable_speed_badges": false,
         "enable_anti_jersey_filter": true,
         "enable_static_leaf_filter": true,
         "enable_sideline_filter": true,
-        "pitch_margin_pct": 1.0
+        "pitch_margin_pct": 2.5,
+        "enable_strict_ball_centering": true
     },
     "export": {
-        "format": "21:10",
-        "resolution_width": 3360,
-        "resolution_height": 1600,
-        "codec": "hevc_nvenc_hq",
-        "bitrate_mbps": 50,
+        "format": "16:9_autocam",
+        "resolution_width": 1280,
+        "resolution_height": 720,
+        "codec": "hevc_nvenc",
+        "bitrate_mbps": 30,
         "trim_only": true,
         "audio_source": "left"
     },
@@ -177,13 +178,14 @@
         "view_mode": "32:9",
         "show_frame": false,
         "frame_opacity": 50.0,
-        "show_center_line": true,
-        "show_autocam": false,
+        "show_center_line": false,
+        "show_autocam": true,
         "show_ball": true,
         "show_radar": false,
         "show_offside_line": false,
         "show_skeletons": false,
         "show_speed": false,
+        "show_sideline_filter": true,
         "show_seam": true,
         "show_grid": true,
         "sync_angles": false,

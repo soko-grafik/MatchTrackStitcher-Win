@@ -2578,7 +2578,7 @@ class MainWindow(QMainWindow):
         self.combo_ai_model = QComboBox()
         self.combo_ai_model.addItem("🏆 Soccer-Tracker Fusion (Spieler-Dichte + Ball - Empfohlen)", "hybrid_fusion")
         self.combo_ai_model.addItem("👥 Reine Spielerdichte (100% Team-Cluster, absolut stabil)", "player_density")
-        self.combo_ai_model.addItem("⚽ Ball-Fokus (Geprüfte Balltrajektorie)", "ball_centric")
+        self.combo_ai_model.addItem("⚽ Ball-Zentriert (100% Ball im 16:9 Bildzentrum)", "ball_centric")
         self.combo_ai_model.addItem("🎯 Weite Taktik-Kamera (Ruhige Feldübersicht)", "smooth_tactic")
         self.combo_ai_model.currentIndexChanged.connect(self.on_autocam_param_changed)
         layout_ac_follow.addWidget(self.combo_ai_model)
@@ -2593,6 +2593,13 @@ class MainWindow(QMainWindow):
         self.ctrl_players_weight.setToolTip("Bestimmt den Einfluss des Spielerschwerpunkts (Vorauseilen bei weiten Pässen)")
         self.ctrl_players_weight.valueChanged.connect(self.on_autocam_param_changed)
         layout_ac_follow.addWidget(self.ctrl_players_weight)
+
+        self.chk_strict_ball_center = QCheckBox("🎯 Ball exakt im 16:9 Zentrum halten (Zero-Lead)")
+        self.chk_strict_ball_center.setChecked(True)
+        self.chk_strict_ball_center.setStyleSheet("font-weight: 600; color: #f59e0b; margin-top: 4px; margin-bottom: 2px;")
+        self.chk_strict_ball_center.setToolTip("Hält den Ball bei Erkennung mathematisch exakt im Mittelpunkt des 16:9 Ausschnitts (horizontal und bei Zoom auch vertikal). Schaltet künstlichen Vorlauf-Versatz ab.")
+        self.chk_strict_ball_center.toggled.connect(self.on_autocam_param_changed)
+        layout_ac_follow.addWidget(self.chk_strict_ball_center)
 
         # Smart Zoom Group
         grp_zoom = QGroupBox("Kamera-Zoom")
@@ -4151,6 +4158,8 @@ class MainWindow(QMainWindow):
                 self.ctrl_pitch_margin.setVisible(self.chk_sideline_filter.isChecked())
         if hasattr(self, 'ctrl_pitch_margin'):
             self.engine.ai_broadcast.config.pitch_margin_pct = self.ctrl_pitch_margin.value()
+        if hasattr(self, 'chk_strict_ball_center'):
+            self.engine.ai_broadcast.config.enable_strict_ball_centering = self.chk_strict_ball_center.isChecked()
         self.refresh_preview()
 
     def on_pitch_roi_toggled(self, checked: bool):
@@ -4452,7 +4461,8 @@ class MainWindow(QMainWindow):
             "enable_anti_jersey_filter": self.chk_anti_jersey.isChecked() if hasattr(self, 'chk_anti_jersey') else getattr(ac_cfg, 'enable_anti_jersey_filter', True),
             "enable_static_leaf_filter": self.chk_static_leaf.isChecked() if hasattr(self, 'chk_static_leaf') else getattr(ac_cfg, 'enable_static_leaf_filter', True),
             "enable_sideline_filter": self.chk_sideline_filter.isChecked() if hasattr(self, 'chk_sideline_filter') else getattr(ac_cfg, 'enable_sideline_filter', True),
-            "pitch_margin_pct": self.ctrl_pitch_margin.value() if hasattr(self, 'ctrl_pitch_margin') else getattr(ac_cfg, 'pitch_margin_pct', 1.0)
+            "pitch_margin_pct": self.ctrl_pitch_margin.value() if hasattr(self, 'ctrl_pitch_margin') else getattr(ac_cfg, 'pitch_margin_pct', 1.0),
+            "enable_strict_ball_centering": self.chk_strict_ball_center.isChecked() if hasattr(self, 'chk_strict_ball_center') else getattr(ac_cfg, 'enable_strict_ball_centering', True)
         }
 
         # UI preferences
@@ -4748,6 +4758,10 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'ctrl_pitch_margin') and "pitch_margin_pct" in ac:
                 self.ctrl_pitch_margin.setValue(float(ac["pitch_margin_pct"]))
                 self.engine.ai_broadcast.config.pitch_margin_pct = float(ac["pitch_margin_pct"])
+
+            if hasattr(self, 'chk_strict_ball_center') and "enable_strict_ball_centering" in ac:
+                self.chk_strict_ball_center.setChecked(bool(ac["enable_strict_ball_centering"]))
+                self.engine.ai_broadcast.config.enable_strict_ball_centering = bool(ac["enable_strict_ball_centering"])
 
         # 4. Export Settings
         if "export" in data and isinstance(data["export"], dict):

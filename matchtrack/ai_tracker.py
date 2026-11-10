@@ -208,6 +208,9 @@ class BroadcastConfig:
     enable_sideline_filter: bool = True        # Strictly excludes sideline coaches/staff/spectators outside pitch
     pitch_margin_pct: float = 1.0              # Inward boundary margin (0.0% to 5.0%) to cleanly reject sideline people
 
+    # Centered Ball Follow Cam (Strict 100% Ball Centering in 16:9 Frame)
+    enable_strict_ball_centering: bool = True  # Locks 16:9 view dead-center on the soccer ball (zero-lead offset & soft-deadband)
+
 
 class AIBroadcastTracker:
     """
@@ -221,6 +224,7 @@ class AIBroadcastTracker:
         self.cam_x: float = 0.5
         self.cam_y: float = self.config.vertical_center_bias
         self.cam_vx: float = 0.0
+        self.cam_vy: float = 0.0
         self.cam_zoom: float = self.config.fixed_zoom_factor if not self.config.enable_dynamic_zoom else self.config.current_zoom
         
         # Target action state
@@ -318,6 +322,7 @@ class AIBroadcastTracker:
         self.cam_x = 0.5
         self.cam_y = self.config.vertical_center_bias
         self.cam_vx = 0.0
+        self.cam_vy = 0.0
         self.cam_zoom = self.config.fixed_zoom_factor if not self.config.enable_dynamic_zoom else self.config.current_zoom
         self.target_x = 0.5
         self.target_y = self.config.vertical_center_bias
@@ -732,6 +737,7 @@ class AIBroadcastTracker:
         mode = getattr(self.config, "tracking_mode", "hybrid_fusion")
         cfg_bw = float(getattr(self.config, "ball_weight", 0.70))
         cfg_pw = float(getattr(self.config, "players_weight", 0.30))
+        strict_centering = getattr(self.config, "enable_strict_ball_centering", True)
 
         # Normalize weights if both are set
         total_w = cfg_bw + cfg_pw
@@ -744,30 +750,44 @@ class AIBroadcastTracker:
         # Confidence blending factor: ramp up between 0.10 and 0.30 confidence
         conf_scale = float(np.clip((self.ball_confidence - 0.10) / 0.20, 0.0, 1.0))
 
-        if mode == "player_density":
+        if mode == "ball_centric":
+            # 100% Pure Ball Centering in 16:9 view when ball is tracked
+            if self.ball_confidence > 0.15:
+                raw_target_x = ball_x
+                raw_target_y = ball_y
+            else:
+                raw_target_x = player_cx
+                raw_target_y = float(getattr(self.config, "vertical_center_bias", 0.50))
+        elif mode == "player_density":
             # 100% stable player density center
             raw_target_x = player_cx
-        elif mode == "ball_centric" and self.ball_confidence > 0.15:
-            # Ball-centric tracking with anticipation
-            b_ratio = max(norm_bw, 0.85) * conf_scale
-            p_ratio = 1.0 - b_ratio
-            lead = np.clip(ball_vx * self.config.anticipation_lead, -0.06, 0.06) * conf_scale
-            raw_target_x = ball_x * b_ratio + player_cx * p_ratio + lead
+            raw_target_y = float(getattr(self.config, "vertical_center_bias", 0.50))
         elif mode == "smooth_tactic":
             # Broad tactical overview (gentle ball presence)
             b_ratio = min(norm_bw, 0.30) * conf_scale
             p_ratio = 1.0 - b_ratio
             raw_target_x = player_cx * p_ratio + (ball_x if conf_scale > 0.2 else player_cx) * b_ratio
+            raw_target_y = float(getattr(self.config, "vertical_center_bias", 0.50))
         else: # "hybrid_fusion" (Recommended Default: Target_x = Ball_x * w_ball + Player_x * w_player)
             if self.ball_confidence > 0.15:
-                # Effective weighted blend scaled with detection confidence
-                eff_bw = norm_bw * conf_scale
-                eff_pw = 1.0 - eff_bw
-                lead = np.clip(ball_vx * (self.config.anticipation_lead * 0.8), -0.05, 0.05) * conf_scale
-                raw_target_x = ball_x * eff_bw + player_cx * eff_pw + lead
+                if strict_centering and norm_bw >= 0.70:
+                    # When strict centering is active and ball weight is high (>= 70%),
+                    # lock 100% onto the ball without laggy player dilution or lead offset
+                    eff_bw = 1.0 * conf_scale
+                    eff_pw = 1.0 - eff_bw
+                    raw_target_x = ball_x * eff_bw + player_cx * eff_pw
+                    raw_target_y = ball_y * eff_bw + float(getattr(self.config, "vertical_center_bias", 0.50)) * eff_pw
+                else:
+                    eff_bw = norm_bw * conf_scale
+                    eff_pw = 1.0 - eff_bw
+                    lead_weight = 0.0 if strict_centering else (self.config.anticipation_lead * 0.8)
+                    lead = np.clip(ball_vx * lead_weight, -0.05, 0.05) * conf_scale
+                    raw_target_x = ball_x * eff_bw + player_cx * eff_pw + lead
+                    raw_target_y = ball_y * eff_bw + float(getattr(self.config, "vertical_center_bias", 0.50)) * eff_pw
             else:
                 # Seamless fallback to player cluster when ball is obscured / untracked
                 raw_target_x = player_cx
+                raw_target_y = float(getattr(self.config, "vertical_center_bias", 0.50))
 
         # 8. Pure Horizontal Tracking (Fixed Zoom & Fixed Vertical Height)
         if not getattr(self.config, "enable_dynamic_zoom", False):
@@ -775,9 +795,13 @@ class AIBroadcastTracker:
         else:
             desired_zoom = self.config.min_zoom if self.kalman.speed > 0.012 else self.config.max_zoom
 
-        # Target filtering
-        self.target_x = self.target_x * 0.50 + raw_target_x * 0.50
-        self.target_y = self.config.vertical_center_bias
+        # Target filtering: fast, direct tracking when centering ball
+        if strict_centering and self.ball_confidence > 0.15:
+            self.target_x = self.target_x * 0.20 + raw_target_x * 0.80
+            self.target_y = self.target_y * 0.30 + raw_target_y * 0.70
+        else:
+            self.target_x = self.target_x * 0.50 + raw_target_x * 0.50
+            self.target_y = self.target_y * 0.50 + raw_target_y * 0.50
         self.target_zoom = desired_zoom
 
         # 9. Update Real-Time Tactical Metrics (SkillCorner & TacticAI Engine)
@@ -811,23 +835,38 @@ class AIBroadcastTracker:
         """
         diff_x = target_x - self.cam_x
 
-        # Deadband: if target is within deadband zone of frame, camera remains still
+        mode = getattr(self.config, "tracking_mode", "hybrid_fusion")
         deadband = self.config.deadband_width
-        if abs(diff_x) < deadband:
-            diff_x = 0.0
+        strict_centering = getattr(self.config, "enable_strict_ball_centering", True)
+
+        # Deadband handling:
+        # For strict ball centering, use soft attenuation so the camera glides to dead-center
+        # without freezing with a permanent offset from the ball.
+        if strict_centering and (mode == "ball_centric" or self.ball_confidence > 0.15):
+            eff_deadband = min(0.015, deadband)
+            if abs(diff_x) < eff_deadband:
+                eff_diff_x = diff_x * ((abs(diff_x) / max(1e-4, eff_deadband)) ** 1.5)
+            else:
+                eff_diff_x = diff_x
         else:
-            diff_x = diff_x - np.sign(diff_x) * deadband
+            if abs(diff_x) < deadband:
+                eff_diff_x = 0.0
+            else:
+                eff_diff_x = diff_x - np.sign(diff_x) * deadband
 
         # Base responsiveness / spring damping
         base_responsiveness = 1.0 - np.clip(self.config.smoothing_factor, 0.70, 0.99)
         max_speed = max(0.005, self.config.max_pan_speed)
 
+        # Scale responsiveness if tracking ball to avoid lagging behind passes
+        if strict_centering and self.ball_confidence > 0.15:
+            base_responsiveness = max(base_responsiveness, 0.12) + min(0.35, abs(eff_diff_x) * 3.5)
+            max_speed = max(max_speed, 0.08)
+
         # Dynamic Zone Damping (Strafraum-Dynamik: schnellere Reaktion in Tornähe)
         if getattr(self.config, "enable_zone_damping", True):
             boost = max(1.0, float(getattr(self.config, "zone_boost_factor", 1.80)))
-            # Relative Distanz zur Spielfeld-Mitte (0.5)
             dist_from_center = abs(target_x - 0.5)
-            # Ramping: 0.0 im Mittelfeld (dist <= 0.15) bis 1.0 im Strafraum (dist >= 0.38)
             zone_proximity = float(np.clip((dist_from_center - 0.15) / 0.23, 0.0, 1.0))
             zone_multiplier = 1.0 + (boost - 1.0) * (zone_proximity ** 1.5)
             responsiveness = float(np.clip(base_responsiveness * zone_multiplier, 0.005, 0.40))
@@ -835,13 +874,11 @@ class AIBroadcastTracker:
         else:
             responsiveness = base_responsiveness
 
-        desired_vx = diff_x * responsiveness
-        
-        # Strict maximum pan speed clamp
+        desired_vx = eff_diff_x * responsiveness
         desired_vx = np.clip(desired_vx, -max_speed, max_speed)
 
         # Smooth velocity integration
-        self.cam_vx = self.cam_vx * 0.75 + desired_vx * 0.25
+        self.cam_vx = self.cam_vx * 0.70 + desired_vx * 0.30
         self.cam_x += self.cam_vx
 
         # Zoom handling (Fixed 1.0x by default)
@@ -852,12 +889,29 @@ class AIBroadcastTracker:
             self.cam_zoom = float(np.clip(self.cam_zoom, self.config.min_zoom, self.config.max_zoom))
 
         # Clamp horizontal camera position so 16:9 crop never shows black borders
-        crop_w_ratio, _ = self.get_crop_aspect_ratios()
+        crop_w_ratio, crop_h_ratio = self.get_crop_aspect_ratios()
         min_x = crop_w_ratio * 0.5
         max_x = 1.0 - (crop_w_ratio * 0.5)
 
         self.cam_x = float(np.clip(self.cam_x, min_x, max_x))
-        self.cam_y = self.config.vertical_center_bias
+
+        # Vertical camera tracking (when zoom > 1.0 allows vertical re-centering)
+        min_y = crop_h_ratio * 0.5
+        max_y = 1.0 - (crop_h_ratio * 0.5)
+        if max_y > min_y + 1e-4:
+            diff_y = target_y - self.cam_y
+            db_y = min(0.015, deadband)
+            if abs(diff_y) < db_y:
+                eff_diff_y = diff_y * ((abs(diff_y) / max(1e-4, db_y)) ** 1.5)
+            else:
+                eff_diff_y = diff_y
+            desired_vy = np.clip(eff_diff_y * responsiveness * 0.85, -max_speed * 0.75, max_speed * 0.75)
+            self.cam_vy = self.cam_vy * 0.70 + desired_vy * 0.30
+            self.cam_y += self.cam_vy
+            self.cam_y = float(np.clip(self.cam_y, min_y, max_y))
+        else:
+            self.cam_vy = 0.0
+            self.cam_y = float(self.config.vertical_center_bias)
 
         return self.cam_x, self.cam_y, self.cam_zoom
 
@@ -1114,7 +1168,13 @@ class AIBroadcastTracker:
                 max_x = 1.0 - (crop_w_ratio * 0.5)
 
             cam_x = float(np.clip(smooth_x[idx], min_x, max_x))
-            cam_y = float(self.config.vertical_center_bias)
+            crop_h_ratio = (1.0 / max(1.0, zoom))
+            min_y = crop_h_ratio * 0.5
+            max_y = 1.0 - (crop_h_ratio * 0.5)
+            if max_y > min_y:
+                cam_y = float(np.clip(smooth_y[idx], min_y, max_y))
+            else:
+                cam_y = float(self.config.vertical_center_bias)
             self.precomputed_trajectory[int(f_num)] = (cam_x, cam_y, zoom)
 
         return self.precomputed_trajectory
