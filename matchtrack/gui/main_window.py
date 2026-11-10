@@ -17,7 +17,8 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QSlider, QSpinBox, QDoubleSpinBox, QComboBox, QAbstractSpinBox,
     QFileDialog, QProgressBar, QGroupBox, QTabWidget, QSplitter,
     QCheckBox, QMessageBox, QFrame, QScrollArea, QStatusBar, QToolButton,
-    QPlainTextEdit, QMenu, QWidgetAction, QLineEdit, QDateEdit, QDialog
+    QPlainTextEdit, QMenu, QWidgetAction, QLineEdit, QDateEdit, QDialog,
+    QRadioButton, QStackedWidget
 )
 
 
@@ -1956,6 +1957,7 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.apply_dark_theme()
         self.load_default_startup_settings()
+        self.show_landing_page()
         QTimer.singleShot(400, self.restore_cloud_session_on_startup)
 
     def init_ui(self):
@@ -1998,6 +2000,64 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self.lbl_video_status)
 
         top_layout.addStretch()
+
+        # Section Navigation Hub Pills (Centered in top bar)
+        nav_frame = QFrame()
+        nav_frame.setStyleSheet("QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 10px; padding: 2px 4px; }")
+        nav_layout = QHBoxLayout(nav_frame)
+        nav_layout.setContentsMargins(2, 2, 2, 2)
+        nav_layout.setSpacing(4)
+
+        self.btn_nav_home = QPushButton("🏠 Zentrale")
+        self.btn_nav_stitch = QPushButton("🧵 Stitching")
+        self.btn_nav_ai = QPushButton("🎯 KI-Broadcast")
+        self.btn_nav_export = QPushButton("🚀 Export")
+        self.btn_nav_live = QPushButton("🔴 Live-Stream")
+        self.btn_nav_cloud = QPushButton("☁️ Cloud-Upload")
+
+        self.btn_nav_home.clicked.connect(self.show_landing_page)
+        self.btn_nav_stitch.clicked.connect(lambda: self.show_workspace(0))
+        self.btn_nav_ai.clicked.connect(lambda: self.show_workspace(2))
+        self.btn_nav_export.clicked.connect(lambda: self.show_workspace(3))
+        self.btn_nav_live.clicked.connect(lambda: self.show_workspace(4))
+        self.btn_nav_cloud.clicked.connect(lambda: self.show_workspace(5))
+
+        for btn in [self.btn_nav_home, self.btn_nav_stitch, self.btn_nav_ai, self.btn_nav_export, self.btn_nav_live, self.btn_nav_cloud]:
+            btn.setStyleSheet("background-color: transparent; border: none; border-radius: 6px; font-weight: 700; font-size: 11px; padding: 5px 11px; color: #94a3b8;")
+            nav_layout.addWidget(btn)
+
+        top_layout.addWidget(nav_frame)
+        top_layout.addStretch()
+
+        # Bereiche Menu Bar
+        menubar = self.menuBar()
+        menu_areas = menubar.addMenu("🧭 &Bereiche")
+        
+        act_home = menu_areas.addAction("🏠 Start-Zentrale (Landingpage)")
+        act_home.setShortcut("Ctrl+H")
+        act_home.triggered.connect(self.show_landing_page)
+        
+        menu_areas.addSeparator()
+        
+        act_stitch = menu_areas.addAction("🧵 1. Video-Stitching & Panorama")
+        act_stitch.setShortcut("Ctrl+1")
+        act_stitch.triggered.connect(lambda: self.show_workspace(0))
+        
+        act_ai = menu_areas.addAction("🎯 2. KI-Broadcast & Follow-Cam")
+        act_ai.setShortcut("Ctrl+2")
+        act_ai.triggered.connect(lambda: self.show_workspace(2))
+        
+        act_export = menu_areas.addAction("🚀 3. Video-Export")
+        act_export.setShortcut("Ctrl+3")
+        act_export.triggered.connect(lambda: self.show_workspace(3))
+        
+        act_live = menu_areas.addAction("🔴 4. Live-Streaming (OBS-Studio)")
+        act_live.setShortcut("Ctrl+4")
+        act_live.triggered.connect(lambda: self.show_workspace(4))
+        
+        act_cloud = menu_areas.addAction("☁️ 5. MatchTrack Cloud-Upload")
+        act_cloud.setShortcut("Ctrl+5")
+        act_cloud.triggered.connect(lambda: self.show_workspace(5))
 
         # Profile / Settings Management Buttons
         self.btn_load_prof_tb = QPushButton("📁 Profil")
@@ -2302,6 +2362,35 @@ class MainWindow(QMainWindow):
         layout_m = QVBoxLayout(widget_m)
         layout_m.setSpacing(12)
 
+        # ---------------------------------------------------------------------
+        # Card: Kamera-Quellformat & Stitching-Profil (4:3 vs 16:9)
+        # ---------------------------------------------------------------------
+        grp_src_format = QGroupBox("📷 Kamera-Quellformat & Stitching-Profil")
+        grp_src_format.setStyleSheet(
+            "QGroupBox { font-weight: bold; color: #38bdf8; border: 1px solid #282839; border-radius: 10px; margin-top: 6px; padding: 10px; background-color: #12121c; }"
+        )
+        layout_sf = QVBoxLayout(grp_src_format)
+        layout_sf.setSpacing(8)
+
+        row_sf = QHBoxLayout()
+        self.radio_src_4_3 = QRadioButton("4:3 Format (DJI Action 4 RockSteady ON)")
+        self.radio_src_4_3.setStyleSheet("font-weight: 700; color: #f4f4f6; font-size: 11px;")
+        self.radio_src_4_3.setChecked(True)
+        self.radio_src_4_3.toggled.connect(self._on_source_format_radio_changed)
+
+        self.radio_src_16_9 = QRadioButton("16:9 Format (Standard Webcams / 16:9 Kameras)")
+        self.radio_src_16_9.setStyleSheet("font-weight: 700; color: #f4f4f6; font-size: 11px;")
+
+        row_sf.addWidget(self.radio_src_4_3)
+        row_sf.addWidget(self.radio_src_16_9)
+        layout_sf.addLayout(row_sf)
+
+        self.lbl_src_format_desc = QLabel("💡 Ausgabeprofil: 8:3 Taktik-Panorama (2560x960) | DJI RockSteady Dewarp aktiv.")
+        self.lbl_src_format_desc.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 600;")
+        layout_sf.addWidget(self.lbl_src_format_desc)
+
+        layout_m.addWidget(grp_src_format)
+
         # Card: Video Inputs
         grp_inputs = QGroupBox("🎥 Kamera-Eingänge (Dual-Rig / Panorama)")
         layout_in = QVBoxLayout(grp_inputs)
@@ -2433,7 +2522,7 @@ class MainWindow(QMainWindow):
         layout_m.addStretch()
         scroll_m.setWidget(widget_m)
         layout_tab_m.addWidget(scroll_m)
-        self.right_pane.addTab(self.tab_media, "📁 1. Medien")
+        self.right_pane.addTab(self.tab_media, "🧵 1. Stitching")
 
         # -------------------------------------------------------------------------
         # TAB 2: 🎯 Stitching & Rig
@@ -2836,7 +2925,7 @@ class MainWindow(QMainWindow):
         scroll_layout.addStretch()
         scroll_area.setWidget(scroll_widget)
         calib_layout.addWidget(scroll_area)
-        self.right_pane.addTab(self.tab_calib, "🎯 2. Stitch")
+        self.right_pane.addTab(self.tab_calib, "🎨 2. Naht & Farbe")
 
         # -------------------------------------------------------------------------
         # TAB 3: 📐 Taktik & AutoCam (Samsung One UI Style)
@@ -3218,7 +3307,7 @@ class MainWindow(QMainWindow):
         scroll_layout_ac.addStretch()
         scroll_area_ac.setWidget(scroll_widget_ac)
         autocam_layout.addWidget(scroll_area_ac)
-        self.right_pane.addTab(self.tab_autocam, "📐 3. Taktik")
+        self.right_pane.addTab(self.tab_autocam, "🎯 3. KI-Broadcast")
 
         # -------------------------------------------------------------------------
         # TAB 4: 🚀 Export (Samsung One UI Style)
@@ -3373,267 +3462,6 @@ class MainWindow(QMainWindow):
 
         export_layout.addWidget(grp_render)
 
-        # -------------------------------------------------------------------------
-        # Cloud Upload to MatchTrack Online
-        # -------------------------------------------------------------------------
-        grp_cloud = QGroupBox("☁️ MatchTrack Online – Direkt-Upload")
-        cloud_box = QVBoxLayout(grp_cloud)
-        cloud_box.setSpacing(8)
-
-        # Connection Status Row
-        conn_row = QHBoxLayout()
-        self.lbl_cloud_status = QLabel("🔴 Nicht verbunden")
-        self.lbl_cloud_status.setStyleSheet(
-            "background-color: #1a1520; color: #f87171; border: 1px solid #3f202b; "
-            "border-radius: 8px; padding: 5px 10px; font-size: 11px; font-weight: 600;"
-        )
-        self.btn_cloud_login = QPushButton("🔑 Verbinden")
-        self.btn_cloud_login.setStyleSheet(
-            "background-color: #1e293b; border: 1px solid #3b82f6; color: #60a5fa; "
-            "font-weight: bold; padding: 5px 10px; border-radius: 8px; font-size: 11px;"
-        )
-        self.btn_cloud_login.clicked.connect(self.open_cloud_login_dialog)
-
-        self.btn_cloud_refresh = QToolButton()
-        self.btn_cloud_refresh.setText("🔄")
-        self.btn_cloud_refresh.setToolTip("Mannschaften & Spieleliste vom Server neu laden")
-        self.btn_cloud_refresh.setStyleSheet(
-            "background-color: #1a1a26; border: 1px solid #28283a; border-radius: 8px; padding: 5px 8px;"
-        )
-        self.btn_cloud_refresh.setEnabled(False)
-        self.btn_cloud_refresh.clicked.connect(self.refresh_cloud_teams_and_matches)
-
-        self.btn_cloud_logout = QPushButton("Abmelden")
-        self.btn_cloud_logout.setStyleSheet(
-            "background-color: #1a1a26; border: 1px solid #28283a; color: #94a3b8; "
-            "padding: 5px 8px; border-radius: 8px; font-size: 11px;"
-        )
-        self.btn_cloud_logout.setVisible(False)
-        self.btn_cloud_logout.clicked.connect(self.logout_cloud_session)
-
-        conn_row.addWidget(self.lbl_cloud_status, 1)
-        conn_row.addWidget(self.btn_cloud_login)
-        conn_row.addWidget(self.btn_cloud_refresh)
-        conn_row.addWidget(self.btn_cloud_logout)
-        cloud_box.addLayout(conn_row)
-
-        # Target Mode: New Match vs Existing Match
-        cloud_box.addWidget(QLabel("Ziel auf Plattform:"))
-        self.combo_cloud_target_mode = NoWheelComboBox()
-        self.combo_cloud_target_mode.addItem("✨ Neues Spiel auf MatchTrack Online anlegen", "new")
-        self.combo_cloud_target_mode.addItem("➕ Zu bestehendem Spiel hinzufügen / Perspektive ergänzen", "existing")
-        self.combo_cloud_target_mode.currentIndexChanged.connect(self.on_cloud_target_mode_changed)
-        cloud_box.addWidget(self.combo_cloud_target_mode)
-
-        self.lbl_cloud_existing = QLabel("Bestehendes Spiel auswählen:")
-        self.lbl_cloud_existing.setVisible(False)
-        cloud_box.addWidget(self.lbl_cloud_existing)
-
-        self.combo_cloud_existing_match = NoWheelComboBox()
-        self.combo_cloud_existing_match.setVisible(False)
-        self.combo_cloud_existing_match.currentIndexChanged.connect(self.on_cloud_existing_match_selected)
-        cloud_box.addWidget(self.combo_cloud_existing_match)
-
-        # Match Title
-        cloud_box.addWidget(QLabel("Spielname / Begegnung:"))
-        self.txt_cloud_match_name = QLineEdit()
-        self.txt_cloud_match_name.setPlaceholderText("z.B. SG Musterstadt vs. FC Beispiel")
-        self.txt_cloud_match_name.setStyleSheet(
-            "background-color: #111118; border: 1px solid #282839; border-radius: 8px; padding: 6px 10px; color: #f4f4f6;"
-        )
-        cloud_box.addWidget(self.txt_cloud_match_name)
-
-        # Team & Category Row
-        row_team_cat = QHBoxLayout()
-        col_team = QVBoxLayout()
-        col_team.addWidget(QLabel("Mannschaft:"))
-        self.combo_cloud_team = NoWheelComboBox()
-        self.combo_cloud_team.addItem("— Bitte erst verbinden —", "")
-        col_team.addWidget(self.combo_cloud_team)
-
-        col_cat = QVBoxLayout()
-        col_cat.addWidget(QLabel("Kategorie:"))
-        self.combo_cloud_category = NoWheelComboBox()
-        for cat_name in ["Punktspiel", "Testspiel", "Pokalspiel", "Turnier", "Training", "Trainingslager"]:
-            self.combo_cloud_category.addItem(cat_name, cat_name)
-        col_cat.addWidget(self.combo_cloud_category)
-
-        row_team_cat.addLayout(col_team, 3)
-        row_team_cat.addLayout(col_cat, 2)
-        cloud_box.addLayout(row_team_cat)
-
-        # Recording Date Row
-        row_rec_date = QHBoxLayout()
-        row_rec_date.addWidget(QLabel("Spieltag / Aufnahmedatum:"))
-        self.date_cloud_recording = QDateEdit()
-        self.date_cloud_recording.setCalendarPopup(True)
-        self.date_cloud_recording.setDisplayFormat("dd.MM.yyyy")
-        self.date_cloud_recording.setDate(QDate.currentDate())
-        self.date_cloud_recording.setStyleSheet(
-            "background-color: #111118; border: 1px solid #282839; border-radius: 8px; padding: 5px 8px; color: #f4f4f6;"
-        )
-        row_rec_date.addWidget(self.date_cloud_recording, 1)
-        cloud_box.addLayout(row_rec_date)
-
-        # Upload Options Checkboxes
-        self.chk_cloud_auto_upload = QCheckBox("🚀 Nach dem Rendern automatisch zu MatchTrack Online hochladen")
-        self.chk_cloud_auto_upload.setChecked(False)
-        self.chk_cloud_auto_upload.setStyleSheet("font-weight: 700; color: #10b981; margin-top: 4px;")
-        cloud_box.addWidget(self.chk_cloud_auto_upload)
-
-        self.chk_cloud_notify = QCheckBox("🔔 Mannschaftsmitglieder nach Upload benachrichtigen")
-        self.chk_cloud_notify.setChecked(True)
-        self.chk_cloud_notify.setStyleSheet("color: #cbd5e1;")
-        cloud_box.addWidget(self.chk_cloud_notify)
-
-        self.chk_cloud_fast_hls = QCheckBox("⚡ Schnelle Web-Bereitstellung (Direktes HLS ohne Re-Encode falls H.264)")
-        self.chk_cloud_fast_hls.setChecked(False)
-        self.chk_cloud_fast_hls.setStyleSheet("color: #38bdf8;")
-        self.chk_cloud_fast_hls.setToolTip(
-            "Wenn aktiviert, überspringt der Server die erneute H.264-Umkodierung vor der HLS-Segmentierung."
-        )
-        cloud_box.addWidget(self.chk_cloud_fast_hls)
-
-        # Password protection option
-        pw_prot_row = QHBoxLayout()
-        self.chk_cloud_password = QCheckBox("🔒 Spiel mit Passwort schützen:")
-        self.chk_cloud_password.setStyleSheet("color: #f59e0b; font-weight: 600;")
-        self.txt_cloud_password = QLineEdit()
-        self.txt_cloud_password.setPlaceholderText("Spiel-Passwort...")
-        self.txt_cloud_password.setVisible(False)
-        self.txt_cloud_password.setStyleSheet(
-            "background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6;"
-        )
-        self.chk_cloud_password.toggled.connect(self.txt_cloud_password.setVisible)
-        pw_prot_row.addWidget(self.chk_cloud_password)
-        pw_prot_row.addWidget(self.txt_cloud_password, 1)
-        cloud_box.addLayout(pw_prot_row)
-
-        # Multi-Stream Concurrency (Upload-Geschwindigkeit)
-        row_concurrency = QHBoxLayout()
-        lbl_concurrency = QLabel("⚡ Upload-Streams:")
-        lbl_concurrency.setStyleSheet("color: #38bdf8; font-weight: 600; font-size: 11px;")
-        self.combo_cloud_concurrency = QComboBox()
-        self.combo_cloud_concurrency.addItem("⚡ 3 Streams (Empfohlen - bis 50 Mbit/s)", 3)
-        self.combo_cloud_concurrency.addItem("🚀 4 Streams (High-Speed - 100+ Mbit/s)", 4)
-        self.combo_cloud_concurrency.addItem("⚡ 2 Streams (Ausgewogen)", 2)
-        self.combo_cloud_concurrency.addItem("🐢 1 Stream (Schonend)", 1)
-        self.combo_cloud_concurrency.setStyleSheet(
-            "background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6;"
-        )
-        self.combo_cloud_concurrency.setToolTip(
-            "Parallele Upload-Streams nutzen deine Internetleitung voll aus und verhindern Bandbreiten-Drosselungen einzelner TCP-Verbindungen."
-        )
-        row_concurrency.addWidget(lbl_concurrency)
-        row_concurrency.addWidget(self.combo_cloud_concurrency, 1)
-        cloud_box.addLayout(row_concurrency)
-
-        # Dedicated file pickers for finished Broadcast (16:9) & Panorama (32:9 / 8:3) videos
-        files_frame = QFrame()
-        files_frame.setStyleSheet(
-            "QFrame { background-color: #101018; border: 1px solid #242436; border-radius: 8px; padding: 6px; }"
-        )
-        files_layout = QVBoxLayout(files_frame)
-        files_layout.setContentsMargins(6, 6, 6, 6)
-        files_layout.setSpacing(6)
-
-        lbl_files_hdr = QLabel("🎬 Fertige Videos für Upload (einzeln oder beide zusammen):")
-        lbl_files_hdr.setStyleSheet("color: #93c5fd; font-weight: 700; font-size: 11px; border: none; padding: 0;")
-        files_layout.addWidget(lbl_files_hdr)
-
-        # Row 1: 16:9 Broadcast Video
-        row_f16 = QHBoxLayout()
-        row_f16.setSpacing(4)
-        lbl_f16 = QLabel("🎥 Broadcast (16:9):")
-        lbl_f16.setFixedWidth(122)
-        lbl_f16.setStyleSheet("color: #cbd5e1; font-size: 11px; border: none;")
-        self.txt_cloud_video_16x9 = QLineEdit()
-        self.txt_cloud_video_16x9.setPlaceholderText("Optional: Fertiges 16:9 Broadcast-Video (.mp4)...")
-        self.txt_cloud_video_16x9.setStyleSheet(
-            "background-color: #0b0b10; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #e2e8f0; font-size: 11px;"
-        )
-        btn_pick_16x9 = QPushButton("📂 Wählen…")
-        btn_pick_16x9.setStyleSheet(
-            "background-color: #1e293b; border: 1px solid #3b82f6; color: #93c5fd; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;"
-        )
-        btn_pick_16x9.clicked.connect(self.pick_cloud_16x9_video)
-        btn_clr_16x9 = QToolButton()
-        btn_clr_16x9.setText("✕")
-        btn_clr_16x9.setToolTip("Auswahl für 16:9 Broadcast-Video leeren")
-        btn_clr_16x9.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 3px 6px; color: #94a3b8;")
-        btn_clr_16x9.clicked.connect(lambda: self.txt_cloud_video_16x9.clear())
-        row_f16.addWidget(lbl_f16)
-        row_f16.addWidget(self.txt_cloud_video_16x9, 1)
-        row_f16.addWidget(btn_pick_16x9)
-        row_f16.addWidget(btn_clr_16x9)
-        files_layout.addLayout(row_f16)
-
-        # Row 2: Panorama Video (32:9 / 8:3 / 21:10)
-        row_fpano = QHBoxLayout()
-        row_fpano.setSpacing(4)
-        lbl_fpano = QLabel("🌟 Panorama (32:9/8:3):")
-        lbl_fpano.setFixedWidth(122)
-        lbl_fpano.setStyleSheet("color: #cbd5e1; font-size: 11px; border: none;")
-        self.txt_cloud_video_pano = QLineEdit()
-        self.txt_cloud_video_pano.setPlaceholderText("Optional: Fertiges Panorama-Video (.mp4)...")
-        self.txt_cloud_video_pano.setStyleSheet(
-            "background-color: #0b0b10; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #e2e8f0; font-size: 11px;"
-        )
-        btn_pick_pano = QPushButton("📂 Wählen…")
-        btn_pick_pano.setStyleSheet(
-            "background-color: #1e293b; border: 1px solid #3b82f6; color: #93c5fd; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;"
-        )
-        btn_pick_pano.clicked.connect(self.pick_cloud_pano_video)
-        btn_clr_pano = QToolButton()
-        btn_clr_pano.setText("✕")
-        btn_clr_pano.setToolTip("Auswahl für Panorama-Video leeren")
-        btn_clr_pano.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 3px 6px; color: #94a3b8;")
-        btn_clr_pano.clicked.connect(lambda: self.txt_cloud_video_pano.clear())
-        row_fpano.addWidget(lbl_fpano)
-        row_fpano.addWidget(self.txt_cloud_video_pano, 1)
-        row_fpano.addWidget(btn_pick_pano)
-        row_fpano.addWidget(btn_clr_pano)
-        files_layout.addLayout(row_fpano)
-
-        cloud_box.addWidget(files_frame)
-
-        # Manual Upload Action Button
-        self.btn_cloud_upload_now = QPushButton("☁️ Fertige Videos (Broadcast & Panorama) jetzt hochladen")
-        self.btn_cloud_upload_now.setStyleSheet(
-            "background-color: #059669; font-weight: bold; padding: 10px; font-size: 12px; color: white; border-radius: 10px;"
-        )
-        self.btn_cloud_upload_now.clicked.connect(self.start_manual_cloud_upload_dialog)
-        cloud_box.addWidget(self.btn_cloud_upload_now)
-
-        self.cloud_progress_bar = QProgressBar()
-        self.cloud_progress_bar.setValue(0)
-        cloud_box.addWidget(self.cloud_progress_bar)
-
-        self.lbl_cloud_upload_stats = QLabel("Bereit für Cloud-Upload.")
-        self.lbl_cloud_upload_stats.setStyleSheet("color: #8e8e9c; font-size: 11px;")
-        self.lbl_cloud_upload_stats.setWordWrap(True)
-        cloud_box.addWidget(self.lbl_cloud_upload_stats)
-
-        cloud_btn_bottom = QHBoxLayout()
-        self.btn_cloud_cancel = QPushButton("Upload abbrechen")
-        self.btn_cloud_cancel.setEnabled(False)
-        self.btn_cloud_cancel.setStyleSheet(
-            "background-color: #1a1a26; border: 1px solid #28283a; border-radius: 8px; padding: 6px; font-size: 11px; color: #94a3b8;"
-        )
-        self.btn_cloud_cancel.clicked.connect(self.cancel_cloud_upload)
-
-        self.btn_cloud_open_browser = QPushButton("🌐 Spiel im Browser öffnen")
-        self.btn_cloud_open_browser.setEnabled(False)
-        self.btn_cloud_open_browser.setStyleSheet(
-            "background-color: #1e293b; border: 1px solid #3b82f6; border-radius: 8px; padding: 6px; font-size: 11px; color: #60a5fa; font-weight: bold;"
-        )
-        self.btn_cloud_open_browser.clicked.connect(self.open_last_uploaded_match_in_browser)
-
-        cloud_btn_bottom.addWidget(self.btn_cloud_cancel)
-        cloud_btn_bottom.addWidget(self.btn_cloud_open_browser)
-        cloud_box.addLayout(cloud_btn_bottom)
-
-        export_layout.addWidget(grp_cloud)
         export_layout.addStretch()
 
         scroll_exp.setWidget(widget_exp)
@@ -3646,12 +3474,17 @@ class MainWindow(QMainWindow):
         # -------------------------------------------------------------------------
         self._init_livestream_tab()
         self.right_pane.addTab(self.tab_livestream, "🔴 5. Live-Stream")
+
+        # -------------------------------------------------------------------------
+        # TAB 6: MATCHTRACK ONLINE CLOUD-UPLOAD
+        # -------------------------------------------------------------------------
+        self._init_cloud_tab()
+        self.right_pane.addTab(self.tab_cloud, "☁️ 6. Cloud-Upload")
+
         splitter.addWidget(self.right_pane)
 
         # Install wheel filter on right pane to prevent slider value changes on scrolling
         self._install_scroll_wheel_filter(self.right_pane)
-
-        root_layout.addWidget(splitter, 1)
 
         # Bottom Log Viewer Dock
         self.log_viewer = QPlainTextEdit()
@@ -3669,7 +3502,24 @@ class MainWindow(QMainWindow):
                 padding: 4px 8px;
             }
         """)
-        root_layout.addWidget(self.log_viewer)
+
+        # Workspace Container (Houses Splitter and Log Viewer)
+        self.workspace_widget = QWidget()
+        workspace_layout = QVBoxLayout(self.workspace_widget)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_layout.setSpacing(6)
+        workspace_layout.addWidget(splitter, 1)
+        workspace_layout.addWidget(self.log_viewer)
+
+        # Initialize Landing Page (Start-Zentrale)
+        self._init_landing_page()
+
+        # Stacked Widget housing Landing Page (Index 0) and Workspace (Index 1)
+        self.main_stack = QStackedWidget()
+        self.main_stack.addWidget(self.landing_widget)
+        self.main_stack.addWidget(self.workspace_widget)
+
+        root_layout.addWidget(self.main_stack, 1)
 
         # Bottom status bar
         self.status_bar = QStatusBar()
@@ -4548,24 +4398,123 @@ class MainWindow(QMainWindow):
         self.engine.autocam.config.follow_ball = checked
         self.refresh_preview()
 
+    def show_landing_page(self):
+        """Switches to the Workflow Hub / Start-Zentrale Landingpage."""
+        if hasattr(self, 'main_stack'):
+            self.main_stack.setCurrentIndex(0)
+        self._update_nav_highlight("home")
+        if hasattr(self, 'status_bar'):
+            self.status_bar.showMessage("Start-Zentrale: Wählen Sie einen Bereich oder starten Sie ein Projekt.")
+
+    def show_workspace(self, tab_idx: int = 0):
+        """Switches to the interactive workspace and activates designated workflow tab."""
+        if hasattr(self, 'main_stack'):
+            self.main_stack.setCurrentIndex(1)
+        if hasattr(self, 'right_pane') and 0 <= tab_idx < self.right_pane.count():
+            self.right_pane.setCurrentIndex(tab_idx)
+        self._on_tab_changed(tab_idx)
+
     def switch_to_step(self, index: int):
-        """Switches the right sidebar tab to the designated workflow step and synchronizes step navigation."""
-        if hasattr(self, 'right_pane') and 0 <= index < self.right_pane.count():
-            self.right_pane.setCurrentIndex(index)
-        self._sync_nav_step_buttons(index)
+        """Legacy helper to switch tab and display workspace."""
+        self.show_workspace(index)
 
     def _on_tab_changed(self, index: int):
         """Handles sidebar tab switching and updates top step navigation pills."""
-        self._sync_nav_step_buttons(index)
+        tab_key_map = {
+            0: "stitch",
+            1: "stitch",
+            2: "ai",
+            3: "export",
+            4: "live",
+            5: "cloud",
+        }
+        self._update_nav_highlight(tab_key_map.get(index, "stitch"))
 
-    def _sync_nav_step_buttons(self, active_index: int):
-        """Synchronizes top bar step buttons with the active tab index."""
-        if not hasattr(self, 'nav_step_btns'):
+    def _update_nav_highlight(self, active_key: str):
+        """Updates highlight styling for top navigation pills."""
+        pills = {
+            "home": getattr(self, "btn_nav_home", None),
+            "stitch": getattr(self, "btn_nav_stitch", None),
+            "ai": getattr(self, "btn_nav_ai", None),
+            "export": getattr(self, "btn_nav_export", None),
+            "live": getattr(self, "btn_nav_live", None),
+            "cloud": getattr(self, "btn_nav_cloud", None),
+        }
+        for key, btn in pills.items():
+            if btn is None:
+                continue
+            if key == active_key:
+                btn.setStyleSheet(
+                    "background-color: #2563eb; border: none; border-radius: 6px; "
+                    "font-weight: 700; font-size: 11px; padding: 5px 12px; color: #ffffff;"
+                )
+            else:
+                btn.setStyleSheet(
+                    "background-color: transparent; border: none; border-radius: 6px; "
+                    "font-weight: 700; font-size: 11px; padding: 5px 12px; color: #94a3b8;"
+                )
+
+    def _launch_workflow_stitching(self, fmt: str = "4:3"):
+        """Launches stitching workflow with preselected 4:3 or 16:9 profile."""
+        if fmt == "4:3":
+            if hasattr(self, 'radio_src_4_3'):
+                self.radio_src_4_3.setChecked(True)
+            self._on_source_format_radio_changed(True)
+        else:
+            if hasattr(self, 'radio_src_16_9'):
+                self.radio_src_16_9.setChecked(True)
+            self._on_source_format_radio_changed(True)
+        self.show_workspace(0)
+
+    def _on_source_format_radio_changed(self, checked: bool = True):
+        """Applies presets according to selected camera source aspect ratio."""
+        if not checked:
             return
-        for i, btn in enumerate(self.nav_step_btns):
-            btn.blockSignals(True)
-            btn.setChecked(i == active_index)
-            btn.blockSignals(False)
+        if hasattr(self, 'radio_src_4_3') and self.radio_src_4_3.isChecked():
+            if hasattr(self, 'lbl_src_format_desc'):
+                self.lbl_src_format_desc.setText("💡 Ausgabeprofil: 8:3 Taktik-Panorama (2560x960) | DJI RockSteady Dewarp aktiv.")
+                self.lbl_src_format_desc.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 600;")
+            self._load_rig_json_silently("dji_action4_1080p_4x3_dewarp_rocksteady.json")
+            self.set_view_mode_by_id("8:3")
+            if hasattr(self, 'combo_exp_format'):
+                idx = self.combo_exp_format.findData("8:3")
+                if idx >= 0:
+                    self.combo_exp_format.setCurrentIndex(idx)
+            if hasattr(self, 'status_bar'):
+                self.status_bar.showMessage("Profil vorgewählt: 4:3 DJI Action 4 (8:3 Taktik-Panorama)")
+        elif hasattr(self, 'radio_src_16_9') and self.radio_src_16_9.isChecked():
+            if hasattr(self, 'lbl_src_format_desc'):
+                self.lbl_src_format_desc.setText("💡 Ausgabeprofil: 32:9 Ultra-Panorama (3840x1080) | Standard 16:9 Rigs.")
+                self.lbl_src_format_desc.setStyleSheet("color: #34d399; font-size: 11px; font-weight: 600;")
+            self._load_rig_json_silently("default_rig_action4_80deg.json")
+            self.set_view_mode_by_id("32:9")
+            if hasattr(self, 'combo_exp_format'):
+                idx = self.combo_exp_format.findData("32:9")
+                if idx >= 0:
+                    self.combo_exp_format.setCurrentIndex(idx)
+            if hasattr(self, 'status_bar'):
+                self.status_bar.showMessage("Profil vorgewählt: 16:9 Standard-Cams (32:9 Ultra-Panorama)")
+
+    def _load_rig_json_silently(self, file_path: str) -> bool:
+        """Loads a rig profile JSON silently without popup dialogs."""
+        resolved_path = file_path
+        if not os.path.exists(resolved_path):
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            alt_path = os.path.join(base_dir, file_path)
+            if os.path.exists(alt_path):
+                resolved_path = alt_path
+            else:
+                logger.warning(f"Rig profile file not found: {file_path}")
+                return False
+        try:
+            with open(resolved_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            self.apply_settings_dict(data)
+            logger.info(f"Rig profile silently loaded from {resolved_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error loading rig JSON {resolved_path}: {e}")
+            return False
 
     def set_view_mode_by_id(self, mode_id: str):
         """Switches the viewport presentation mode by identifier (e.g. '32:9', '16:9_tactical', '16:9')."""
@@ -6911,6 +6860,652 @@ class MainWindow(QMainWindow):
 
         # Initial device enumeration
         self._refresh_uvc_devices()
+
+    # =========================================================================
+    # TAB 6: MATCHTRACK ONLINE CLOUD-UPLOAD & MATCH-ZUWEISUNG
+    # =========================================================================
+
+    def _init_cloud_tab(self):
+        """Initializes dedicated Tab 6: MatchTrack Online Cloud-Upload & Match-Zuweisung."""
+        self.tab_cloud = QWidget()
+        layout_tab_cloud = QVBoxLayout(self.tab_cloud)
+        layout_tab_cloud.setContentsMargins(4, 4, 4, 4)
+
+        scroll_cloud = QScrollArea()
+        scroll_cloud.setWidgetResizable(True)
+        widget_cloud = QWidget()
+        cloud_tab_layout = QVBoxLayout(widget_cloud)
+        cloud_tab_layout.setSpacing(12)
+
+        grp_cloud = QGroupBox("☁️ MatchTrack Online – Direkt-Upload & Match-Zuweisung")
+        cloud_box = QVBoxLayout(grp_cloud)
+        cloud_box.setSpacing(8)
+
+        # Connection Status Row
+        conn_row = QHBoxLayout()
+        self.lbl_cloud_status = QLabel("🔴 Nicht verbunden")
+        self.lbl_cloud_status.setStyleSheet(
+            "background-color: #1a1520; color: #f87171; border: 1px solid #3f202b; "
+            "border-radius: 8px; padding: 5px 10px; font-size: 11px; font-weight: 600;"
+        )
+        self.btn_cloud_login = QPushButton("🔑 Verbinden")
+        self.btn_cloud_login.setStyleSheet(
+            "background-color: #1e293b; border: 1px solid #3b82f6; color: #60a5fa; "
+            "font-weight: bold; padding: 5px 10px; border-radius: 8px; font-size: 11px;"
+        )
+        self.btn_cloud_login.clicked.connect(self.open_cloud_login_dialog)
+
+        self.btn_cloud_refresh = QToolButton()
+        self.btn_cloud_refresh.setText("🔄")
+        self.btn_cloud_refresh.setToolTip("Mannschaften & Spieleliste vom Server neu laden")
+        self.btn_cloud_refresh.setStyleSheet(
+            "background-color: #1a1a26; border: 1px solid #28283a; border-radius: 8px; padding: 5px 8px;"
+        )
+        self.btn_cloud_refresh.setEnabled(False)
+        self.btn_cloud_refresh.clicked.connect(self.refresh_cloud_teams_and_matches)
+
+        self.btn_cloud_logout = QPushButton("Abmelden")
+        self.btn_cloud_logout.setStyleSheet(
+            "background-color: #1a1a26; border: 1px solid #28283a; color: #94a3b8; "
+            "padding: 5px 8px; border-radius: 8px; font-size: 11px;"
+        )
+        self.btn_cloud_logout.setVisible(False)
+        self.btn_cloud_logout.clicked.connect(self.logout_cloud_session)
+
+        conn_row.addWidget(self.lbl_cloud_status, 1)
+        conn_row.addWidget(self.btn_cloud_login)
+        conn_row.addWidget(self.btn_cloud_refresh)
+        conn_row.addWidget(self.btn_cloud_logout)
+        cloud_box.addLayout(conn_row)
+
+        # Target Mode: New Match vs Existing Match
+        cloud_box.addWidget(QLabel("Ziel auf Plattform:"))
+        self.combo_cloud_target_mode = NoWheelComboBox()
+        self.combo_cloud_target_mode.addItem("✨ Neues Spiel auf MatchTrack Online anlegen", "new")
+        self.combo_cloud_target_mode.addItem("➕ Zu bestehendem Spiel hinzufügen / Perspektive ergänzen", "existing")
+        self.combo_cloud_target_mode.currentIndexChanged.connect(self.on_cloud_target_mode_changed)
+        cloud_box.addWidget(self.combo_cloud_target_mode)
+
+        self.lbl_cloud_existing = QLabel("Bestehendes Spiel auswählen:")
+        self.lbl_cloud_existing.setVisible(False)
+        cloud_box.addWidget(self.lbl_cloud_existing)
+
+        self.combo_cloud_existing_match = NoWheelComboBox()
+        self.combo_cloud_existing_match.setVisible(False)
+        self.combo_cloud_existing_match.currentIndexChanged.connect(self.on_cloud_existing_match_selected)
+        cloud_box.addWidget(self.combo_cloud_existing_match)
+
+        # Match Title
+        cloud_box.addWidget(QLabel("Spielname / Begegnung:"))
+        self.txt_cloud_match_name = QLineEdit()
+        self.txt_cloud_match_name.setPlaceholderText("z.B. SG Musterstadt vs. FC Beispiel")
+        self.txt_cloud_match_name.setStyleSheet(
+            "background-color: #111118; border: 1px solid #282839; border-radius: 8px; padding: 6px 10px; color: #f4f4f6;"
+        )
+        cloud_box.addWidget(self.txt_cloud_match_name)
+
+        # Team & Category Row
+        row_team_cat = QHBoxLayout()
+        col_team = QVBoxLayout()
+        col_team.addWidget(QLabel("Mannschaft:"))
+        self.combo_cloud_team = NoWheelComboBox()
+        self.combo_cloud_team.addItem("— Bitte erst verbinden —", "")
+        col_team.addWidget(self.combo_cloud_team)
+
+        col_cat = QVBoxLayout()
+        col_cat.addWidget(QLabel("Kategorie:"))
+        self.combo_cloud_category = NoWheelComboBox()
+        for cat_name in ["Punktspiel", "Testspiel", "Pokalspiel", "Turnier", "Training", "Trainingslager"]:
+            self.combo_cloud_category.addItem(cat_name, cat_name)
+        col_cat.addWidget(self.combo_cloud_category)
+
+        row_team_cat.addLayout(col_team, 3)
+        row_team_cat.addLayout(col_cat, 2)
+        cloud_box.addLayout(row_team_cat)
+
+        # Recording Date Row
+        row_rec_date = QHBoxLayout()
+        row_rec_date.addWidget(QLabel("Spieltag / Aufnahmedatum:"))
+        self.date_cloud_recording = QDateEdit()
+        self.date_cloud_recording.setCalendarPopup(True)
+        self.date_cloud_recording.setDisplayFormat("dd.MM.yyyy")
+        self.date_cloud_recording.setDate(QDate.currentDate())
+        self.date_cloud_recording.setStyleSheet(
+            "background-color: #111118; border: 1px solid #282839; border-radius: 8px; padding: 5px 8px; color: #f4f4f6;"
+        )
+        row_rec_date.addWidget(self.date_cloud_recording, 1)
+        cloud_box.addLayout(row_rec_date)
+
+        # Upload Options Checkboxes
+        self.chk_cloud_auto_upload = QCheckBox("🚀 Nach dem Rendern automatisch zu MatchTrack Online hochladen")
+        self.chk_cloud_auto_upload.setChecked(False)
+        self.chk_cloud_auto_upload.setStyleSheet("font-weight: 700; color: #10b981; margin-top: 4px;")
+        cloud_box.addWidget(self.chk_cloud_auto_upload)
+
+        self.chk_cloud_notify = QCheckBox("🔔 Mannschaftsmitglieder nach Upload benachrichtigen")
+        self.chk_cloud_notify.setChecked(True)
+        self.chk_cloud_notify.setStyleSheet("color: #cbd5e1;")
+        cloud_box.addWidget(self.chk_cloud_notify)
+
+        self.chk_cloud_fast_hls = QCheckBox("⚡ Schnelle Web-Bereitstellung (Direktes HLS ohne Re-Encode falls H.264)")
+        self.chk_cloud_fast_hls.setChecked(False)
+        self.chk_cloud_fast_hls.setStyleSheet("color: #38bdf8;")
+        self.chk_cloud_fast_hls.setToolTip(
+            "Wenn aktiviert, überspringt der Server die erneute H.264-Umkodierung vor der HLS-Segmentierung."
+        )
+        cloud_box.addWidget(self.chk_cloud_fast_hls)
+
+        # Password protection option
+        pw_prot_row = QHBoxLayout()
+        self.chk_cloud_password = QCheckBox("🔒 Spiel mit Passwort schützen:")
+        self.chk_cloud_password.setStyleSheet("color: #f59e0b; font-weight: 600;")
+        self.txt_cloud_password = QLineEdit()
+        self.txt_cloud_password.setPlaceholderText("Spiel-Passwort...")
+        self.txt_cloud_password.setVisible(False)
+        self.txt_cloud_password.setStyleSheet(
+            "background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6;"
+        )
+        self.chk_cloud_password.toggled.connect(self.txt_cloud_password.setVisible)
+        pw_prot_row.addWidget(self.chk_cloud_password)
+        pw_prot_row.addWidget(self.txt_cloud_password, 1)
+        cloud_box.addLayout(pw_prot_row)
+
+        # Multi-Stream Concurrency (Upload-Geschwindigkeit)
+        row_concurrency = QHBoxLayout()
+        lbl_concurrency = QLabel("⚡ Upload-Streams:")
+        lbl_concurrency.setStyleSheet("color: #38bdf8; font-weight: 600; font-size: 11px;")
+        self.combo_cloud_concurrency = QComboBox()
+        self.combo_cloud_concurrency.addItem("⚡ 3 Streams (Empfohlen - bis 50 Mbit/s)", 3)
+        self.combo_cloud_concurrency.addItem("🚀 4 Streams (High-Speed - 100+ Mbit/s)", 4)
+        self.combo_cloud_concurrency.addItem("⚡ 2 Streams (Ausgewogen)", 2)
+        self.combo_cloud_concurrency.addItem("🐢 1 Stream (Schonend)", 1)
+        self.combo_cloud_concurrency.setStyleSheet(
+            "background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6;"
+        )
+        self.combo_cloud_concurrency.setToolTip(
+            "Parallele Upload-Streams nutzen deine Internetleitung voll aus und verhindern Bandbreiten-Drosselungen einzelner TCP-Verbindungen."
+        )
+        row_concurrency.addWidget(lbl_concurrency)
+        row_concurrency.addWidget(self.combo_cloud_concurrency, 1)
+        cloud_box.addLayout(row_concurrency)
+
+        # Dedicated file pickers for finished Broadcast (16:9) & Panorama (32:9 / 8:3) videos
+        files_frame = QFrame()
+        files_frame.setStyleSheet(
+            "QFrame { background-color: #101018; border: 1px solid #242436; border-radius: 8px; padding: 6px; }"
+        )
+        files_layout = QVBoxLayout(files_frame)
+        files_layout.setContentsMargins(6, 6, 6, 6)
+        files_layout.setSpacing(6)
+
+        lbl_files_hdr = QLabel("🎬 Fertige Videos für Upload (einzeln oder beide zusammen):")
+        lbl_files_hdr.setStyleSheet("color: #93c5fd; font-weight: 700; font-size: 11px; border: none; padding: 0;")
+        files_layout.addWidget(lbl_files_hdr)
+
+        # Row 1: 16:9 Broadcast Video
+        row_f16 = QHBoxLayout()
+        row_f16.setSpacing(4)
+        lbl_f16 = QLabel("🎥 Broadcast (16:9):")
+        lbl_f16.setFixedWidth(122)
+        lbl_f16.setStyleSheet("color: #cbd5e1; font-size: 11px; border: none;")
+        self.txt_cloud_video_16x9 = QLineEdit()
+        self.txt_cloud_video_16x9.setPlaceholderText("Optional: Fertiges 16:9 Broadcast-Video (.mp4)...")
+        self.txt_cloud_video_16x9.setStyleSheet(
+            "background-color: #0b0b10; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #e2e8f0; font-size: 11px;"
+        )
+        btn_pick_16x9 = QPushButton("📂 Wählen…")
+        btn_pick_16x9.setStyleSheet(
+            "background-color: #1e293b; border: 1px solid #3b82f6; color: #93c5fd; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;"
+        )
+        btn_pick_16x9.clicked.connect(self.pick_cloud_16x9_video)
+        btn_clr_16x9 = QToolButton()
+        btn_clr_16x9.setText("✕")
+        btn_clr_16x9.setToolTip("Auswahl für 16:9 Broadcast-Video leeren")
+        btn_clr_16x9.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 3px 6px; color: #94a3b8;")
+        btn_clr_16x9.clicked.connect(lambda: self.txt_cloud_video_16x9.clear())
+        row_f16.addWidget(lbl_f16)
+        row_f16.addWidget(self.txt_cloud_video_16x9, 1)
+        row_f16.addWidget(btn_pick_16x9)
+        row_f16.addWidget(btn_clr_16x9)
+        files_layout.addLayout(row_f16)
+
+        # Row 2: Panorama Video (32:9 / 8:3 / 21:10)
+        row_fpano = QHBoxLayout()
+        row_fpano.setSpacing(4)
+        lbl_fpano = QLabel("🌟 Panorama (32:9/8:3):")
+        lbl_fpano.setFixedWidth(122)
+        lbl_fpano.setStyleSheet("color: #cbd5e1; font-size: 11px; border: none;")
+        self.txt_cloud_video_pano = QLineEdit()
+        self.txt_cloud_video_pano.setPlaceholderText("Optional: Fertiges Panorama-Video (.mp4)...")
+        self.txt_cloud_video_pano.setStyleSheet(
+            "background-color: #0b0b10; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #e2e8f0; font-size: 11px;"
+        )
+        btn_pick_pano = QPushButton("📂 Wählen…")
+        btn_pick_pano.setStyleSheet(
+            "background-color: #1e293b; border: 1px solid #3b82f6; color: #93c5fd; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;"
+        )
+        btn_pick_pano.clicked.connect(self.pick_cloud_pano_video)
+        btn_clr_pano = QToolButton()
+        btn_clr_pano.setText("✕")
+        btn_clr_pano.setToolTip("Auswahl für Panorama-Video leeren")
+        btn_clr_pano.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 3px 6px; color: #94a3b8;")
+        btn_clr_pano.clicked.connect(lambda: self.txt_cloud_video_pano.clear())
+        row_fpano.addWidget(lbl_fpano)
+        row_fpano.addWidget(self.txt_cloud_video_pano, 1)
+        row_fpano.addWidget(btn_pick_pano)
+        row_fpano.addWidget(btn_clr_pano)
+        files_layout.addLayout(row_fpano)
+
+        cloud_box.addWidget(files_frame)
+
+        # Manual Upload Action Button
+        self.btn_cloud_upload_now = QPushButton("☁️ Fertige Videos (Broadcast & Panorama) jetzt hochladen")
+        self.btn_cloud_upload_now.setStyleSheet(
+            "background-color: #059669; font-weight: bold; padding: 10px; font-size: 12px; color: white; border-radius: 10px;"
+        )
+        self.btn_cloud_upload_now.clicked.connect(self.start_manual_cloud_upload_dialog)
+        cloud_box.addWidget(self.btn_cloud_upload_now)
+
+        self.cloud_progress_bar = QProgressBar()
+        self.cloud_progress_bar.setValue(0)
+        cloud_box.addWidget(self.cloud_progress_bar)
+
+        self.lbl_cloud_upload_stats = QLabel("Bereit für Cloud-Upload.")
+        self.lbl_cloud_upload_stats.setStyleSheet("color: #8e8e9c; font-size: 11px;")
+        self.lbl_cloud_upload_stats.setWordWrap(True)
+        cloud_box.addWidget(self.lbl_cloud_upload_stats)
+
+        cloud_btn_bottom = QHBoxLayout()
+        self.btn_cloud_cancel = QPushButton("Upload abbrechen")
+        self.btn_cloud_cancel.setEnabled(False)
+        self.btn_cloud_cancel.setStyleSheet(
+            "background-color: #1a1a26; border: 1px solid #28283a; border-radius: 8px; padding: 6px; font-size: 11px; color: #94a3b8;"
+        )
+        self.btn_cloud_cancel.clicked.connect(self.cancel_cloud_upload)
+
+        self.btn_cloud_open_browser = QPushButton("🌐 Spiel im Browser öffnen")
+        self.btn_cloud_open_browser.setEnabled(False)
+        self.btn_cloud_open_browser.setStyleSheet(
+            "background-color: #1e293b; border: 1px solid #3b82f6; border-radius: 8px; padding: 6px; font-size: 11px; color: #60a5fa; font-weight: bold;"
+        )
+        self.btn_cloud_open_browser.clicked.connect(self.open_last_uploaded_match_in_browser)
+
+        cloud_btn_bottom.addWidget(self.btn_cloud_cancel)
+        cloud_btn_bottom.addWidget(self.btn_cloud_open_browser)
+        cloud_box.addLayout(cloud_btn_bottom)
+
+        cloud_tab_layout.addWidget(grp_cloud)
+        cloud_tab_layout.addStretch()
+
+        scroll_cloud.setWidget(widget_cloud)
+        layout_tab_cloud.addWidget(scroll_cloud)
+
+    # =========================================================================
+    # START-ZENTRALE / LANDINGPAGE WORKFLOW HUB
+    # =========================================================================
+
+    def _init_landing_page(self):
+        """Initializes the modern Workflow Hub / Landing Page."""
+        self.landing_widget = QWidget()
+        layout_outer = QVBoxLayout(self.landing_widget)
+        layout_outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setStyleSheet("QScrollArea { background-color: #0b0b12; border: none; }")
+
+        content = QWidget()
+        content.setStyleSheet("QWidget { background-color: #0b0b12; }")
+        layout_main = QVBoxLayout(content)
+        layout_main.setContentsMargins(36, 24, 36, 24)
+        layout_main.setSpacing(20)
+
+        # -------------------------------------------------------------
+        # 1. Header Hero Banner
+        # -------------------------------------------------------------
+        header_frame = QFrame()
+        header_frame.setStyleSheet("""
+            QFrame {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #131322, stop:0.5 #18182e, stop:1 #11111d);
+                border: 1px solid #23233a;
+                border-radius: 14px;
+                padding: 18px 24px;
+            }
+        """)
+        header_layout = QVBoxLayout(header_frame)
+        header_layout.setSpacing(6)
+
+        badge_row = QHBoxLayout()
+        lbl_badge = QLabel("⚽ MATCHTRACK STITCHER PRO v1.5.3  •  WORKFLOW-ZENTRALE")
+        lbl_badge.setStyleSheet("""
+            background-color: #1e1b4b;
+            color: #818cf8;
+            border: 1px solid #3730a3;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: 800;
+            padding: 3px 10px;
+            letter-spacing: 0.8px;
+        """)
+        badge_row.addWidget(lbl_badge)
+        badge_row.addStretch()
+        header_layout.addLayout(badge_row)
+
+        lbl_hero_title = QLabel("Willkommen im MatchTrack Studio")
+        lbl_hero_title.setStyleSheet("font-size: 24px; font-weight: 900; color: #ffffff; margin-top: 4px;")
+        header_layout.addWidget(lbl_hero_title)
+
+        lbl_hero_desc = QLabel(
+            "Wählen Sie einen geführten Arbeitsbereich für Ihre Spielaufnahmen, Analyse und Live-Übertragung "
+            "oder springen Sie direkt in die vollständige Arbeitsfläche:"
+        )
+        lbl_hero_desc.setStyleSheet("font-size: 13px; color: #94a3b8; line-height: 1.4;")
+        lbl_hero_desc.setWordWrap(True)
+        header_layout.addWidget(lbl_hero_desc)
+
+        layout_main.addWidget(header_frame)
+
+        # -------------------------------------------------------------
+        # 2. Hero Action Cards (2x2 Grid)
+        # -------------------------------------------------------------
+        grid = QGridLayout()
+        grid.setSpacing(16)
+
+        card_style_base = """
+            QFrame {
+                background-color: #12121c;
+                border: 1px solid #202034;
+                border-radius: 14px;
+                padding: 16px;
+            }
+            QFrame:hover {
+                border-color: #3b82f6;
+                background-color: #151524;
+            }
+        """
+
+        # ------------------ CARD 1: Stitching & Panorama ------------------
+        card1 = QFrame()
+        card1.setStyleSheet(card_style_base)
+        card1_layout = QVBoxLayout(card1)
+        card1_layout.setSpacing(10)
+
+        # Top Header
+        c1_head = QHBoxLayout()
+        lbl_c1_icon = QLabel("🧵")
+        lbl_c1_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
+        c1_title_box = QVBoxLayout()
+        lbl_c1_title = QLabel("1. Video-Stitching & Panorama")
+        lbl_c1_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
+        lbl_c1_sub = QLabel("Dual-Cam Stitching • Horizont & Nahtkorrektur")
+        lbl_c1_sub.setStyleSheet("font-size: 11px; color: #38bdf8; font-weight: 600; border: none; background: transparent;")
+        c1_title_box.addWidget(lbl_c1_title)
+        c1_title_box.addWidget(lbl_c1_sub)
+        c1_head.addWidget(lbl_c1_icon)
+        c1_head.addLayout(c1_title_box, 1)
+        card1_layout.addLayout(c1_head)
+
+        lbl_c1_desc = QLabel(
+            "Fügt zwei Kameravideos nahtlos zu einem hochauflösenden Taktik-Panorama zusammen. "
+            "Wählen Sie das Quellformat Ihrer Kameras für automatische Voreinstellungen:"
+        )
+        lbl_c1_desc.setWordWrap(True)
+        lbl_c1_desc.setStyleSheet("font-size: 12px; color: #94a3b8; border: none; background: transparent;")
+        card1_layout.addWidget(lbl_c1_desc)
+
+        # Quick format launch buttons
+        lbl_fmt_pick = QLabel("📷 Quellformat wählen & direkt starten:")
+        lbl_fmt_pick.setStyleSheet("font-size: 11px; font-weight: 700; color: #cbd5e1; margin-top: 4px; border: none; background: transparent;")
+        card1_layout.addWidget(lbl_fmt_pick)
+
+        row_c1_btns = QHBoxLayout()
+        btn_start_4_3 = QPushButton("📹 4:3 DJI Action 4\n(8:3 Taktik-Panorama)")
+        btn_start_4_3.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #0284c7, stop:1 #0369a1);
+                color: #ffffff;
+                font-weight: 800;
+                font-size: 11px;
+                padding: 10px 8px;
+                border-radius: 9px;
+                border: none;
+                text-align: center;
+            }
+            QPushButton:hover { background: #0ea5e9; }
+        """)
+        btn_start_4_3.clicked.connect(lambda: self._launch_workflow_stitching("4:3"))
+
+        btn_start_16_9 = QPushButton("📷 16:9 Standard Cams\n(32:9 Ultra-Panorama)")
+        btn_start_16_9.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #059669, stop:1 #047857);
+                color: #ffffff;
+                font-weight: 800;
+                font-size: 11px;
+                padding: 10px 8px;
+                border-radius: 9px;
+                border: none;
+                text-align: center;
+            }
+            QPushButton:hover { background: #10b981; }
+        """)
+        btn_start_16_9.clicked.connect(lambda: self._launch_workflow_stitching("16:9"))
+
+        row_c1_btns.addWidget(btn_start_4_3)
+        row_c1_btns.addWidget(btn_start_16_9)
+        card1_layout.addLayout(row_c1_btns)
+
+        card1_layout.addStretch()
+        grid.addWidget(card1, 0, 0)
+
+        # ------------------ CARD 2: KI-Broadcast & Tracking ------------------
+        card2 = QFrame()
+        card2.setStyleSheet(card_style_base)
+        card2_layout = QVBoxLayout(card2)
+        card2_layout.setSpacing(10)
+
+        c2_head = QHBoxLayout()
+        lbl_c2_icon = QLabel("🎯")
+        lbl_c2_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
+        c2_title_box = QVBoxLayout()
+        lbl_c2_title = QLabel("2. KI-Broadcast & Follow-Cam")
+        lbl_c2_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
+        lbl_c2_sub = QLabel("Virtuelle 16:9 TV-Kamera • Ball- & Spielertracking")
+        lbl_c2_sub.setStyleSheet("font-size: 11px; color: #a78bfa; font-weight: 600; border: none; background: transparent;")
+        c2_title_box.addWidget(lbl_c2_title)
+        c2_title_box.addWidget(lbl_c2_sub)
+        c2_head.addWidget(lbl_c2_icon)
+        c2_head.addLayout(c2_title_box, 1)
+        card2_layout.addLayout(c2_head)
+
+        lbl_c2_desc = QLabel(
+            "Automatische Kameraführung im 16:9 TV-Format. KI-Fokus auf den Ball, dynamischer Zoom "
+            "bei Spielverlagerungen, 2D Radar-Minimap und kalibrierte Abseitslinie."
+        )
+        lbl_c2_desc.setWordWrap(True)
+        lbl_c2_desc.setStyleSheet("font-size: 12px; color: #94a3b8; border: none; background: transparent;")
+        card2_layout.addWidget(lbl_c2_desc)
+
+        # Badges row
+        badges_c2 = QHBoxLayout()
+        for b_text in ["YOLOv8 Ball-Fokus", "Dynamischer Zoom", "2D Minimap", "VAR-Linie"]:
+            b_lbl = QLabel(b_text)
+            b_lbl.setStyleSheet("background: #181829; border: 1px solid #282844; border-radius: 5px; color: #94a3b8; font-size: 10px; font-weight: 600; padding: 2px 6px;")
+            badges_c2.addWidget(b_lbl)
+        badges_c2.addStretch()
+        card2_layout.addLayout(badges_c2)
+
+        card2_layout.addStretch()
+
+        btn_c2_action = QPushButton("🎯 KI-Broadcast Konfigurieren ➔")
+        btn_c2_action.setStyleSheet("""
+            QPushButton {
+                background-color: #2563eb;
+                color: #ffffff;
+                font-weight: 800;
+                font-size: 12px;
+                padding: 10px;
+                border-radius: 9px;
+                border: none;
+            }
+            QPushButton:hover { background-color: #3b82f6; }
+        """)
+        btn_c2_action.clicked.connect(lambda: self.show_workspace(2))
+        card2_layout.addWidget(btn_c2_action)
+
+        grid.addWidget(card2, 0, 1)
+
+        # ------------------ CARD 3: Live-Streaming ------------------
+        card3 = QFrame()
+        card3.setStyleSheet(card_style_base)
+        card3_layout = QVBoxLayout(card3)
+        card3_layout.setSpacing(10)
+
+        c3_head = QHBoxLayout()
+        lbl_c3_icon = QLabel("🔴")
+        lbl_c3_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
+        c3_title_box = QVBoxLayout()
+        lbl_c3_title = QLabel("3. Live-Streaming Studio")
+        lbl_c3_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
+        lbl_c3_sub = QLabel("OBS-Style RTMP Multi-Stream • Ohne Mimo App")
+        lbl_c3_sub.setStyleSheet("font-size: 11px; color: #f43f5e; font-weight: 600; border: none; background: transparent;")
+        c3_title_box.addWidget(lbl_c3_title)
+        c3_title_box.addWidget(lbl_c3_sub)
+        c3_head.addWidget(lbl_c3_icon)
+        c3_head.addLayout(c3_title_box, 1)
+        card3_layout.addLayout(c3_head)
+
+        lbl_c3_desc = QLabel(
+            "Direktes Live-Streaming an MatchTrack Cloud, YouTube oder Twitch. Unterstützt DJI BLE-Kopplung, "
+            "normale USB-Webcams, LTE 720p/480p Presets und flexible Feed-Kanal-Zuweisung."
+        )
+        lbl_c3_desc.setWordWrap(True)
+        lbl_c3_desc.setStyleSheet("font-size: 12px; color: #94a3b8; border: none; background: transparent;")
+        card3_layout.addWidget(lbl_c3_desc)
+
+        badges_c3 = QHBoxLayout()
+        for b_text in ["Direkt-RTMP", "USB-Cams & DJI BLE", "LTE 720p/480p", "Multi-Kanal"]:
+            b_lbl = QLabel(b_text)
+            b_lbl.setStyleSheet("background: #181829; border: 1px solid #282844; border-radius: 5px; color: #94a3b8; font-size: 10px; font-weight: 600; padding: 2px 6px;")
+            badges_c3.addWidget(b_lbl)
+        badges_c3.addStretch()
+        card3_layout.addLayout(badges_c3)
+
+        card3_layout.addStretch()
+
+        btn_c3_action = QPushButton("🔴 Live-Streaming Einrichten ➔")
+        btn_c3_action.setStyleSheet("""
+            QPushButton {
+                background-color: #e11d48;
+                color: #ffffff;
+                font-weight: 800;
+                font-size: 12px;
+                padding: 10px;
+                border-radius: 9px;
+                border: none;
+            }
+            QPushButton:hover { background-color: #f43f5e; }
+        """)
+        btn_c3_action.clicked.connect(lambda: self.show_workspace(4))
+        card3_layout.addWidget(btn_c3_action)
+
+        grid.addWidget(card3, 1, 0)
+
+        # ------------------ CARD 4: Cloud-Upload ------------------
+        card4 = QFrame()
+        card4.setStyleSheet(card_style_base)
+        card4_layout = QVBoxLayout(card4)
+        card4_layout.setSpacing(10)
+
+        c4_head = QHBoxLayout()
+        lbl_c4_icon = QLabel("☁️")
+        lbl_c4_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
+        c4_title_box = QVBoxLayout()
+        lbl_c4_title = QLabel("4. MatchTrack Cloud-Upload")
+        lbl_c4_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
+        lbl_c4_sub = QLabel("Fertige Videos hochladen & Matches verwalten")
+        lbl_c4_sub.setStyleSheet("font-size: 11px; color: #34d399; font-weight: 600; border: none; background: transparent;")
+        c4_title_box.addWidget(lbl_c4_title)
+        c4_title_box.addWidget(lbl_c4_sub)
+        c4_head.addWidget(lbl_c4_icon)
+        c4_head.addLayout(c4_title_box, 1)
+        card4_layout.addLayout(c4_head)
+
+        lbl_c4_desc = QLabel(
+            "Laden Sie fertige Broadcast- und Panorama-Videos direkt auf die Vereins-Plattform hoch. "
+            "Automatische Spielanlage, Team-Zuweisung und Highspeed Multi-Stream Upload."
+        )
+        lbl_c4_desc.setWordWrap(True)
+        lbl_c4_desc.setStyleSheet("font-size: 12px; color: #94a3b8; border: none; background: transparent;")
+        card4_layout.addWidget(lbl_c4_desc)
+
+        badges_c4 = QHBoxLayout()
+        for b_text in ["Highspeed Multi-Stream", "Automatische Spielanlage", "Team-Zuordnung"]:
+            b_lbl = QLabel(b_text)
+            b_lbl.setStyleSheet("background: #181829; border: 1px solid #282844; border-radius: 5px; color: #94a3b8; font-size: 10px; font-weight: 600; padding: 2px 6px;")
+            badges_c4.addWidget(b_lbl)
+        badges_c4.addStretch()
+        card4_layout.addLayout(badges_c4)
+
+        card4_layout.addStretch()
+
+        btn_c4_action = QPushButton("☁️ Cloud-Upload Öffnen ➔")
+        btn_c4_action.setStyleSheet("""
+            QPushButton {
+                background-color: #059669;
+                color: #ffffff;
+                font-weight: 800;
+                font-size: 12px;
+                padding: 10px;
+                border-radius: 9px;
+                border: none;
+            }
+            QPushButton:hover { background-color: #10b981; }
+        """)
+        btn_c4_action.clicked.connect(lambda: self.show_workspace(5))
+        card4_layout.addWidget(btn_c4_action)
+
+        grid.addWidget(card4, 1, 1)
+
+        layout_main.addLayout(grid)
+
+        # -------------------------------------------------------------
+        # 3. Bottom Quick Navigation Bar
+        # -------------------------------------------------------------
+        bottom_frame = QFrame()
+        bottom_frame.setStyleSheet("""
+            QFrame {
+                background-color: #12121a;
+                border: 1px solid #1e1e2d;
+                border-radius: 12px;
+                padding: 12px 18px;
+            }
+        """)
+        bottom_layout = QHBoxLayout(bottom_frame)
+        bottom_layout.setSpacing(12)
+
+        lbl_quick = QLabel("⚡ Schnelleinstieg:")
+        lbl_quick.setStyleSheet("font-weight: 700; color: #cbd5e1; font-size: 11px; border: none; background: transparent;")
+        bottom_layout.addWidget(lbl_quick)
+
+        btn_quick_prof = QPushButton("📁 Profil / Projekt öffnen")
+        btn_quick_prof.setStyleSheet("background-color: #1c1c28; border: 1px solid #2a2a3e; font-size: 11px; padding: 7px 14px; border-radius: 8px; color: #cbd5e1; font-weight: 600;")
+        btn_quick_prof.clicked.connect(self.load_full_profile_from)
+        bottom_layout.addWidget(btn_quick_prof)
+
+        btn_quick_work = QPushButton("🖥️ Direkt zur Arbeitsfläche wechseln (Alle Werkzeuge)")
+        btn_quick_work.setStyleSheet("background-color: #1e293b; border: 1px solid #3b82f6; font-size: 11px; padding: 7px 14px; border-radius: 8px; color: #60a5fa; font-weight: 700;")
+        btn_quick_work.clicked.connect(lambda: self.show_workspace(0))
+        bottom_layout.addWidget(btn_quick_work)
+
+        bottom_layout.addStretch()
+
+        layout_main.addWidget(bottom_frame)
+        layout_main.addStretch()
+
+        scroll_area.setWidget(content)
+        layout_outer.addWidget(scroll_area)
 
     def _on_stream_resolution_changed(self, idx: int):
         res = self.combo_stream_resolution.currentData()
