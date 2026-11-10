@@ -282,6 +282,51 @@ def test_camera_presets():
     print("1080p 4:3 Dewarp RockSteady preset verified.")
 
 
+def test_8x3_panorama_pipeline():
+    print("Testing 8:3 Panorama Pipeline for 4:3 Camera Inputs...")
+    from matchtrack.stitcher_engine import StitcherEngine
+    from matchtrack.rig_geometry import RigConfiguration, CameraPose
+    from matchtrack.camera_model import CAMERA_PRESETS
+    from matchtrack.lut_generator import generate_remap_luts, apply_stitch
+
+    preset = CAMERA_PRESETS["DJI_Action4_1080p_4_3_Dewarp_RockSteady"]
+    rig_4x3 = RigConfiguration(
+        left_camera=preset,
+        right_camera=preset,
+        left_pose=CameraPose(yaw=-36.5, pitch=-2.0),
+        right_pose=CameraPose(yaw=36.5, pitch=-2.0),
+        pano_hfov=142.0
+    )
+    engine = StitcherEngine(rig_4x3)
+    assert engine.is_4_3_mode() is True
+    assert abs(engine.get_panorama_aspect() - (8.0 / 3.0)) < 1e-4
+
+    # 1. Remap LUTs for 8:3 resolution (2880 x 1080)
+    luts_8x3 = generate_remap_luts(rig_4x3, 2880, 1080)
+    assert luts_8x3.out_width == 2880
+    assert luts_8x3.out_height == 1080
+    assert luts_8x3.map_x_left.shape == (1080, 2880)
+
+    # 2. Test stitch with synthetic 4:3 frames (1440x1080)
+    frame_l = np.zeros((1080, 1440, 3), dtype=np.uint8)
+    frame_l[:, :, 0] = 200 # Blue
+    frame_r = np.zeros((1080, 1440, 3), dtype=np.uint8)
+    frame_r[:, :, 2] = 200 # Red
+    stitched_8x3 = apply_stitch(frame_l, frame_r, luts_8x3)
+    assert stitched_8x3.shape == (1080, 2880, 3)
+
+    # 3. AI Tracker 16:9 crop inside 8:3 panorama (width ratio should be 2/3 at 1.0x zoom)
+    crop_w, crop_h = engine.ai_broadcast.get_crop_aspect_ratios(8.0 / 3.0)
+    assert abs(crop_w - (2.0 / 3.0)) < 1e-3
+    assert abs(crop_h - 1.0) < 1e-3
+
+    crop_rect = engine.ai_broadcast.get_crop_rect(2880, 1080)
+    assert crop_rect[2] == 1920
+    assert crop_rect[3] == 1080
+
+    print("8:3 Panorama Pipeline for 4:3 cameras verified successfully.")
+
+
 def test_video_trimming_logic():
     print("Testing In/Out Video Trimming reference logic...")
     from matchtrack.stitcher_engine import StitcherEngine
@@ -678,6 +723,7 @@ def test_standalone_32x9_to_16x9_tactical():
 
 if __name__ == "__main__":
     test_camera_presets()
+    test_8x3_panorama_pipeline()
     test_lut_generation_and_stitch()
     test_21x10_lut_generation_and_stitch()
     test_32x9_to_21x10_conversion()

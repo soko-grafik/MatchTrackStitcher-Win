@@ -214,16 +214,17 @@ class AutoCamTracker:
 
         return self.cam_x, self.cam_y
 
-    def get_crop_aspect_ratios(self) -> Tuple[float, float]:
-        """Returns normalized (crop_width, crop_height) inside 32:9."""
+    def get_crop_aspect_ratios(self, pano_aspect: float = 32.0 / 9.0) -> Tuple[float, float]:
+        """Returns normalized (crop_width, crop_height) inside panorama."""
         zoom = max(1.0, self.config.zoom_factor)
-        crop_w = (0.5 / zoom)
+        crop_w = min(1.0, ((16.0 / 9.0) / pano_aspect) / zoom)
         crop_h = (1.0 / zoom)
         return crop_w, crop_h
 
     def get_crop_rect(self, pano_width: int, pano_height: int) -> Tuple[int, int, int, int]:
-        """Computes pixel bounding box (x, y, w, h) for 16:9 crop inside 32:9."""
-        crop_w_norm, crop_h_norm = self.get_crop_aspect_ratios()
+        """Computes pixel bounding box (x, y, w, h) for 16:9 crop inside panorama."""
+        pano_aspect = float(pano_width) / max(1.0, float(pano_height))
+        crop_w_norm, crop_h_norm = self.get_crop_aspect_ratios(pano_aspect)
         
         box_w = int(round(pano_width * crop_w_norm))
         box_h = int(round(pano_height * crop_h_norm))

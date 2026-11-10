@@ -225,9 +225,13 @@ def generate_remap_luts(rig: RigConfiguration, out_width: int, out_height: int) 
     # Cylindrical focal length
     f_pano = (out_width * 0.5) / np.tan(hfov_rad * 0.5)
     
-    # Anamorphic horizontal squeeze factor adapted to target aspect ratio (e.g. 21:10 = 2.1 vs 32:9 = 3.555)
+    # Anamorphic horizontal squeeze factor adapted to target aspect ratio (8:3 for 4:3 cameras, 32:9 for 16:9 cameras, 21:10, etc.)
     aspect = float(out_width) / max(1.0, float(out_height))
-    base_aspect = 32.0 / 9.0
+    cam = getattr(rig, 'left_camera', None)
+    cam_w = getattr(cam, 'image_width', 1920)
+    cam_h = getattr(cam, 'image_height', 1080)
+    cam_ar = float(cam_w) / max(1.0, float(cam_h))
+    base_aspect = (8.0 / 3.0) if cam_ar < 1.55 else (32.0 / 9.0)
     aspect_ratio_scale = base_aspect / aspect if aspect > 0.1 else 1.0
 
     raw_squeeze = getattr(rig, 'horizontal_squeeze', 1.0)

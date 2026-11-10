@@ -121,6 +121,22 @@ class StitcherEngine:
         """True if operating directly on a single pre-stitched 32:9 panorama video file."""
         return self.video_panorama is not None
 
+    def is_4_3_mode(self) -> bool:
+        """Returns True if the active rig or input videos are in 4:3 mode (generating an 8:3 panorama)."""
+        if hasattr(self, 'rig') and self.rig and hasattr(self.rig, 'left_camera') and self.rig.left_camera:
+            w = self.rig.left_camera.image_width
+            h = self.rig.left_camera.image_height
+            if h > 0 and (w / h) < 1.55:
+                return True
+        if self.video_left and self.video_left.height > 0:
+            if (self.video_left.width / self.video_left.height) < 1.55:
+                return True
+        return False
+
+    def get_panorama_aspect(self) -> float:
+        """Returns nominal canvas aspect ratio (8.0/3.0 for 4:3 inputs, 32.0/9.0 for 16:9 inputs)."""
+        return (8.0 / 3.0) if self.is_4_3_mode() else (32.0 / 9.0)
+
     def close(self):
         """Releases all open video capture resources."""
         if self.video_left:
@@ -354,16 +370,17 @@ class StitcherEngine:
             logger.warning(f"Konnte Speicherplatz für Zielordner {target_dir} nicht prüfen: {e}")
 
         tactical_map_x, tactical_map_y = None, None
-        # Intermediate stitch resolution for 16:9 modes
+        # Intermediate stitch resolution for 16:9 modes (adapted for 8:3 in 4:3 mode or 32:9 in 16:9 mode)
+        pano_aspect = self.get_panorama_aspect()
         if mode == "16:9_autocam":
             inter_h = max(out_height, 1440)
-            inter_w = int(round(inter_h * (32.0 / 9.0)))
+            inter_w = int(round(inter_h * pano_aspect))
             luts = self.update_luts(inter_w, inter_h)
             self.ai_broadcast.reset()
-            logger.info(f"16:9 AutoCam Zwischenauflösung: {inter_w}x{inter_h}")
+            logger.info(f"16:9 AutoCam Zwischenauflösung: {inter_w}x{inter_h} (Aspekt {pano_aspect:.2f})")
         elif mode == "16:9_tactical":
             inter_h = max(out_height, 1080)
-            inter_w = int(round(inter_h * (32.0 / 9.0)))
+            inter_w = int(round(inter_h * pano_aspect))
             luts = self.update_luts(inter_w, inter_h)
             tactical_map_x, tactical_map_y = generate_tactical_16x9_luts(
                 inter_w, inter_h,
@@ -371,7 +388,7 @@ class StitcherEngine:
                 self.ai_broadcast.config.pitch_corners,
                 margin_percent=getattr(self.ai_broadcast.config, 'tactical_margin', 0.0)
             )
-            logger.info(f"16:9 Taktik-Warp Zwischenauflösung: {inter_w}x{inter_h} -> Ziel: {out_width}x{out_height}")
+            logger.info(f"16:9 Taktik-Warp Zwischenauflösung: {inter_w}x{inter_h} (Aspekt {pano_aspect:.2f}) -> Ziel: {out_width}x{out_height}")
         else:
             luts = self.update_luts(out_width, out_height)
 
@@ -1414,14 +1431,18 @@ class StitcherEngine:
         Stage 1: Stitches 2 raw cameras into a master 32:9 panorama video.
         Stage 2: Generates the 16:9 broadcast follow-cam video from the 32:9 master with lookahead smoothing.
         """
-        # Dynamically scale 32:9 master height to match 16:9 target resolution if left at default
-        if out_32x9_height == 1080 and out_16x9_height != 1080:
+        # Dynamically scale panorama master dimensions to match aspect (8:3 in 4:3 mode or 32:9 in 16:9 mode)
+        pano_aspect = self.get_panorama_aspect()
+        if out_32x9_width == 3840 and self.is_4_3_mode():
+            out_32x9_width = int(round(out_32x9_height * pano_aspect))
+        elif out_32x9_height == 1080 and out_16x9_height != 1080:
             out_32x9_height = out_16x9_height
-            out_32x9_width = int(round(out_16x9_height * (32.0 / 9.0)))
+            out_32x9_width = int(round(out_16x9_height * pano_aspect))
 
         if not output_32x9_filepath:
             base, ext = os.path.splitext(output_16x9_filepath)
-            output_32x9_filepath = f"{base}_master_32x9{ext}"
+            tag = "8x3" if self.is_4_3_mode() else "32x9"
+            output_32x9_filepath = f"{base}_master_{tag}{ext}"
 
         logger.info("=== Starte Zweistufige Broadcast-Generierung ===")
         logger.info(f"Stufe 1 Ziel: {output_32x9_filepath}")

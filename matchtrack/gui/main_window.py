@@ -449,21 +449,23 @@ class RenderWorker(QThread):
                     audio_source=self.audio_source,
                     progress_callback=cb_2110
                 )
-            else: # 32:9 Panorama
-                def cb_329(proc, total, fps, eta):
-                    self.progress_signal.emit(proc, total, fps, eta, "32:9 Panorama Rendering...")
+            else: # Panorama (8:3 or 32:9)
+                is_8x3 = hasattr(self.engine, 'is_4_3_mode') and self.engine.is_4_3_mode()
+                pano_title = "8:3 Panorama" if is_8x3 else "32:9 Panorama"
+                def cb_pano(proc, total, fps, eta):
+                    self.progress_signal.emit(proc, total, fps, eta, f"{pano_title} Rendering...")
 
                 success = self.engine.render_video_to_file(
                     output_filepath=self.out_path,
                     out_width=self.width,
                     out_height=self.height,
-                    mode="32:9",
+                    mode="8:3" if is_8x3 else "32:9",
                     codec=self.codec,
                     bitrate_mbps=self.bitrate,
                     start_frame=self.start_frame,
                     end_frame=self.end_frame,
                     audio_source=self.audio_source,
-                    progress_callback=cb_329
+                    progress_callback=cb_pano
                 )
 
             if success:
@@ -908,7 +910,13 @@ class InteractivePanoramaViewport(QWidget):
             painter.drawLine(bl, QPointF(bl.x(), bl.y() - blen))
 
             # Framing Header Tag
-            tag_title = "🔲 21:10 Panorama (Gestaucht)" if self.view_mode == "21:10" else "🔲 32:9 Panorama-Ausschnitt"
+            is_8x3 = getattr(self, 'is_4_3', False) or (self.current_qimage and abs(self.current_qimage.width() / max(1, self.current_qimage.height()) - (8.0 / 3.0)) < 0.25)
+            if self.view_mode == "21:10":
+                tag_title = "🔲 21:10 Panorama (Gestaucht)"
+            elif is_8x3:
+                tag_title = "🔲 8:3 Panorama-Ausschnitt"
+            else:
+                tag_title = "🔲 32:9 Panorama-Ausschnitt"
             tag_frame = QRectF(target_rect.center().x() - 105, target_rect.top() + 6, 210, 20)
             painter.fillRect(tag_frame, QColor(41, 128, 185, 210))
             painter.setPen(QColor(255, 255, 255))
@@ -1388,8 +1396,9 @@ class InteractivePanoramaViewport(QWidget):
         # HUD in top-left
         painter.setPen(QColor(220, 220, 220, 220))
         painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        is_8x3 = getattr(self, 'is_4_3', False) or (self.current_qimage and abs(self.current_qimage.width() / max(1, self.current_qimage.height()) - (8.0 / 3.0)) < 0.25)
         if self.view_mode == "32:9":
-            mode_str = "🌟 32:9 Taktik-Panorama"
+            mode_str = "🌟 8:3 Taktik-Panorama" if is_8x3 else "🌟 32:9 Taktik-Panorama"
         elif self.view_mode == "21:10":
             mode_str = "📐 21:10 Gestaucht"
         elif self.view_mode == "16:9_tactical":
@@ -3290,6 +3299,40 @@ class MainWindow(QMainWindow):
     def has_active_video(self) -> bool:
         return (self.engine.video_panorama is not None) or (self.engine.video_left is not None)
 
+    def is_4_3_mode(self) -> bool:
+        """Returns True if the current camera profile or loaded video is 4:3 (yielding an 8:3 panorama)."""
+        if hasattr(self, 'engine') and hasattr(self.engine, 'is_4_3_mode'):
+            return self.engine.is_4_3_mode()
+        if hasattr(self, 'rig') and self.rig and hasattr(self.rig, 'left_camera') and self.rig.left_camera:
+            w = self.rig.left_camera.image_width
+            h = self.rig.left_camera.image_height
+            if h > 0 and (w / h) < 1.55:
+                return True
+        return False
+
+    def get_panorama_aspect(self) -> float:
+        """Returns nominal panorama aspect ratio (8.0/3.0 for 4:3 inputs, 32.0/9.0 for 16:9 inputs)."""
+        return (8.0 / 3.0) if self.is_4_3_mode() else (32.0 / 9.0)
+
+    def _update_format_combo_labels(self):
+        """Updates UI dropdown labels to accurately reflect 8:3 (for 4:3 inputs) or 32:9 (for 16:9 inputs)."""
+        is_4_3 = self.is_4_3_mode()
+        if hasattr(self, 'viewport'):
+            self.viewport.is_4_3 = is_4_3
+        if hasattr(self, 'combo_view_mode'):
+            idx = self.combo_view_mode.findData("32:9")
+            if idx >= 0:
+                self.combo_view_mode.setItemText(idx, "🌟 8:3 Taktik-Panorama (Gesamt)" if is_4_3 else "🌟 32:9 Taktik-Panorama (Gesamt)")
+        if hasattr(self, 'combo_exp_format'):
+            idx_pano = self.combo_exp_format.findData("32:9")
+            if idx_pano >= 0:
+                txt = "🌟 8:3 Panorama (Taktik-Ansicht / Ganzes Feld)" if is_4_3 else "🌟 32:9 Panorama (Taktik-Ansicht / Ganzes Feld)"
+                self.combo_exp_format.setItemText(idx_pano, txt)
+            idx_both = self.combo_exp_format.findData("both")
+            if idx_both >= 0:
+                txt_b = "🔄 Beides exportieren (8:3 Master + 16:9 Broadcast)" if is_4_3 else "🔄 Beides exportieren (32:9 Master + 16:9 Broadcast)"
+                self.combo_exp_format.setItemText(idx_both, txt_b)
+
     # Video loading & seeking
     def open_left_video(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Linkes Video öffnen (DJI Action 4)", "", "Video Files (*.mp4 *.mov *.mkv *.avi)")
@@ -3362,14 +3405,18 @@ class MainWindow(QMainWindow):
         self.update_in_out_display()
         if self.engine.is_panorama_mode():
             if hasattr(self, 'lbl_video_status'):
-                self.lbl_video_status.setText("🎬 32:9 Panorama geladen")
+                status_txt = "🎬 8:3 Panorama geladen" if self.is_4_3_mode() else "🎬 32:9 Panorama geladen"
+                self.lbl_video_status.setText(status_txt)
                 self.lbl_video_status.setStyleSheet("background: #064e3b; color: #34d399; border: 1px solid #059669; border-radius: 12px; padding: 3px 10px; font-size: 11px; font-weight: bold;")
-            self.status_bar.showMessage(f"🎬 32:9 Panorama geladen: {self.engine.video_panorama.width}x{self.engine.video_panorama.height} bei {fps:.2f} FPS. Bereit für 16:9 Broadcast.")
+            self.status_bar.showMessage(f"🎬 Panorama geladen: {self.engine.video_panorama.width}x{self.engine.video_panorama.height} bei {fps:.2f} FPS. Bereit für 16:9 Broadcast.")
         else:
             if hasattr(self, 'lbl_video_status'):
-                self.lbl_video_status.setText("🟢 2 Kameras geladen")
+                status_txt = "🟢 2 Kameras (4:3) geladen" if self.is_4_3_mode() else "🟢 2 Kameras geladen"
+                self.lbl_video_status.setText(status_txt)
                 self.lbl_video_status.setStyleSheet("background: #064e3b; color: #34d399; border: 1px solid #059669; border-radius: 12px; padding: 3px 10px; font-size: 11px; font-weight: bold;")
             self.status_bar.showMessage(f"Videos geladen: {self.engine.video_left.width}x{self.engine.video_left.height} bei {fps:.2f} FPS. Bereit.")
+        self._update_format_combo_labels()
+        self.update_resolution_dropdown()
         self.refresh_preview()
 
     def update_ui_for_mode(self, is_panorama: bool):
@@ -3407,10 +3454,12 @@ class MainWindow(QMainWindow):
 
             self.combo_exp_format.blockSignals(True)
             self.combo_exp_format.clear()
-            self.combo_exp_format.addItem("🌟 32:9 Panorama Master (Taktik-Ansicht / Ganzes Feld)", "32:9")
+            pano_label = "🌟 8:3 Panorama Master (Taktik-Ansicht / Ganzes Feld)" if self.is_4_3_mode() else "🌟 32:9 Panorama Master (Taktik-Ansicht / Ganzes Feld)"
+            both_label = "🔄 Beides exportieren (8:3 Master + 16:9 Broadcast)" if self.is_4_3_mode() else "🔄 Beides exportieren (32:9 Master + 16:9 Broadcast)"
+            self.combo_exp_format.addItem(pano_label, "32:9")
             self.combo_exp_format.addItem("📐 21:10 Gestaucht (Taktik-Panorama / Ganzes Feld gestaucht)", "21:10")
-            self.combo_exp_format.addItem("🎥 16:9 Broadcast Follow-Cam (2-Stufig aus 32:9 Master)", "16:9_autocam")
-            self.combo_exp_format.addItem("🔄 Beides exportieren (32:9 Master + 16:9 Broadcast)", "both")
+            self.combo_exp_format.addItem("🎥 16:9 Broadcast Follow-Cam (2-Stufig)", "16:9_autocam")
+            self.combo_exp_format.addItem(both_label, "both")
             self.combo_exp_format.blockSignals(False)
             self.combo_audio_source.setEnabled(True)
             self.update_resolution_dropdown()
@@ -4495,24 +4544,40 @@ class MainWindow(QMainWindow):
             self.combo_resolution.addItem("4200 x 2000 (2K/4K 21:10 - Maximale Details)", (4200, 2000))
             self.combo_resolution.addItem("2100 x 1000 (1000p 21:10 - Schnell)", (2100, 1000))
         elif fmt == "both":
-            self.combo_resolution.addItem("1920 x 1080 (1080p Broadcast + 3840x1080 Master)", (1920, 1080))
-            self.combo_resolution.addItem("1280 x 720 (720p Broadcast + 2560x720 Master - Schnell)", (1280, 720))
-            self.combo_resolution.addItem("2560 x 1440 (1440p Broadcast + 5120x1440 Master)", (2560, 1440))
-            self.combo_resolution.addItem("3840 x 2160 (4K Broadcast + 7680x2160 Master)", (3840, 2160))
-        else: # 32:9
-            self.combo_resolution.addItem("5120 x 1440 (1440p 32:9 Panorama - Empfohlen)", (5120, 1440))
-            self.combo_resolution.addItem("3840 x 1080 (1080p 32:9 Panorama - Standard)", (3840, 1080))
-            self.combo_resolution.addItem("2560 x 720 (720p 32:9 Panorama - Schnell / Kompakt)", (2560, 720))
-            self.combo_resolution.addItem("7680 x 2160 (4K 32:9 Panorama - Maximale Qualität)", (7680, 2160))
+            if self.is_4_3_mode():
+                self.combo_resolution.addItem("1920 x 1080 (1080p Broadcast + 2880x1080 8:3 Master)", (1920, 1080))
+                self.combo_resolution.addItem("1280 x 720 (720p Broadcast + 1920x720 8:3 Master - Schnell)", (1280, 720))
+                self.combo_resolution.addItem("2560 x 1440 (1440p Broadcast + 3840x1440 8:3 Master)", (2560, 1440))
+                self.combo_resolution.addItem("3840 x 2160 (4K Broadcast + 5760x2160 8:3 Master)", (3840, 2160))
+            else:
+                self.combo_resolution.addItem("1920 x 1080 (1080p Broadcast + 3840x1080 Master)", (1920, 1080))
+                self.combo_resolution.addItem("1280 x 720 (720p Broadcast + 2560x720 Master - Schnell)", (1280, 720))
+                self.combo_resolution.addItem("2560 x 1440 (1440p Broadcast + 5120x1440 Master)", (2560, 1440))
+                self.combo_resolution.addItem("3840 x 2160 (4K Broadcast + 7680x2160 Master)", (3840, 2160))
+        else: # Panorama (8:3 for 4:3 mode or 32:9 for 16:9 mode)
+            if self.is_4_3_mode():
+                self.combo_resolution.addItem("2880 x 1080 (1080p 8:3 Panorama - Standard)", (2880, 1080))
+                self.combo_resolution.addItem("3840 x 1440 (1440p 8:3 Panorama - Empfohlen)", (3840, 1440))
+                self.combo_resolution.addItem("1920 x 720 (720p 8:3 Panorama - Schnell / Kompakt)", (1920, 720))
+                self.combo_resolution.addItem("5760 x 2160 (4K 8:3 Panorama - Maximale Qualität)", (5760, 2160))
+                self.combo_resolution.addItem("5376 x 2016 (2.7K 8:3 Panorama - Nativ Action 4)", (5376, 2016))
+            else:
+                self.combo_resolution.addItem("5120 x 1440 (1440p 32:9 Panorama - Empfohlen)", (5120, 1440))
+                self.combo_resolution.addItem("3840 x 1080 (1080p 32:9 Panorama - Standard)", (3840, 1080))
+                self.combo_resolution.addItem("2560 x 720 (720p 32:9 Panorama - Schnell / Kompakt)", (2560, 720))
+                self.combo_resolution.addItem("7680 x 2160 (4K 32:9 Panorama - Maximale Qualität)", (7680, 2160))
 
     def trigger_smooth_preview(self):
         """Instant draft update during dragging (<2ms) + debounced high-res render."""
         if not self.has_active_video():
             return
         self.viewport.set_rig(self.rig)
+        self.viewport.is_4_3 = self.is_4_3_mode()
         vm = getattr(self.viewport, 'view_mode', '32:9')
         if vm == "21:10":
             pw, ph = 1260, 600
+        elif self.is_4_3_mode():
+            pw, ph = 1280, 480
         else:
             pw, ph = 1280, 360
         frame, autocam_box, ball_px, cur_zoom = self.engine.render_preview_frame(self.current_frame_idx, preview_width=pw, preview_height=ph, view_mode=vm)
@@ -4531,9 +4596,12 @@ class MainWindow(QMainWindow):
         if not self.has_active_video():
             return
         self.viewport.set_rig(self.rig)
+        self.viewport.is_4_3 = self.is_4_3_mode()
         vm = getattr(self.viewport, 'view_mode', '32:9')
         if vm == "21:10":
             pw, ph = 2100, 1000
+        elif self.is_4_3_mode():
+            pw, ph = 1920, 720
         else:
             pw, ph = 2560, 720
         frame, autocam_box, ball_px, cur_zoom = self.engine.render_preview_frame(self.current_frame_idx, preview_width=pw, preview_height=ph, view_mode=vm)
@@ -4550,9 +4618,12 @@ class MainWindow(QMainWindow):
         if not self.has_active_video():
             return
         self.viewport.set_rig(self.rig)
+        self.viewport.is_4_3 = self.is_4_3_mode()
         vm = getattr(self.viewport, 'view_mode', '32:9')
         if vm == "21:10":
             pw, ph = 2100, 1000
+        elif self.is_4_3_mode():
+            pw, ph = 1920, 720
         else:
             pw, ph = 2560, 720
         frame, autocam_box, ball_px, cur_zoom = self.engine.render_preview_frame(self.current_frame_idx, preview_width=pw, preview_height=ph, view_mode=vm)
@@ -5315,7 +5386,7 @@ class MainWindow(QMainWindow):
 
         fmt = self.combo_exp_format.currentData()
         if fmt == "32:9":
-            default_name = "fussball_panorama_32x9.mp4"
+            default_name = "fussball_panorama_8x3.mp4" if self.is_4_3_mode() else "fussball_panorama_32x9.mp4"
         elif fmt == "21:10":
             default_name = "fussball_panorama_21x10.mp4"
         elif fmt == "both":

@@ -260,6 +260,7 @@ class AIBroadcastTracker:
         
         # Precomputed offline lookahead trajectory cache {frame_index: (cam_x, cam_y, cam_zoom)}
         self.precomputed_trajectory: Dict[int, Tuple[float, float, float]] = {}
+        self.current_pano_aspect: float = 32.0 / 9.0
         
         # AI Detector Backend & Tactical Analysis
         self.detector_backend: Optional[BaseDetectorBackend] = None
@@ -503,6 +504,7 @@ class AIBroadcastTracker:
         Returns: (target_x, target_y, target_zoom, is_ball_found, (ball_px_x, ball_px_y))
         """
         h, w = pano_frame_bgr.shape[:2]
+        self.current_pano_aspect = float(w) / max(1.0, float(h))
         f_idx = frame_index if frame_index is not None else self.frame_counter
         self.frame_counter += 1
         
@@ -988,21 +990,24 @@ class AIBroadcastTracker:
         """VAR virtual offside line: (norm_x, defending_team, label)."""
         return self._current_offside_line
 
-    def get_camera_span(self, pano_aspect: float = 32.0 / 9.0) -> Tuple[float, float]:
+    def get_camera_span(self, pano_aspect: Optional[float] = None) -> Tuple[float, float]:
         """Returns normalized (x_start, x_end) coverage of current virtual camera FOV."""
+        aspect = pano_aspect or getattr(self, 'current_pano_aspect', 32.0 / 9.0)
         zoom = max(1.0, self.cam_zoom)
-        box_w_norm = min(1.0, (1.0 / pano_aspect) * (16.0 / 9.0) / zoom)
+        box_w_norm = min(1.0, (1.0 / aspect) * (16.0 / 9.0) / zoom)
         span_left = max(0.0, self.cam_x - box_w_norm * 0.5)
         span_right = min(1.0, self.cam_x + box_w_norm * 0.5)
         return (span_left, span_right)
 
-    def get_crop_aspect_ratios(self) -> Tuple[float, float]:
+    def get_crop_aspect_ratios(self, pano_aspect: Optional[float] = None) -> Tuple[float, float]:
         """
-        Returns normalized (crop_width, crop_height) inside 32:9 panorama.
-        At fixed 1.0x zoom: crop_w = 0.5 (50% of 32:9 width), crop_h = 1.0 (100% of height).
+        Returns normalized (crop_width, crop_height) inside panorama.
+        For 32:9 panorama (aspect 32/9 ≈ 3.556), a 16:9 crop covers (16/9)/(32/9) = 0.5 (50%) of width at 1.0x zoom.
+        For 8:3 panorama (aspect 8/3 ≈ 2.667), a 16:9 crop covers (16/9)/(8/3) = 2/3 ≈ 0.667 (66.7%) of width at 1.0x zoom.
         """
+        aspect = pano_aspect or getattr(self, 'current_pano_aspect', 32.0 / 9.0)
         zoom = max(1.0, self.cam_zoom)
-        crop_w = (0.5 / zoom)
+        crop_w = min(1.0, ((16.0 / 9.0) / aspect) / zoom)
         crop_h = (1.0 / zoom)
         return crop_w, crop_h
 
