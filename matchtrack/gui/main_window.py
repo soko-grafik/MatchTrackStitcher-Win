@@ -1141,8 +1141,8 @@ class InteractivePanoramaViewport(QWidget):
         # 1. Draw Stitched Frame Image
         painter.drawImage(target_rect, self.current_qimage)
 
-        # 2. Semi-Transparent 32:9 / 21:10 Frame Overlay (Matte/Letterbox)
-        if self.show_transparent_frame and self.view_mode in ("32:9", "21:10"):
+        # 2. Semi-Transparent 32:9 / 8:3 / 21:10 Frame Overlay (Matte/Letterbox)
+        if self.show_transparent_frame and self.view_mode in ("32:9", "8:3", "21:10"):
             matte_alpha = int(np.clip(self.frame_opacity * 255, 0, 255))
             if matte_alpha > 0:
                 mask_color = QColor(0, 0, 0, matte_alpha)
@@ -1184,10 +1184,12 @@ class InteractivePanoramaViewport(QWidget):
             painter.drawLine(bl, QPointF(bl.x(), bl.y() - blen))
 
             # Framing Header Tag
-            is_8x3 = getattr(self, 'is_4_3', False) or (self.current_qimage and abs(self.current_qimage.width() / max(1, self.current_qimage.height()) - (8.0 / 3.0)) < 0.25)
+            is_8x3 = (self.view_mode == "8:3") or getattr(self, 'is_4_3', False) or (self.current_qimage and abs(self.current_qimage.width() / max(1, self.current_qimage.height()) - (8.0 / 3.0)) < 0.25)
             if self.view_mode == "21:10":
                 tag_title = "🔲 21:10 Panorama (Gestaucht)"
-            elif is_8x3:
+            elif is_8x3 and self.view_mode != "32:9":
+                tag_title = "🔲 8:3 Panorama-Ausschnitt"
+            elif self.view_mode == "8:3":
                 tag_title = "🔲 8:3 Panorama-Ausschnitt"
             else:
                 tag_title = "🔲 32:9 Panorama-Ausschnitt"
@@ -1197,8 +1199,8 @@ class InteractivePanoramaViewport(QWidget):
             painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
             painter.drawText(tag_frame, Qt.AlignCenter, tag_title)
 
-        # 3. Overlays for 32:9 / 21:10 mode
-        if self.view_mode in ("32:9", "21:10"):
+        # 3. Overlays for 32:9 / 8:3 / 21:10 mode
+        if self.view_mode in ("32:9", "8:3", "21:10"):
             # Field Center Reference Line (50% Center)
             if self.show_center_line:
                 center_x = target_rect.left() + target_rect.width() * 0.5
@@ -1563,7 +1565,7 @@ class InteractivePanoramaViewport(QWidget):
             painter.drawText(banner_rect, Qt.AlignCenter, "📐 16:9 Taktik-Warp: Ziehen Sie die 6 Punkte auf den Video-Rändern, um das Panorama in den 16:9 Rahmen einzupassen.")
 
         # 6. Pitch Field ROI (Action Polygon with Mittellinie) Overlay & Handles in Panorama
-        elif self.show_pitch_roi and self.view_mode in ("32:9", "21:10"):
+        elif self.show_pitch_roi and self.view_mode in ("32:9", "8:3", "21:10"):
             poly_pts = self._get_pitch_roi_screen_polygon(target_rect)
             if len(poly_pts) >= 4:
                 qpoly = QPolygonF(poly_pts)
@@ -1670,8 +1672,10 @@ class InteractivePanoramaViewport(QWidget):
         # HUD in top-left
         painter.setPen(QColor(220, 220, 220, 220))
         painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        is_8x3 = getattr(self, 'is_4_3', False) or (self.current_qimage and abs(self.current_qimage.width() / max(1, self.current_qimage.height()) - (8.0 / 3.0)) < 0.25)
-        if self.view_mode == "32:9":
+        is_8x3 = (self.view_mode == "8:3") or (self.current_qimage and abs(self.current_qimage.width() / max(1, self.current_qimage.height()) - (8.0 / 3.0)) < 0.25)
+        if self.view_mode == "8:3":
+            mode_str = "🌟 8:3 Taktik-Panorama"
+        elif self.view_mode == "32:9":
             mode_str = "🌟 8:3 Taktik-Panorama" if is_8x3 else "🌟 32:9 Taktik-Panorama"
         elif self.view_mode == "21:10":
             mode_str = "📐 21:10 Gestaucht"
@@ -1963,7 +1967,8 @@ class MainWindow(QMainWindow):
 
         # View Mode Dropdown
         self.combo_view_mode = QComboBox()
-        self.combo_view_mode.addItem("🌟 32:9 Taktik-Panorama (Gesamt)", "32:9")
+        self.combo_view_mode.addItem("🌟 32:9 Taktik-Panorama (16:9 Profil)", "32:9")
+        self.combo_view_mode.addItem("🌟 8:3 Taktik-Panorama (4:3 Profil)", "8:3")
         self.combo_view_mode.addItem("📐 21:10 Gestauchtes Panorama (Gesamt)", "21:10")
         self.combo_view_mode.addItem("📐 16:9 Taktik-Warp (Spielfeld entzerrt)", "16:9_tactical")
         self.combo_view_mode.addItem("🎥 16:9 Auto-Broadcast (Follow-Cam)", "16:9")
@@ -2775,13 +2780,13 @@ class MainWindow(QMainWindow):
 
         # Quick View-Switcher buttons
         row_view_quick = QHBoxLayout()
-        btn_view_pano = QPushButton("🌟 32:9 Panorama")
-        btn_view_pano.setToolTip("Zeigt das vollständige 32:9 Stadion-Panorama")
-        btn_view_pano.clicked.connect(lambda: self.set_view_mode_by_id("32:9"))
+        self.btn_view_pano = QPushButton("🌟 32:9 Panorama")
+        self.btn_view_pano.setToolTip("Zeigt das vollständige 32:9 bzw. 8:3 Stadion-Panorama")
+        self.btn_view_pano.clicked.connect(lambda: self.set_view_mode_by_id("8:3" if self.is_4_3_mode() else "32:9"))
         btn_view_tactical = QPushButton("📐 16:9 Taktik-Warp")
         btn_view_tactical.setToolTip("Zeigt das entzerrte 16:9 Spielfeld")
         btn_view_tactical.clicked.connect(lambda: self.set_view_mode_by_id("16:9_tactical"))
-        row_view_quick.addWidget(btn_view_pano)
+        row_view_quick.addWidget(self.btn_view_pano)
         row_view_quick.addWidget(btn_view_tactical)
         layout_pitch_roi.addLayout(row_view_quick)
 
@@ -3427,8 +3432,77 @@ class MainWindow(QMainWindow):
         pw_prot_row.addWidget(self.txt_cloud_password, 1)
         cloud_box.addLayout(pw_prot_row)
 
+        # Dedicated file pickers for finished Broadcast (16:9) & Panorama (32:9 / 8:3) videos
+        files_frame = QFrame()
+        files_frame.setStyleSheet(
+            "QFrame { background-color: #101018; border: 1px solid #242436; border-radius: 8px; padding: 6px; }"
+        )
+        files_layout = QVBoxLayout(files_frame)
+        files_layout.setContentsMargins(6, 6, 6, 6)
+        files_layout.setSpacing(6)
+
+        lbl_files_hdr = QLabel("🎬 Fertige Videos für Upload (einzeln oder beide zusammen):")
+        lbl_files_hdr.setStyleSheet("color: #93c5fd; font-weight: 700; font-size: 11px; border: none; padding: 0;")
+        files_layout.addWidget(lbl_files_hdr)
+
+        # Row 1: 16:9 Broadcast Video
+        row_f16 = QHBoxLayout()
+        row_f16.setSpacing(4)
+        lbl_f16 = QLabel("🎥 Broadcast (16:9):")
+        lbl_f16.setFixedWidth(122)
+        lbl_f16.setStyleSheet("color: #cbd5e1; font-size: 11px; border: none;")
+        self.txt_cloud_video_16x9 = QLineEdit()
+        self.txt_cloud_video_16x9.setPlaceholderText("Optional: Fertiges 16:9 Broadcast-Video (.mp4)...")
+        self.txt_cloud_video_16x9.setStyleSheet(
+            "background-color: #0b0b10; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #e2e8f0; font-size: 11px;"
+        )
+        btn_pick_16x9 = QPushButton("📂 Wählen…")
+        btn_pick_16x9.setStyleSheet(
+            "background-color: #1e293b; border: 1px solid #3b82f6; color: #93c5fd; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;"
+        )
+        btn_pick_16x9.clicked.connect(self.pick_cloud_16x9_video)
+        btn_clr_16x9 = QToolButton()
+        btn_clr_16x9.setText("✕")
+        btn_clr_16x9.setToolTip("Auswahl für 16:9 Broadcast-Video leeren")
+        btn_clr_16x9.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 3px 6px; color: #94a3b8;")
+        btn_clr_16x9.clicked.connect(lambda: self.txt_cloud_video_16x9.clear())
+        row_f16.addWidget(lbl_f16)
+        row_f16.addWidget(self.txt_cloud_video_16x9, 1)
+        row_f16.addWidget(btn_pick_16x9)
+        row_f16.addWidget(btn_clr_16x9)
+        files_layout.addLayout(row_f16)
+
+        # Row 2: Panorama Video (32:9 / 8:3 / 21:10)
+        row_fpano = QHBoxLayout()
+        row_fpano.setSpacing(4)
+        lbl_fpano = QLabel("🌟 Panorama (32:9/8:3):")
+        lbl_fpano.setFixedWidth(122)
+        lbl_fpano.setStyleSheet("color: #cbd5e1; font-size: 11px; border: none;")
+        self.txt_cloud_video_pano = QLineEdit()
+        self.txt_cloud_video_pano.setPlaceholderText("Optional: Fertiges Panorama-Video (.mp4)...")
+        self.txt_cloud_video_pano.setStyleSheet(
+            "background-color: #0b0b10; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #e2e8f0; font-size: 11px;"
+        )
+        btn_pick_pano = QPushButton("📂 Wählen…")
+        btn_pick_pano.setStyleSheet(
+            "background-color: #1e293b; border: 1px solid #3b82f6; color: #93c5fd; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;"
+        )
+        btn_pick_pano.clicked.connect(self.pick_cloud_pano_video)
+        btn_clr_pano = QToolButton()
+        btn_clr_pano.setText("✕")
+        btn_clr_pano.setToolTip("Auswahl für Panorama-Video leeren")
+        btn_clr_pano.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 3px 6px; color: #94a3b8;")
+        btn_clr_pano.clicked.connect(lambda: self.txt_cloud_video_pano.clear())
+        row_fpano.addWidget(lbl_fpano)
+        row_fpano.addWidget(self.txt_cloud_video_pano, 1)
+        row_fpano.addWidget(btn_pick_pano)
+        row_fpano.addWidget(btn_clr_pano)
+        files_layout.addLayout(row_fpano)
+
+        cloud_box.addWidget(files_frame)
+
         # Manual Upload Action Button
-        self.btn_cloud_upload_now = QPushButton("☁️ Bereits gerendertes Video jetzt auswählen & hochladen...")
+        self.btn_cloud_upload_now = QPushButton("☁️ Fertige Videos (Broadcast & Panorama) jetzt hochladen")
         self.btn_cloud_upload_now.setStyleSheet(
             "background-color: #059669; font-weight: bold; padding: 10px; font-size: 12px; color: white; border-radius: 10px;"
         )
@@ -3769,14 +3843,32 @@ class MainWindow(QMainWindow):
         return (8.0 / 3.0) if self.is_4_3_mode() else (32.0 / 9.0)
 
     def _update_format_combo_labels(self):
-        """Updates UI dropdown labels to accurately reflect 8:3 (for 4:3 inputs) or 32:9 (for 16:9 inputs)."""
+        """Updates UI dropdown labels and live preview mode to accurately reflect 8:3 (for 4:3 inputs) or 32:9 (for 16:9 inputs)."""
         is_4_3 = self.is_4_3_mode()
         if hasattr(self, 'viewport'):
             self.viewport.is_4_3 = is_4_3
         if hasattr(self, 'combo_view_mode'):
-            idx = self.combo_view_mode.findData("32:9")
-            if idx >= 0:
-                self.combo_view_mode.setItemText(idx, "🌟 8:3 Taktik-Panorama (Gesamt)" if is_4_3 else "🌟 32:9 Taktik-Panorama (Gesamt)")
+            cur_mode = self.combo_view_mode.currentData()
+            if is_4_3 and cur_mode == "32:9":
+                idx_8_3 = self.combo_view_mode.findData("8:3")
+                if idx_8_3 >= 0:
+                    self.combo_view_mode.blockSignals(True)
+                    self.combo_view_mode.setCurrentIndex(idx_8_3)
+                    self.combo_view_mode.blockSignals(False)
+                    if hasattr(self, 'viewport'):
+                        self.viewport.view_mode = "8:3"
+            elif not is_4_3 and cur_mode == "8:3":
+                idx_32_9 = self.combo_view_mode.findData("32:9")
+                if idx_32_9 >= 0:
+                    self.combo_view_mode.blockSignals(True)
+                    self.combo_view_mode.setCurrentIndex(idx_32_9)
+                    self.combo_view_mode.blockSignals(False)
+                    if hasattr(self, 'viewport'):
+                        self.viewport.view_mode = "32:9"
+        if hasattr(self, 'chk_show_frame'):
+            self.chk_show_frame.setText("🔲 8:3 / 16:9 Rahmen" if is_4_3 else "🔲 32:9 / 16:9 Rahmen")
+        if hasattr(self, 'btn_view_pano') and self.btn_view_pano is not None:
+            self.btn_view_pano.setText("🌟 8:3 Panorama" if is_4_3 else "🌟 32:9 Panorama")
         if hasattr(self, 'combo_exp_format'):
             idx_pano = self.combo_exp_format.findData("32:9")
             if idx_pano >= 0:
@@ -4385,8 +4477,8 @@ class MainWindow(QMainWindow):
                 self.on_view_mode_changed()
 
     def toggle_tactical_view(self, checked: bool):
-        """Quick 1-click toggle between 32:9 panorama overview and rectified 16:9 tactical field view."""
-        target_mode = "16:9_tactical" if checked else "32:9"
+        """Quick 1-click toggle between 32:9/8:3 panorama overview and rectified 16:9 tactical field view."""
+        target_mode = "16:9_tactical" if checked else ("8:3" if self.is_4_3_mode() else "32:9")
         self.set_view_mode_by_id(target_mode)
 
     def on_view_mode_changed(self):
@@ -4487,6 +4579,8 @@ class MainWindow(QMainWindow):
                     self.combo_preset.setCurrentIndex(idx)
                     self.combo_preset.blockSignals(False)
             self.engine.invalidate_luts()
+            self._update_format_combo_labels()
+            self.update_resolution_dropdown()
             self.refresh_preview()
             if hasattr(self, 'status_bar'):
                 self.status_bar.showMessage(f"📷 Profil aktiviert: {preset.name} ({preset.image_width}x{preset.image_height}, HFOV {preset.hfov_deg}°)")
@@ -4629,6 +4723,8 @@ class MainWindow(QMainWindow):
         self.rig.auto_crop_lir = True
         
         self.engine.invalidate_luts()
+        self._update_format_combo_labels()
+        self.update_resolution_dropdown()
         self.refresh_preview()
         self.status_bar.showMessage("🏟️ Preset aktiviert: 145° Weitwinkel-Panorama + Breitenstauchung für volle Spielfeld- & Nah-Ecken-Abdeckung!")
 
@@ -4717,12 +4813,16 @@ class MainWindow(QMainWindow):
 
         self.update_corner_spinboxes_from_rig()
         self.engine.invalidate_luts()
+        self._update_format_combo_labels()
+        self.update_resolution_dropdown()
         self.refresh_preview()
-        self.status_bar.showMessage("📹 Preset aktiviert: DJI Action 4 1080p 4:3 Dewarp (RockSteady ON, 30fps) - Rig & Stitching optimiert!")
+        self.status_bar.showMessage("📹 Preset aktiviert: DJI Action 4 1080p 4:3 Dewarp (RockSteady ON, 30fps) - 8:3 Live-Vorschau & Rig optimiert!")
 
     def toggle_auto_crop(self, checked: bool):
         self.rig.auto_crop_lir = checked
         self.engine.invalidate_luts()
+        self._update_format_combo_labels()
+        self.update_resolution_dropdown()
         self.refresh_preview()
 
     def on_safety_margin_changed(self, val: float):
@@ -5030,7 +5130,7 @@ class MainWindow(QMainWindow):
         vm = getattr(self.viewport, 'view_mode', '32:9')
         if vm == "21:10":
             pw, ph = 1260, 600
-        elif self.is_4_3_mode():
+        elif vm == "8:3" or (vm != "32:9" and self.is_4_3_mode()):
             pw, ph = 1280, 480
         else:
             pw, ph = 1280, 360
@@ -5054,7 +5154,7 @@ class MainWindow(QMainWindow):
         vm = getattr(self.viewport, 'view_mode', '32:9')
         if vm == "21:10":
             pw, ph = 2100, 1000
-        elif self.is_4_3_mode():
+        elif vm == "8:3" or (vm != "32:9" and self.is_4_3_mode()):
             pw, ph = 1920, 720
         else:
             pw, ph = 2560, 720
@@ -5070,13 +5170,14 @@ class MainWindow(QMainWindow):
 
     def refresh_preview(self):
         if not self.has_active_video():
+            self.viewport.update()
             return
         self.viewport.set_rig(self.rig)
         self.viewport.is_4_3 = self.is_4_3_mode()
         vm = getattr(self.viewport, 'view_mode', '32:9')
         if vm == "21:10":
             pw, ph = 2100, 1000
-        elif self.is_4_3_mode():
+        elif vm == "8:3" or (vm != "32:9" and self.is_4_3_mode()):
             pw, ph = 1920, 720
         else:
             pw, ph = 2560, 720
@@ -5555,6 +5656,8 @@ class MainWindow(QMainWindow):
                 self.chk_multi_frame_calib.setChecked(bool(ui["multi_frame_calib"]))
 
         self.engine.invalidate_luts()
+        self._update_format_combo_labels()
+        self.update_resolution_dropdown()
         self.refresh_preview()
 
     def save_full_profile_as(self):
@@ -5820,6 +5923,8 @@ class MainWindow(QMainWindow):
 
         self.viewport.set_rig(self.rig)
         self.engine.invalidate_luts()
+        self._update_format_combo_labels()
+        self.update_resolution_dropdown()
         self.refresh_preview()
         self.status_bar.showMessage(f"Ecken für Kamera {side.capitalize()} zurückgesetzt.")
 
@@ -5929,9 +6034,13 @@ class MainWindow(QMainWindow):
             self.progress_bar.setValue(100)
             self.lbl_render_stats.setText("Export erfolgreich abgeschlossen! 🎉")
             logger.info("Video-Export erfolgreich beendet.")
+            r_16x9 = getattr(self.render_worker, 'rendered_16x9_path', None)
+            r_32x9 = getattr(self.render_worker, 'rendered_32x9_path', None)
+            if r_16x9 and hasattr(self, 'txt_cloud_video_16x9'):
+                self.txt_cloud_video_16x9.setText(r_16x9)
+            if r_32x9 and hasattr(self, 'txt_cloud_video_pano'):
+                self.txt_cloud_video_pano.setText(r_32x9)
             if hasattr(self, 'chk_cloud_auto_upload') and self.chk_cloud_auto_upload.isChecked():
-                r_16x9 = getattr(self.render_worker, 'rendered_16x9_path', None)
-                r_32x9 = getattr(self.render_worker, 'rendered_32x9_path', None)
                 logger.info("Starte automatischen Cloud-Upload zu MatchTrack Online nach erfolgreichem Rendering...")
                 self._start_cloud_upload(video_16x9_path=r_16x9, video_32x9_path=r_32x9)
             else:
@@ -6094,52 +6203,87 @@ class MainWindow(QMainWindow):
             return base_name
         return f"Spiel vom {self.date_cloud_recording.date().toString('dd.MM.yyyy')}"
 
+    def pick_cloud_16x9_video(self):
+        """Selects a finished 16:9 Broadcast MP4 video for uploading to MatchTrack Online."""
+        fp, _ = QFileDialog.getOpenFileName(
+            self,
+            "Fertiges 16:9 Broadcast-Video auswählen",
+            "",
+            "MP4 Video (*.mp4 *.m4v *.mov)"
+        )
+        if fp:
+            self.txt_cloud_video_16x9.setText(fp)
+            if not self.txt_cloud_match_name.text().strip():
+                self.txt_cloud_match_name.setText(self._suggest_default_match_name(fp))
+
+    def pick_cloud_pano_video(self):
+        """Selects a finished Panorama (32:9 / 8:3 / 21:10) MP4 video for uploading to MatchTrack Online."""
+        fp, _ = QFileDialog.getOpenFileName(
+            self,
+            "Fertiges Panorama-Video (32:9 / 8:3 / 21:10) auswählen",
+            "",
+            "MP4 Video (*.mp4 *.m4v *.mov)"
+        )
+        if fp:
+            self.txt_cloud_video_pano.setText(fp)
+            if not self.txt_cloud_match_name.text().strip():
+                self.txt_cloud_match_name.setText(self._suggest_default_match_name(fp))
+
     def start_manual_cloud_upload_dialog(self):
-        """Lets the user pick already rendered MP4 file(s) from disk and upload them directly."""
+        """Uploads the selected Broadcast (16:9) and/or Panorama video(s), or prompts to pick them if empty."""
         if not self.cloud_client.is_authenticated:
             self.open_cloud_login_dialog()
             if not self.cloud_client.is_authenticated:
                 return
 
-        files, _ = QFileDialog.getOpenFileNames(
-            self,
-            "Gerenderte Videodatei(en) für MatchTrack Online auswählen (16:9 und/oder Panorama)",
-            "",
-            "MP4 Video (*.mp4 *.m4v *.mov)"
-        )
-        if not files:
-            return
+        video_16x9 = self.txt_cloud_video_16x9.text().strip() if hasattr(self, 'txt_cloud_video_16x9') else ""
+        video_32x9 = self.txt_cloud_video_pano.text().strip() if hasattr(self, 'txt_cloud_video_pano') else ""
 
-        video_16x9 = None
-        video_32x9 = None
+        video_16x9 = video_16x9 if (video_16x9 and os.path.isfile(video_16x9)) else None
+        video_32x9 = video_32x9 if (video_32x9 and os.path.isfile(video_32x9)) else None
 
-        for fp in files:
-            low = os.path.basename(fp).lower()
-            # Probe aspect ratio via OpenCV to classify Panorama vs 16:9 automatically
-            is_pano_file = any(t in low for t in ("32x9", "8x3", "21x10", "pano", "master"))
-            if not is_pano_file:
-                try:
-                    cap = cv2.VideoCapture(fp)
-                    if cap.isOpened():
-                        vw = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-                        vh = max(1.0, cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        if (vw / vh) >= 2.0:
-                            is_pano_file = True
-                    cap.release()
-                except Exception:
-                    pass
+        if not video_16x9 and not video_32x9:
+            files, _ = QFileDialog.getOpenFileNames(
+                self,
+                "Fertige Videodatei(en) für MatchTrack Online auswählen (16:9 Broadcast und/oder Panorama)",
+                "",
+                "MP4 Video (*.mp4 *.m4v *.mov)"
+            )
+            if not files:
+                return
 
-            if is_pano_file and not video_32x9:
-                video_32x9 = fp
-            elif not is_pano_file and not video_16x9:
-                video_16x9 = fp
-            elif not video_32x9:
-                video_32x9 = fp
-            elif not video_16x9:
-                video_16x9 = fp
+            for fp in files:
+                low = os.path.basename(fp).lower()
+                is_pano_file = any(t in low for t in ("32x9", "8x3", "21x10", "pano", "master"))
+                if not is_pano_file:
+                    try:
+                        cap = cv2.VideoCapture(fp)
+                        if cap.isOpened():
+                            vw = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                            vh = max(1.0, cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                            if (vw / vh) >= 2.0:
+                                is_pano_file = True
+                        cap.release()
+                    except Exception:
+                        pass
 
-        if not self.txt_cloud_match_name.text().strip():
-            self.txt_cloud_match_name.setText(self._suggest_default_match_name(files[0]))
+                if is_pano_file and not video_32x9:
+                    video_32x9 = fp
+                elif not is_pano_file and not video_16x9:
+                    video_16x9 = fp
+                elif not video_32x9:
+                    video_32x9 = fp
+                elif not video_16x9:
+                    video_16x9 = fp
+
+            if video_16x9 and hasattr(self, 'txt_cloud_video_16x9'):
+                self.txt_cloud_video_16x9.setText(video_16x9)
+            if video_32x9 and hasattr(self, 'txt_cloud_video_pano'):
+                self.txt_cloud_video_pano.setText(video_32x9)
+
+        sample_fp = video_16x9 or video_32x9
+        if sample_fp and not self.txt_cloud_match_name.text().strip():
+            self.txt_cloud_match_name.setText(self._suggest_default_match_name(sample_fp))
 
         self._start_cloud_upload(video_16x9_path=video_16x9, video_32x9_path=video_32x9)
 
