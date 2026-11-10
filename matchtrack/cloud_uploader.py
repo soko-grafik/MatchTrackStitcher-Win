@@ -279,6 +279,46 @@ class MatchTrackOnlineClient:
 
         return profile
 
+    def login_with_api_key(self, server_url: str, api_key: str, remember: bool = True) -> Dict[str, Any]:
+        """Authenticates using a Web-Admin generated API-Key ('mto_ak_...') and verifies upload privileges."""
+        base_url = validate_server_url(server_url)
+        clean_key = (api_key or "").strip()
+        if not clean_key:
+            raise ValueError("Bitte gib deinen API-Key ein.")
+        if not clean_key.startswith("mto_ak_"):
+            raise ValueError(
+                "Ungültiges API-Key-Format. Ein MatchTrack Online API-Key beginnt mit 'mto_ak_'."
+            )
+
+        self.server_url = base_url
+        self.access_token = clean_key
+
+        try:
+            profile = self.verify_session()
+        except requests.exceptions.SSLError as ssl_err:
+            self.access_token = ""
+            raise RuntimeError(f"TLS/SSL-Zertifikatsprüfung fehlgeschlagen für {base_url}: {ssl_err}")
+        except requests.exceptions.RequestException as req_err:
+            self.access_token = ""
+            raise RuntimeError(f"Server {base_url} nicht erreichbar: {req_err}")
+        except Exception as e:
+            self.access_token = ""
+            raise RuntimeError(f"API-Key-Prüfung fehlgeschlagen: {e}")
+
+        role = str(profile.get("role", "")).upper()
+        if role not in ("ADMIN", "TEAM_ADMIN", "TRAINER", "CO_TRAINER"):
+            self.logout()
+            raise RuntimeError(
+                f"Der mit diesem API-Key verknüpfte Account ('{self.username}', Rolle: {role}) "
+                f"besitzt keine Trainer- oder Admin-Berechtigung zum Hochladen von Spielen."
+            )
+
+        self.user_info = profile
+        if remember:
+            DPAPICredentialStore.save_session(self.server_url, self.username, self.access_token, profile)
+
+        return profile
+
     def verify_session(self) -> Dict[str, Any]:
         """Verifies the stored Bearer token against GET /api/users/me."""
         if not self.is_authenticated:

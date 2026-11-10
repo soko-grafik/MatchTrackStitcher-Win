@@ -556,12 +556,12 @@ class CloudUploadWorker(QThread):
 
 
 class CloudLoginDialog(QDialog):
-    """Secure login dialog for connecting MatchTrack-Stitcher to MatchTrack Online."""
+    """Secure login dialog for connecting MatchTrack-Stitcher to MatchTrack Online via API-Key or Username/Password."""
     def __init__(self, client: MatchTrackOnlineClient, initial_url: str = "", parent=None):
         super().__init__(parent)
         self.client = client
         self.setWindowTitle("☁️ Mit MatchTrack Online verbinden")
-        self.setMinimumWidth(440)
+        self.setMinimumWidth(460)
         self.setStyleSheet("""
             QDialog { background-color: #12121a; color: #f4f4f6; }
             QLabel { color: #e4e4e7; font-size: 12px; }
@@ -580,13 +580,14 @@ class CloudLoginDialog(QDialog):
         layout.setSpacing(10)
         layout.setContentsMargins(18, 18, 18, 18)
 
-        lbl_header = QLabel("🔑 Anmeldung bei MatchTrack Online")
+        lbl_header = QLabel("🔑 Verbindung mit MatchTrack Online")
         lbl_header.setStyleSheet("font-size: 15px; font-weight: bold; color: #60a5fa;")
         layout.addWidget(lbl_header)
 
         lbl_sub = QLabel(
-            "Melde dich mit deinem Trainer- oder Admin-Konto an. "
-            "Das Zugangs-Token wird lokal über die Windows-DPAPI verschlüsselt gespeichert."
+            "Verbinde dich per API-Key (im Web-Admin unter 'Einstellungen → API-Keys & Stitcher' "
+            "generierbar) oder mit Benutzername & Passwort. Die Zugangsdaten werden lokal "
+            "über die Windows-DPAPI verschlüsselt gespeichert."
         )
         lbl_sub.setStyleSheet("color: #9ca3af; font-size: 11px;")
         lbl_sub.setWordWrap(True)
@@ -598,13 +599,67 @@ class CloudLoginDialog(QDialog):
         self.txt_url.setText(initial_url or client.server_url or "")
         layout.addWidget(self.txt_url)
 
-        layout.addWidget(QLabel("Benutzername:"))
+        layout.addWidget(QLabel("Authentifizierungs-Methode:"))
+        mode_row = QHBoxLayout()
+        self.btn_mode_apikey = QPushButton("🔑 API-Key (Empfohlen)")
+        self.btn_mode_apikey.setCheckable(True)
+        self.btn_mode_userpw = QPushButton("👤 Benutzername & Passwort")
+        self.btn_mode_userpw.setCheckable(True)
+
+        is_currently_apikey = not client.username or (client.access_token and client.access_token.startswith("mto_ak_"))
+        self.btn_mode_apikey.setChecked(bool(is_currently_apikey))
+        self.btn_mode_userpw.setChecked(not bool(is_currently_apikey))
+
+        self.btn_mode_apikey.clicked.connect(lambda: self._switch_auth_mode("apikey"))
+        self.btn_mode_userpw.clicked.connect(lambda: self._switch_auth_mode("userpw"))
+        mode_row.addWidget(self.btn_mode_apikey)
+        mode_row.addWidget(self.btn_mode_userpw)
+        layout.addLayout(mode_row)
+
+        # Container 1: API-Key Eingabe
+        self.apikey_container = QWidget()
+        ak_layout = QVBoxLayout(self.apikey_container)
+        ak_layout.setContentsMargins(0, 4, 0, 0)
+        ak_layout.setSpacing(6)
+        ak_layout.addWidget(QLabel("API-Key (mto_ak_...):"))
+        ak_row = QHBoxLayout()
+        self.txt_apikey = QLineEdit()
+        self.txt_apikey.setEchoMode(QLineEdit.Password)
+        self.txt_apikey.setPlaceholderText("mto_ak_...")
+        if client.access_token and client.access_token.startswith("mto_ak_"):
+            self.txt_apikey.setText(client.access_token)
+        btn_toggle_ak = QPushButton("👁")
+        btn_toggle_ak.setCheckable(True)
+        btn_toggle_ak.setFixedWidth(38)
+        btn_toggle_ak.setToolTip("API-Key ein-/ausblenden")
+        btn_toggle_ak.toggled.connect(
+            lambda checked: self.txt_apikey.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+        )
+        ak_row.addWidget(self.txt_apikey, 1)
+        ak_row.addWidget(btn_toggle_ak)
+        ak_layout.addLayout(ak_row)
+
+        lbl_ak_hint = QLabel(
+            "💡 Tipp: Einen neuen API-Key kannst du im Web-Adminbereich unter "
+            "„System Einstellungen → API-Keys & Stitcher“ mit 1 Klick erzeugen."
+        )
+        lbl_ak_hint.setStyleSheet("color: #6ee7b7; font-size: 10px;")
+        lbl_ak_hint.setWordWrap(True)
+        ak_layout.addWidget(lbl_ak_hint)
+        layout.addWidget(self.apikey_container)
+
+        # Container 2: Benutzername & Passwort Eingabe
+        self.userpw_container = QWidget()
+        up_layout = QVBoxLayout(self.userpw_container)
+        up_layout.setContentsMargins(0, 4, 0, 0)
+        up_layout.setSpacing(6)
+        up_layout.addWidget(QLabel("Benutzername:"))
         self.txt_user = QLineEdit()
         self.txt_user.setPlaceholderText("Benutzername eingeben...")
         self.txt_user.setText(client.username or "")
-        layout.addWidget(self.txt_user)
+        up_layout.addWidget(self.txt_user)
 
-        layout.addWidget(QLabel("Passwort:"))
+        up_layout.addWidget(QLabel("Passwort:"))
         pw_row = QHBoxLayout()
         self.txt_pass = QLineEdit()
         self.txt_pass.setEchoMode(QLineEdit.Password)
@@ -618,9 +673,10 @@ class CloudLoginDialog(QDialog):
         )
         pw_row.addWidget(self.txt_pass, 1)
         pw_row.addWidget(btn_toggle_pw)
-        layout.addLayout(pw_row)
+        up_layout.addLayout(pw_row)
+        layout.addWidget(self.userpw_container)
 
-        self.chk_remember = QCheckBox("🔒 Sitzung sicher über Windows-DPAPI auf diesem PC speichern")
+        self.chk_remember = QCheckBox("🔒 Zugangsdaten sicher über Windows-DPAPI auf diesem PC speichern")
         self.chk_remember.setChecked(True)
         self.chk_remember.setStyleSheet("color: #10b981; font-weight: 600; margin-top: 4px;")
         layout.addWidget(self.chk_remember)
@@ -645,18 +701,46 @@ class CloudLoginDialog(QDialog):
         btn_row.addWidget(self.btn_login)
         layout.addLayout(btn_row)
 
+        self._switch_auth_mode("apikey" if is_currently_apikey else "userpw")
+
+    def _switch_auth_mode(self, mode: str):
+        is_ak = (mode == "apikey")
+        self.btn_mode_apikey.setChecked(is_ak)
+        self.btn_mode_userpw.setChecked(not is_ak)
+        active_style = (
+            "background-color: #1e3a8a; color: #93c5fd; border: 1px solid #3b82f6; "
+            "font-weight: bold; padding: 7px 10px; border-radius: 8px;"
+        )
+        inactive_style = (
+            "background-color: #161622; color: #9ca3af; border: 1px solid #2e2e40; "
+            "font-weight: normal; padding: 7px 10px; border-radius: 8px;"
+        )
+        self.btn_mode_apikey.setStyleSheet(active_style if is_ak else inactive_style)
+        self.btn_mode_userpw.setStyleSheet(inactive_style if is_ak else active_style)
+        self.apikey_container.setVisible(is_ak)
+        self.userpw_container.setVisible(not is_ak)
+        self.lbl_error.setVisible(False)
+        self.adjustSize()
+
     def _do_login(self):
         self.lbl_error.setVisible(False)
         self.btn_login.setEnabled(False)
         self.btn_login.setText("Verbinde...")
         QApplication.processEvents()
         try:
-            self.client.login(
-                server_url=self.txt_url.text(),
-                username=self.txt_user.text(),
-                password=self.txt_pass.text(),
-                remember=self.chk_remember.isChecked()
-            )
+            if self.btn_mode_apikey.isChecked():
+                self.client.login_with_api_key(
+                    server_url=self.txt_url.text(),
+                    api_key=self.txt_apikey.text(),
+                    remember=self.chk_remember.isChecked()
+                )
+            else:
+                self.client.login(
+                    server_url=self.txt_url.text(),
+                    username=self.txt_user.text(),
+                    password=self.txt_pass.text(),
+                    remember=self.chk_remember.isChecked()
+                )
             self.accept()
         except Exception as e:
             self.lbl_error.setText(f"❌ {e}")
@@ -5896,7 +5980,9 @@ class MainWindow(QMainWindow):
         username = profile.get("username") or self.cloud_client.username
         role = profile.get("role", "TRAINER")
         host = self.cloud_client.server_url.replace("https://", "").replace("http://", "")
-        self.lbl_cloud_status.setText(f"🟢 {username} ({role}) @ {host}")
+        is_ak = bool(self.cloud_client.access_token and self.cloud_client.access_token.startswith("mto_ak_"))
+        auth_tag = " [API-Key]" if is_ak else ""
+        self.lbl_cloud_status.setText(f"🟢 {username} ({role}){auth_tag} @ {host}")
         self.lbl_cloud_status.setStyleSheet(
             "background-color: #0d2818; color: #34d399; border: 1px solid #059669; "
             "border-radius: 8px; padding: 5px 10px; font-size: 11px; font-weight: 700;"
