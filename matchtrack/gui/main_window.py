@@ -9974,5 +9974,3 @@ def launch_gui():
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
-
-
