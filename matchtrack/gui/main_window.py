@@ -1177,6 +1177,12 @@ class InteractivePanoramaViewport(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        try:
+            self._render_viewport(painter)
+        finally:
+            painter.end()
+
+    def _render_viewport(self, painter: QPainter):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 

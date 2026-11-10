@@ -190,7 +190,7 @@
         "stream_key_c2": "panorama_1",
         "stream_key_c3": "cam1",
         "stream_key_c4": "cam2",
-        "source_c1": "broadcast_16x9",
+        "source_c1": "cam2",
         "source_c2": "panorama_8x3",
         "source_c3": "cam1",
         "source_c4": "cam2",
@@ -203,7 +203,7 @@
         "wifi_ssid": ""
     },
     "ui_view": {
-        "view_mode": "8:3",
+        "view_mode": "cam1",
         "show_frame": false,
         "frame_opacity": 50.0,
         "show_center_line": false,

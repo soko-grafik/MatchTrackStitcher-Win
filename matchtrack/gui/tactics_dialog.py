@@ -40,6 +40,12 @@ class PitchHeatmapCanvas(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        try:
+            self._render_pitch(painter)
+        finally:
+            painter.end()
+
+    def _render_pitch(self, painter: QPainter):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
