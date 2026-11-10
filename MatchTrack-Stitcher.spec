@@ -48,6 +48,8 @@ hiddenimports = [
     'PIL.Image',
     'requests',
     'certifi',
+    'bleak',
+    'qrcode',
 ]
 hiddenimports += collect_submodules('matchtrack')
 

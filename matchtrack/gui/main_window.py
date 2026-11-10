@@ -42,6 +42,9 @@ from ..ai_detector import SKELETON_CONNECTIONS
 from ..logger import get_logger, get_gui_handler, GuiLogRecord, setup_logging, install_crash_handlers
 from ..paths import get_log_file_path, get_default_settings_path, get_resource_path
 from ..cloud_uploader import MatchTrackOnlineClient
+from ..rtmp_streamer import MultiStreamManager, RTMPChannelConfig, StreamStats
+from ..live_capture import DualLiveCaptureManager, enumerate_video_devices
+from ..dji_ble import DjiBLEManager, DjiCameraDevice
 from .tactics_dialog import TacticsDashboardDialog
 
 logger = get_logger("gui")
@@ -553,6 +556,51 @@ class CloudUploadWorker(QThread):
         except Exception as e:
             logger.error(f"CloudUploadWorker Fehler: {e}", exc_info=True)
             self.finished_signal.emit(False, str(e), {})
+
+
+class DjiQRCodeDialog(QDialog):
+    """Dialog displaying a DJI Action compatible QR-Code for instant camera live-stream configuration."""
+    def __init__(self, qr_pil_image, wifi_ssid: str, rtmp_url: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("📱 DJI Live-Stream QR-Code")
+        self.setMinimumWidth(380)
+        self.setStyleSheet("""
+            QDialog { background-color: #12121a; color: #f4f4f6; }
+            QLabel { color: #e4e4e7; font-size: 12px; }
+            QPushButton { background-color: #27273a; color: #f4f4f6; border: 1px solid #3f3f5a; border-radius: 8px; padding: 6px 14px; font-weight: 600; }
+            QPushButton:hover { background-color: #3b3b55; }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+
+        lbl_hdr = QLabel("📷 Halte die DJI Action vor diesen QR-Code:")
+        lbl_hdr.setStyleSheet("font-weight: 700; font-size: 13px; color: #38bdf8;")
+        lbl_hdr.setAlignment(Qt.AlignCenter)
+        layout.addWidget(lbl_hdr)
+
+        lbl_qr = QLabel()
+        lbl_qr.setAlignment(Qt.AlignCenter)
+        if qr_pil_image:
+            import io
+            buf = io.BytesIO()
+            qr_pil_image.save(buf, format="PNG")
+            pix = QPixmap()
+            pix.loadFromData(buf.getvalue(), "PNG")
+            lbl_qr.setPixmap(pix.scaled(280, 280, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            lbl_qr.setText("QR-Code konnte nicht generiert werden.")
+        layout.addWidget(lbl_qr)
+
+        info_box = QLabel(f"WLAN: <b>{wifi_ssid}</b><br>RTMP: <b>{rtmp_url}</b>")
+        info_box.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 8px; font-size: 11px;")
+        info_box.setAlignment(Qt.AlignCenter)
+        info_box.setWordWrap(True)
+        layout.addWidget(info_box)
+
+        btn_close = QPushButton("Schließen")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
 
 
 class CloudLoginDialog(QDialog):
@@ -1836,6 +1884,12 @@ class InteractivePanoramaViewport(QWidget):
 
 
 class MainWindow(QMainWindow):
+    stream_telemetry_signal = Signal(dict)
+    ble_device_found_signal = Signal(object)
+    ble_conn_changed_signal = Signal(str, bool)
+    ble_stream_started_signal = Signal(str, str)
+    ble_error_signal = Signal(str)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("MatchTrack-Stitcher | 32:9 Panorama & 16:9 Ball-Follow Broadcast (DJI Action 4)")
@@ -1851,6 +1905,29 @@ class MainWindow(QMainWindow):
         self.last_uploaded_match_url: str = ""
         self.saved_cloud_server_url: str = ""
         self.saved_cloud_team_id: str = ""
+
+        # Live-Streaming and Hardware Capture Managers
+        self.stream_manager = MultiStreamManager()
+        self.live_capture_manager = DualLiveCaptureManager()
+        self.dji_ble_manager = DjiBLEManager()
+
+        # Connect thread-safe background signals to GUI slots
+        self.stream_telemetry_signal.connect(self._handle_stream_telemetry)
+        self.ble_device_found_signal.connect(self._on_dji_ble_device_found)
+        self.ble_conn_changed_signal.connect(self._on_dji_ble_conn_changed)
+        self.ble_stream_started_signal.connect(self._on_dji_ble_stream_started)
+        self.ble_error_signal.connect(self._on_dji_ble_error)
+
+        self.stream_manager.telemetry_callback = lambda stats: self.stream_telemetry_signal.emit(stats)
+        self.dji_ble_manager.on_device_found = lambda dev: self.ble_device_found_signal.emit(dev)
+        self.dji_ble_manager.on_connection_change = lambda addr, c: self.ble_conn_changed_signal.emit(addr, c)
+        self.dji_ble_manager.on_stream_started = lambda addr, u: self.ble_stream_started_signal.emit(addr, u)
+        self.dji_ble_manager.on_error = lambda err: self.ble_error_signal.emit(err)
+
+        # Live streaming capture tick timer (~30 FPS)
+        self.live_capture_timer = QTimer(self)
+        self.live_capture_timer.setInterval(33)
+        self.live_capture_timer.timeout.connect(self._on_live_capture_tick)
 
         # Playback timer
         self.playback_timer = QTimer(self)
@@ -3563,6 +3640,12 @@ class MainWindow(QMainWindow):
         layout_tab_exp.addWidget(scroll_exp)
 
         self.right_pane.addTab(self.tab_export, "🚀 4. Export")
+
+        # -------------------------------------------------------------------------
+        # TAB 5: OBS-STYLE RTMP LIVE-STREAMING & CAMERA DIRECT CONNECT
+        # -------------------------------------------------------------------------
+        self._init_livestream_tab()
+        self.right_pane.addTab(self.tab_livestream, "🔴 5. Live-Stream")
         splitter.addWidget(self.right_pane)
 
         # Install wheel filter on right pane to prevent slider value changes on scrolling
@@ -5305,6 +5388,20 @@ class MainWindow(QMainWindow):
                 "fast_hls": self.chk_cloud_fast_hls.isChecked() if hasattr(self, 'chk_cloud_fast_hls') else False,
                 "concurrency": self.combo_cloud_concurrency.currentData() if hasattr(self, 'combo_cloud_concurrency') else 3
             },
+            "livestream": {
+                "server_url": self.txt_rtmp_server_url.text().strip() if hasattr(self, 'txt_rtmp_server_url') else "rtmp://matchtrack.de:1935/live",
+                "stream_key_bcast": self.txt_stream_key_bcast.text().strip() if hasattr(self, 'txt_stream_key_bcast') else "broadcast_1",
+                "stream_key_pano": self.txt_stream_key_pano.text().strip() if hasattr(self, 'txt_stream_key_pano') else "panorama_1",
+                "stream_key_cam1": self.txt_stream_key_cam1.text().strip() if hasattr(self, 'txt_stream_key_cam1') else "cam1",
+                "stream_key_cam2": self.txt_stream_key_cam2.text().strip() if hasattr(self, 'txt_stream_key_cam2') else "cam2",
+                "chan_bcast_enabled": self.chk_chan_bcast.isChecked() if hasattr(self, 'chk_chan_bcast') else True,
+                "chan_pano_enabled": self.chk_chan_pano.isChecked() if hasattr(self, 'chk_chan_pano') else True,
+                "chan_cam1_enabled": self.chk_chan_cam1.isChecked() if hasattr(self, 'chk_chan_cam1') else False,
+                "chan_cam2_enabled": self.chk_chan_cam2.isChecked() if hasattr(self, 'chk_chan_cam2') else False,
+                "encoder": self.combo_stream_encoder.currentText() if hasattr(self, 'combo_stream_encoder') else "h264_nvenc",
+                "bitrate_kbps": self.combo_stream_bitrate.currentData() if hasattr(self, 'combo_stream_bitrate') else 6000,
+                "wifi_ssid": self.txt_dji_wifi_ssid.text().strip() if hasattr(self, 'txt_dji_wifi_ssid') else ""
+            },
             "ui_view": ui_dict
         }
 
@@ -5635,6 +5732,34 @@ class MainWindow(QMainWindow):
                 idx = self.combo_cloud_concurrency.findData(cld["concurrency"])
                 if idx >= 0:
                     self.combo_cloud_concurrency.setCurrentIndex(idx)
+
+        # 4c. Live-Stream Preferences
+        if "livestream" in data and isinstance(data["livestream"], dict):
+            ls = data["livestream"]
+            if hasattr(self, 'txt_rtmp_server_url') and "server_url" in ls and ls["server_url"]:
+                self.txt_rtmp_server_url.setText(str(ls["server_url"]))
+            if hasattr(self, 'txt_stream_key_bcast') and "stream_key_bcast" in ls:
+                self.txt_stream_key_bcast.setText(str(ls["stream_key_bcast"]))
+            if hasattr(self, 'txt_stream_key_pano') and "stream_key_pano" in ls:
+                self.txt_stream_key_pano.setText(str(ls["stream_key_pano"]))
+            if hasattr(self, 'txt_stream_key_cam1') and "stream_key_cam1" in ls:
+                self.txt_stream_key_cam1.setText(str(ls["stream_key_cam1"]))
+            if hasattr(self, 'txt_stream_key_cam2') and "stream_key_cam2" in ls:
+                self.txt_stream_key_cam2.setText(str(ls["stream_key_cam2"]))
+            if hasattr(self, 'chk_chan_bcast') and "chan_bcast_enabled" in ls:
+                self.chk_chan_bcast.setChecked(bool(ls["chan_bcast_enabled"]))
+            if hasattr(self, 'chk_chan_pano') and "chan_pano_enabled" in ls:
+                self.chk_chan_pano.setChecked(bool(ls["chan_pano_enabled"]))
+            if hasattr(self, 'chk_chan_cam1') and "chan_cam1_enabled" in ls:
+                self.chk_chan_cam1.setChecked(bool(ls["chan_cam1_enabled"]))
+            if hasattr(self, 'chk_chan_cam2') and "chan_cam2_enabled" in ls:
+                self.chk_chan_cam2.setChecked(bool(ls["chan_cam2_enabled"]))
+            if hasattr(self, 'txt_dji_wifi_ssid') and "wifi_ssid" in ls:
+                self.txt_dji_wifi_ssid.setText(str(ls["wifi_ssid"]))
+            if hasattr(self, 'combo_stream_bitrate') and "bitrate_kbps" in ls:
+                idx = self.combo_stream_bitrate.findData(ls["bitrate_kbps"])
+                if idx >= 0:
+                    self.combo_stream_bitrate.setCurrentIndex(idx)
 
         # 5. UI Preferences & Overlays
         if "ui_view" in data and isinstance(data["ui_view"], dict):
@@ -6425,6 +6550,585 @@ class MainWindow(QMainWindow):
     def open_last_uploaded_match_in_browser(self):
         if self.last_uploaded_match_url:
             QDesktopServices.openUrl(QUrl(self.last_uploaded_match_url))
+
+    # =========================================================================
+    # TAB 5: OBS-STYLE RTMP LIVE-STREAMING & CAMERA DIRECT CONNECT
+    # =========================================================================
+
+    def _init_livestream_tab(self):
+        """Initializes Tab 5: OBS-Style RTMP Live-Streaming and DJI Action Direct Connect."""
+        self.tab_livestream = QWidget()
+        layout_tab_live = QVBoxLayout(self.tab_livestream)
+        layout_tab_live.setContentsMargins(4, 4, 4, 4)
+
+        scroll_live = QScrollArea()
+        scroll_live.setWidgetResizable(True)
+        widget_live = QWidget()
+        live_layout = QVBoxLayout(widget_live)
+        live_layout.setSpacing(10)
+        live_layout.setContentsMargins(8, 8, 8, 8)
+
+        # ---------------------------------------------------------------------
+        # 1. Master Telemetry Header Card
+        # ---------------------------------------------------------------------
+        grp_tally = QGroupBox("🔴 LIVE-BROADCAST MONITOR")
+        grp_tally.setStyleSheet("QGroupBox { font-weight: bold; color: #ef4444; border: 1px solid #3b2828; border-radius: 8px; margin-top: 6px; padding-top: 10px; background-color: #140d0d; }")
+        tally_layout = QVBoxLayout(grp_tally)
+        tally_layout.setSpacing(6)
+
+        row_tally_hdr = QHBoxLayout()
+        self.lbl_stream_tally = QLabel("⚪ BEREIT")
+        self.lbl_stream_tally.setStyleSheet(
+            "background-color: #27273a; color: #a1a1aa; font-weight: 900; font-size: 13px; padding: 6px 14px; border-radius: 8px;"
+        )
+        self.lbl_stream_tally.setAlignment(Qt.AlignCenter)
+
+        self.lbl_stream_telemetry = QLabel("Bitrate: 0 kbps | FPS: 0.0 | Uptime: 00:00:00 | Drops: 0")
+        self.lbl_stream_telemetry.setStyleSheet("color: #e4e4e7; font-size: 11px; font-weight: 600;")
+        self.lbl_stream_telemetry.setWordWrap(True)
+
+        row_tally_hdr.addWidget(self.lbl_stream_tally)
+        row_tally_hdr.addWidget(self.lbl_stream_telemetry, 1)
+        tally_layout.addLayout(row_tally_hdr)
+        live_layout.addWidget(grp_tally)
+
+        # ---------------------------------------------------------------------
+        # 2. Camera Input Source Group (USB-C UVC vs. Wireless BLE)
+        # ---------------------------------------------------------------------
+        grp_input = QGroupBox("📹 Kamera-Eingangsquellen (Direct-Connect)")
+        grp_input.setStyleSheet("QGroupBox { font-weight: bold; color: #38bdf8; border: 1px solid #282839; border-radius: 8px; margin-top: 6px; padding-top: 10px; }")
+        input_layout = QVBoxLayout(grp_input)
+        input_layout.setSpacing(8)
+
+        row_mode = QHBoxLayout()
+        row_mode.addWidget(QLabel("Eingangs-Modus:"))
+        self.combo_live_input_mode = QComboBox()
+        self.combo_live_input_mode.addItem("🔌 USB-C Kabel (Direkte UVC-Webcam - 0ms Latenz)", "uvc")
+        self.combo_live_input_mode.addItem("📡 Kabellose BLE-Fernsteuerung (DJI Mimo Bypass)", "ble")
+        self.combo_live_input_mode.currentIndexChanged.connect(self._on_live_input_mode_changed)
+        self.combo_live_input_mode.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6;")
+        row_mode.addWidget(self.combo_live_input_mode, 1)
+        input_layout.addLayout(row_mode)
+
+        # Container A: USB-C UVC Direct Controls
+        self.panel_uvc = QFrame()
+        self.panel_uvc.setStyleSheet("QFrame { background-color: #0b0b12; border: 1px solid #1e1e2d; border-radius: 6px; padding: 6px; }")
+        uvc_layout = QVBoxLayout(self.panel_uvc)
+        uvc_layout.setSpacing(6)
+
+        row_uvc_sel = QGridLayout()
+        row_uvc_sel.addWidget(QLabel("Cam Links:"), 0, 0)
+        self.combo_uvc_left = QComboBox()
+        self.combo_uvc_left.setStyleSheet("background-color: #12121a; border: 1px solid #27273a; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        row_uvc_sel.addWidget(self.combo_uvc_left, 0, 1)
+
+        row_uvc_sel.addWidget(QLabel("Cam Rechts:"), 1, 0)
+        self.combo_uvc_right = QComboBox()
+        self.combo_uvc_right.setStyleSheet("background-color: #12121a; border: 1px solid #27273a; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        row_uvc_sel.addWidget(self.combo_uvc_right, 1, 1)
+        uvc_layout.addLayout(row_uvc_sel)
+
+        row_uvc_btns = QHBoxLayout()
+        self.btn_refresh_uvc = QPushButton("🔄 Geräte suchen")
+        self.btn_refresh_uvc.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 4px 8px; color: #94a3b8; font-size: 11px;")
+        self.btn_refresh_uvc.clicked.connect(self._refresh_uvc_devices)
+
+        self.btn_toggle_uvc = QPushButton("▶️ Live-Kameras aktivieren")
+        self.btn_toggle_uvc.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; border-radius: 6px; padding: 5px 12px; font-size: 11px;")
+        self.btn_toggle_uvc.clicked.connect(self._toggle_uvc_live_capture)
+
+        row_uvc_btns.addWidget(self.btn_refresh_uvc)
+        row_uvc_btns.addWidget(self.btn_toggle_uvc, 1)
+        uvc_layout.addLayout(row_uvc_btns)
+
+        self.lbl_uvc_status = QLabel("UVC-Kameras nicht gestartet.")
+        self.lbl_uvc_status.setStyleSheet("color: #8e8e9c; font-size: 10px;")
+        uvc_layout.addWidget(self.lbl_uvc_status)
+        input_layout.addWidget(self.panel_uvc)
+
+        # Container B: Wireless BLE Controls (DJI Mimo Bypass)
+        self.panel_ble = QFrame()
+        self.panel_ble.setVisible(False)
+        self.panel_ble.setStyleSheet("QFrame { background-color: #0b0b12; border: 1px solid #1e1e2d; border-radius: 6px; padding: 6px; }")
+        ble_layout = QVBoxLayout(self.panel_ble)
+        ble_layout.setSpacing(6)
+
+        row_wifi = QGridLayout()
+        row_wifi.addWidget(QLabel("WLAN SSID:"), 0, 0)
+        self.txt_dji_wifi_ssid = QLineEdit()
+        self.txt_dji_wifi_ssid.setPlaceholderText("WLAN-Name am Platz...")
+        self.txt_dji_wifi_ssid.setStyleSheet("background-color: #12121a; border: 1px solid #27273a; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        row_wifi.addWidget(self.txt_dji_wifi_ssid, 0, 1)
+
+        row_wifi.addWidget(QLabel("WLAN Pass:"), 1, 0)
+        self.txt_dji_wifi_pass = QLineEdit()
+        self.txt_dji_wifi_pass.setEchoMode(QLineEdit.Password)
+        self.txt_dji_wifi_pass.setPlaceholderText("WLAN-Passwort...")
+        self.txt_dji_wifi_pass.setStyleSheet("background-color: #12121a; border: 1px solid #27273a; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        row_wifi.addWidget(self.txt_dji_wifi_pass, 1, 1)
+        ble_layout.addLayout(row_wifi)
+
+        row_ble_actions = QHBoxLayout()
+        self.btn_ble_scan = QPushButton("📡 DJI Kameras suchen (BLE)")
+        self.btn_ble_scan.setStyleSheet("background-color: #1e293b; border: 1px solid #3b82f6; color: #60a5fa; border-radius: 6px; padding: 5px 10px; font-weight: 600; font-size: 11px;")
+        self.btn_ble_scan.clicked.connect(self._on_ble_scan_clicked)
+
+        self.btn_dji_qr = QPushButton("📱 Live QR-Code")
+        self.btn_dji_qr.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 5px 10px; color: #94a3b8; font-size: 11px;")
+        self.btn_dji_qr.clicked.connect(self._on_show_dji_qr_dialog)
+
+        row_ble_actions.addWidget(self.btn_ble_scan, 1)
+        row_ble_actions.addWidget(self.btn_dji_qr)
+        ble_layout.addLayout(row_ble_actions)
+
+        row_ble_cams = QGridLayout()
+        row_ble_cams.addWidget(QLabel("DJI Links:"), 0, 0)
+        self.combo_dji_cam_left = QComboBox()
+        self.combo_dji_cam_left.setStyleSheet("background-color: #12121a; border: 1px solid #27273a; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        self.btn_dji_conn_left = QPushButton("Koppeln")
+        self.btn_dji_conn_left.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 3px 8px; font-size: 11px;")
+        self.btn_dji_conn_left.clicked.connect(self._on_dji_connect_left_clicked)
+        row_ble_cams.addWidget(self.combo_dji_cam_left, 0, 1)
+        row_ble_cams.addWidget(self.btn_dji_conn_left, 0, 2)
+
+        row_ble_cams.addWidget(QLabel("DJI Rechts:"), 1, 0)
+        self.combo_dji_cam_right = QComboBox()
+        self.combo_dji_cam_right.setStyleSheet("background-color: #12121a; border: 1px solid #27273a; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        self.btn_dji_conn_right = QPushButton("Koppeln")
+        self.btn_dji_conn_right.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 3px 8px; font-size: 11px;")
+        self.btn_dji_conn_right.clicked.connect(self._on_dji_connect_right_clicked)
+        row_ble_cams.addWidget(self.combo_dji_cam_right, 1, 1)
+        row_ble_cams.addWidget(self.btn_dji_conn_right, 1, 2)
+        ble_layout.addLayout(row_ble_cams)
+
+        self.btn_dji_start_rtmp = QPushButton("🚀 RTMP-Streams auf Kameras starten (Mimo Bypass)")
+        self.btn_dji_start_rtmp.setStyleSheet("background-color: #059669; color: white; font-weight: bold; border-radius: 6px; padding: 6px 12px; font-size: 11px;")
+        self.btn_dji_start_rtmp.clicked.connect(self._on_dji_start_rtmp_clicked)
+        ble_layout.addWidget(self.btn_dji_start_rtmp)
+
+        self.lbl_ble_status = QLabel("Bluetooth bereit.")
+        self.lbl_ble_status.setStyleSheet("color: #8e8e9c; font-size: 10px;")
+        ble_layout.addWidget(self.lbl_ble_status)
+        input_layout.addWidget(self.panel_ble)
+
+        live_layout.addWidget(grp_input)
+
+        # ---------------------------------------------------------------------
+        # 3. Multi-Destination RTMP Targets Group
+        # ---------------------------------------------------------------------
+        grp_targets = QGroupBox("🌐 Live-Stream Kanäle (Multi-Stream)")
+        grp_targets.setStyleSheet("QGroupBox { font-weight: bold; color: #a78bfa; border: 1px solid #282839; border-radius: 8px; margin-top: 6px; padding-top: 10px; }")
+        targets_layout = QVBoxLayout(grp_targets)
+        targets_layout.setSpacing(6)
+
+        row_preset = QHBoxLayout()
+        row_preset.addWidget(QLabel("Server-Preset:"))
+        self.combo_rtmp_preset = QComboBox()
+        self.combo_rtmp_preset.addItem("MatchTrack Online (rtmp://matchtrack.de:1935/live)", "rtmp://matchtrack.de:1935/live")
+        self.combo_rtmp_preset.addItem("YouTube Live (rtmp://a.rtmp.youtube.com/live2)", "rtmp://a.rtmp.youtube.com/live2")
+        self.combo_rtmp_preset.addItem("Twitch (rtmp://live.twitch.tv/app)", "rtmp://live.twitch.tv/app")
+        self.combo_rtmp_preset.addItem("Benutzerdefiniert (Custom RTMP)", "custom")
+        self.combo_rtmp_preset.currentIndexChanged.connect(self._on_rtmp_preset_changed)
+        self.combo_rtmp_preset.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        row_preset.addWidget(self.combo_rtmp_preset, 1)
+        targets_layout.addLayout(row_preset)
+
+        row_server_url = QHBoxLayout()
+        row_server_url.addWidget(QLabel("Server URL:"))
+        self.txt_rtmp_server_url = QLineEdit("rtmp://matchtrack.de:1935/live")
+        self.txt_rtmp_server_url.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6; font-size: 11px;")
+        row_server_url.addWidget(self.txt_rtmp_server_url, 1)
+        targets_layout.addLayout(row_server_url)
+
+        # Channel 1: 16:9 Broadcast
+        row_c1 = QHBoxLayout()
+        self.chk_chan_bcast = QCheckBox("📺 16:9 Regie (Ball-Follow KI):")
+        self.chk_chan_bcast.setChecked(True)
+        self.chk_chan_bcast.setStyleSheet("color: #38bdf8; font-weight: 600; font-size: 11px;")
+        self.txt_stream_key_bcast = QLineEdit("broadcast_1")
+        self.txt_stream_key_bcast.setPlaceholderText("Stream-Key...")
+        self.txt_stream_key_bcast.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        row_c1.addWidget(self.chk_chan_bcast, 1)
+        row_c1.addWidget(self.txt_stream_key_bcast, 1)
+        targets_layout.addLayout(row_c1)
+
+        # Channel 2: 8:3 / 32:9 Panorama
+        row_c2 = QHBoxLayout()
+        self.chk_chan_pano = QCheckBox("📐 8:3 / 32:9 Taktik-Panorama:")
+        self.chk_chan_pano.setChecked(True)
+        self.chk_chan_pano.setStyleSheet("color: #a78bfa; font-weight: 600; font-size: 11px;")
+        self.txt_stream_key_pano = QLineEdit("panorama_1")
+        self.txt_stream_key_pano.setPlaceholderText("Stream-Key...")
+        self.txt_stream_key_pano.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        row_c2.addWidget(self.chk_chan_pano, 1)
+        row_c2.addWidget(self.txt_stream_key_pano, 1)
+        targets_layout.addLayout(row_c2)
+
+        # Channel 3: Cam 1 Raw
+        row_c3 = QHBoxLayout()
+        self.chk_chan_cam1 = QCheckBox("📹 Cam 1 (Roh-Feed Links):")
+        self.chk_chan_cam1.setChecked(False)
+        self.chk_chan_cam1.setStyleSheet("color: #cbd5e1; font-size: 11px;")
+        self.txt_stream_key_cam1 = QLineEdit("cam1")
+        self.txt_stream_key_cam1.setPlaceholderText("Stream-Key...")
+        self.txt_stream_key_cam1.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        row_c3.addWidget(self.chk_chan_cam1, 1)
+        row_c3.addWidget(self.txt_stream_key_cam1, 1)
+        targets_layout.addLayout(row_c3)
+
+        # Channel 4: Cam 2 Raw
+        row_c4 = QHBoxLayout()
+        self.chk_chan_cam2 = QCheckBox("📹 Cam 2 (Roh-Feed Rechts):")
+        self.chk_chan_cam2.setChecked(False)
+        self.chk_chan_cam2.setStyleSheet("color: #cbd5e1; font-size: 11px;")
+        self.txt_stream_key_cam2 = QLineEdit("cam2")
+        self.txt_stream_key_cam2.setPlaceholderText("Stream-Key...")
+        self.txt_stream_key_cam2.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        row_c4.addWidget(self.chk_chan_cam2, 1)
+        row_c4.addWidget(self.txt_stream_key_cam2, 1)
+        targets_layout.addLayout(row_c4)
+
+        live_layout.addWidget(grp_targets)
+
+        # ---------------------------------------------------------------------
+        # 4. Hardware Encoder Settings
+        # ---------------------------------------------------------------------
+        grp_enc = QGroupBox("⚙️ Streaming-Encoder Einstellungen (wie OBS)")
+        grp_enc.setStyleSheet("QGroupBox { font-weight: bold; color: #f59e0b; border: 1px solid #282839; border-radius: 8px; margin-top: 6px; padding-top: 10px; }")
+        enc_layout = QGridLayout(grp_enc)
+        enc_layout.setSpacing(6)
+
+        enc_layout.addWidget(QLabel("Encoder:"), 0, 0)
+        self.combo_stream_encoder = QComboBox()
+        self.combo_stream_encoder.addItem("h264_nvenc (NVIDIA GPU - Empfohlen)", "h264_nvenc")
+        self.combo_stream_encoder.addItem("h264_qsv (Intel QuickSync)", "h264_qsv")
+        self.combo_stream_encoder.addItem("libx264 (Software CPU)", "libx264")
+        self.combo_stream_encoder.addItem("hevc_nvenc (H.265 / HEVC)", "hevc_nvenc")
+        self.combo_stream_encoder.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        enc_layout.addWidget(self.combo_stream_encoder, 0, 1)
+
+        enc_layout.addWidget(QLabel("Bitrate:"), 1, 0)
+        self.combo_stream_bitrate = QComboBox()
+        self.combo_stream_bitrate.addItem("6000 kbps (1080p Standard)", 6000)
+        self.combo_stream_bitrate.addItem("8000 kbps (1080p High Quality)", 8000)
+        self.combo_stream_bitrate.addItem("4000 kbps (1080p Daten-Schonend)", 4000)
+        self.combo_stream_bitrate.addItem("10000 kbps (Ultra High-Bitrate)", 10000)
+        self.combo_stream_bitrate.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        enc_layout.addWidget(self.combo_stream_bitrate, 1, 1)
+
+        enc_layout.addWidget(QLabel("Framerate:"), 2, 0)
+        self.combo_stream_fps = QComboBox()
+        self.combo_stream_fps.addItem("30 FPS", 30)
+        self.combo_stream_fps.addItem("60 FPS", 60)
+        self.combo_stream_fps.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
+        enc_layout.addWidget(self.combo_stream_fps, 2, 1)
+
+        live_layout.addWidget(grp_enc)
+
+        # ---------------------------------------------------------------------
+        # 5. Master Broadcast Action Buttons
+        # ---------------------------------------------------------------------
+        self.btn_master_stream_toggle = QPushButton("🔴 LIVE-STREAM STARTEN (OBS-Engine)")
+        self.btn_master_stream_toggle.setStyleSheet(
+            "background-color: #dc2626; color: white; font-weight: 800; font-size: 13px; padding: 12px; border-radius: 10px;"
+        )
+        self.btn_master_stream_toggle.clicked.connect(self._toggle_master_live_stream)
+        live_layout.addWidget(self.btn_master_stream_toggle)
+
+        live_layout.addStretch()
+        scroll_live.setWidget(widget_live)
+        layout_tab_live.addWidget(scroll_live)
+
+        # Initial device enumeration
+        self._refresh_uvc_devices()
+
+    def _on_rtmp_preset_changed(self, idx: int):
+        data = self.combo_rtmp_preset.currentData()
+        if data != "custom":
+            self.txt_rtmp_server_url.setText(data)
+
+    def _on_live_input_mode_changed(self, idx: int):
+        mode = self.combo_live_input_mode.currentData()
+        self.panel_uvc.setVisible(mode == "uvc")
+        self.panel_ble.setVisible(mode == "ble")
+
+    def _refresh_uvc_devices(self):
+        self.combo_uvc_left.clear()
+        self.combo_uvc_right.clear()
+        devices = enumerate_video_devices(max_devices=6)
+        if not devices:
+            self.combo_uvc_left.addItem("Keine Kameras gefunden", -1)
+            self.combo_uvc_right.addItem("Keine Kameras gefunden", -1)
+            self.lbl_uvc_status.setText("Keine UVC-Kameras über DirectShow gefunden.")
+            return
+
+        for dev in devices:
+            self.combo_uvc_left.addItem(f"[{dev.index}] {dev.name}", dev.index)
+            self.combo_uvc_right.addItem(f"[{dev.index}] {dev.name}", dev.index)
+
+        if len(devices) > 1:
+            self.combo_uvc_right.setCurrentIndex(1)
+        self.lbl_uvc_status.setText(f"{len(devices)} Kamera-Gerät(e) in Windows erkannt.")
+
+    def _toggle_uvc_live_capture(self):
+        if self.live_capture_manager.is_running:
+            self.live_capture_manager.stop()
+            self.live_capture_timer.stop()
+            self.btn_toggle_uvc.setText("▶️ Live-Kameras aktivieren")
+            self.btn_toggle_uvc.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; border-radius: 6px; padding: 5px 12px; font-size: 11px;")
+            self.lbl_uvc_status.setText("Live-Kameras gestoppt.")
+        else:
+            idx_l = self.combo_uvc_left.currentData()
+            idx_r = self.combo_uvc_right.currentData()
+            if idx_l is None or idx_r is None or idx_l < 0 or idx_r < 0:
+                QMessageBox.warning(self, "Kameras wählen", "Bitte wähle zwei gültige Kameras (Links & Rechts) aus.")
+                return
+
+            fps_val = self.combo_stream_fps.currentData() or 30
+            self.live_capture_manager.start(idx_l, idx_r, width=1920, height=1080, fps=fps_val)
+            self.live_capture_timer.start()
+            self.btn_toggle_uvc.setText("⏹ Kameras deaktivieren")
+            self.btn_toggle_uvc.setStyleSheet("background-color: #b91c1c; color: white; font-weight: bold; border-radius: 6px; padding: 5px 12px; font-size: 11px;")
+            self.lbl_uvc_status.setText("Live-Erfassung aktiv (1080p @ 30 FPS).")
+
+    def _on_live_capture_tick(self):
+        """Tick event capturing live frames from cameras, stitching, and pushing to RTMP streams."""
+        if not self.live_capture_manager.is_running:
+            return
+
+        frame_l, frame_r, is_synced = self.live_capture_manager.get_synced_frames()
+        if frame_l is None or frame_r is None:
+            return
+
+        try:
+            is_4_3 = self.is_4_3_mode()
+            pw = 2560 if is_4_3 else 3840
+            ph = 960 if is_4_3 else 1080
+            pano_frame, bcast_frame, crop_box = self.engine.stitch_live_pair(
+                frame_l, frame_r,
+                pano_width=pw,
+                pano_height=ph,
+                broadcast_width=1920,
+                broadcast_height=1080
+            )
+        except Exception as e:
+            logger.warning(f"Fehler beim Live-Stitching: {e}")
+            return
+
+        # Push to active RTMP streaming channels
+        if self.stream_manager.is_any_live():
+            self.stream_manager.push_frame("broadcast_16x9", bcast_frame)
+            self.stream_manager.push_frame("panorama_8x3", pano_frame)
+            self.stream_manager.push_frame("cam1", frame_l)
+            self.stream_manager.push_frame("cam2", frame_r)
+
+        # Update viewport preview
+        display_frame = bcast_frame if self.view_mode.startswith("16:9") else pano_frame
+        self.viewport.update_preview_image(display_frame)
+
+    def _on_ble_scan_clicked(self):
+        self.btn_ble_scan.setEnabled(False)
+        self.lbl_ble_status.setText("Suche nach DJI Osmo Action Kameras via Bluetooth...")
+        self.dji_ble_manager.scan_for_cameras(timeout_sec=5.0)
+        QTimer.singleShot(6000, lambda: self.btn_ble_scan.setEnabled(True))
+
+    def _on_dji_ble_device_found(self, dev: DjiCameraDevice):
+        label = f"{dev.name} ({dev.address})"
+        # Add to left/right combos if not already present
+        if self.combo_dji_cam_left.findData(dev.address) < 0:
+            self.combo_dji_cam_left.addItem(label, dev.address)
+        if self.combo_dji_cam_right.findData(dev.address) < 0:
+            self.combo_dji_cam_right.addItem(label, dev.address)
+        self.lbl_ble_status.setText(f"Gefunden: {dev.name}")
+
+    def _on_dji_ble_conn_changed(self, addr: str, connected: bool):
+        status_txt = "Verbunden" if connected else "Getrennt"
+        self.lbl_ble_status.setText(f"Kamera {addr}: {status_txt}")
+
+    def _on_dji_ble_stream_started(self, addr: str, rtmp_url: str):
+        self.lbl_ble_status.setText(f"🎉 Kamera {addr} streamt aktiv zu: {rtmp_url}")
+        QMessageBox.information(self, "DJI Stream aktiv", f"Die DJI Action Kamera ({addr}) hat den RTMP-Stream erfolgreich gestartet:\n\n{rtmp_url}")
+
+    def _on_dji_ble_error(self, err_msg: str):
+        self.lbl_ble_status.setText(f"Fehler: {err_msg}")
+
+    def _on_dji_connect_left_clicked(self):
+        addr = self.combo_dji_cam_left.currentData()
+        if addr:
+            self.dji_ble_manager.connect_camera(addr)
+
+    def _on_dji_connect_right_clicked(self):
+        addr = self.combo_dji_cam_right.currentData()
+        if addr:
+            self.dji_ble_manager.connect_camera(addr)
+
+    def _on_dji_start_rtmp_clicked(self):
+        ssid = self.txt_dji_wifi_ssid.text().strip()
+        pwd = self.txt_dji_wifi_pass.text().strip()
+        server_url = self.txt_rtmp_server_url.text().strip().rstrip("/")
+        if not ssid:
+            QMessageBox.warning(self, "WLAN erforderlich", "Bitte gib den Namen deines WLAN-Netzwerks (SSID) ein.")
+            return
+
+        addr_l = self.combo_dji_cam_left.currentData()
+        addr_r = self.combo_dji_cam_right.currentData()
+
+        if not addr_l and not addr_r:
+            QMessageBox.warning(self, "Kamera wählen", "Bitte wähle mindestens eine gefundene DJI-Kamera aus.")
+            return
+
+        bitrate = self.combo_stream_bitrate.currentData() or 6000
+
+        if addr_l:
+            url_l = f"{server_url}/{self.txt_stream_key_cam1.text().strip()}"
+            self.dji_ble_manager.start_rtmp_streaming(addr_l, ssid, pwd, url_l, bitrate_kbps=bitrate)
+
+        if addr_r:
+            url_r = f"{server_url}/{self.txt_stream_key_cam2.text().strip()}"
+            self.dji_ble_manager.start_rtmp_streaming(addr_r, ssid, pwd, url_r, bitrate_kbps=bitrate)
+
+    def _on_show_dji_qr_dialog(self):
+        ssid = self.txt_dji_wifi_ssid.text().strip()
+        pwd = self.txt_dji_wifi_pass.text().strip()
+        server_url = self.txt_rtmp_server_url.text().strip().rstrip("/")
+        key = self.txt_stream_key_cam1.text().strip() or "cam1"
+        full_url = f"{server_url}/{key}"
+
+        qr_img = self.dji_ble_manager.generate_dji_stream_qr_image(ssid, pwd, full_url)
+        dlg = DjiQRCodeDialog(qr_img, ssid, full_url, parent=self)
+        dlg.exec()
+
+    def _toggle_master_live_stream(self):
+        """Starts or stops the OBS-Style multi-stream engine."""
+        if self.stream_manager.is_any_live():
+            self.stream_manager.stop_all()
+            self.btn_master_stream_toggle.setText("🔴 LIVE-STREAM STARTEN (OBS-Engine)")
+            self.btn_master_stream_toggle.setStyleSheet(
+                "background-color: #dc2626; color: white; font-weight: 800; font-size: 13px; padding: 12px; border-radius: 10px;"
+            )
+            self.lbl_stream_tally.setText("⚪ BEREIT")
+            self.lbl_stream_tally.setStyleSheet(
+                "background-color: #27273a; color: #a1a1aa; font-weight: 900; font-size: 13px; padding: 6px 14px; border-radius: 8px;"
+            )
+            self.status_bar.showMessage("Stream beendet.")
+        else:
+            base_url = self.txt_rtmp_server_url.text().strip()
+            if not base_url:
+                QMessageBox.warning(self, "Server-URL fehlt", "Bitte gib eine gültige RTMP-Server-URL ein.")
+                return
+
+            codec = self.combo_stream_encoder.currentData() or "h264_nvenc"
+            bitrate = self.combo_stream_bitrate.currentData() or 6000
+            fps = self.combo_stream_fps.currentData() or 30
+
+            # 1. Channel Broadcast 16:9
+            if self.chk_chan_bcast.isChecked():
+                cfg_bcast = RTMPChannelConfig(
+                    channel_id="broadcast_16x9",
+                    name="16:9 Broadcast",
+                    stream_url=base_url,
+                    stream_key=self.txt_stream_key_bcast.text().strip(),
+                    enabled=True,
+                    width=1920,
+                    height=1080,
+                    fps=fps,
+                    bitrate_kbps=bitrate,
+                    codec=codec
+                )
+                self.stream_manager.configure_channel(cfg_bcast)
+
+            # 2. Channel Panorama 8:3 / 32:9
+            if self.chk_chan_pano.isChecked():
+                is_4_3 = self.is_4_3_mode()
+                cfg_pano = RTMPChannelConfig(
+                    channel_id="panorama_8x3",
+                    name="Taktik-Panorama",
+                    stream_url=base_url,
+                    stream_key=self.txt_stream_key_pano.text().strip(),
+                    enabled=True,
+                    width=2560 if is_4_3 else 3840,
+                    height=960 if is_4_3 else 1080,
+                    fps=fps,
+                    bitrate_kbps=bitrate,
+                    codec=codec
+                )
+                self.stream_manager.configure_channel(cfg_pano)
+
+            # 3. Channel Cam 1
+            if self.chk_chan_cam1.isChecked():
+                cfg_c1 = RTMPChannelConfig(
+                    channel_id="cam1",
+                    name="Cam 1 (Links)",
+                    stream_url=base_url,
+                    stream_key=self.txt_stream_key_cam1.text().strip(),
+                    enabled=True,
+                    width=1920,
+                    height=1080,
+                    fps=fps,
+                    bitrate_kbps=bitrate // 2,
+                    codec=codec
+                )
+                self.stream_manager.configure_channel(cfg_c1)
+
+            # 4. Channel Cam 2
+            if self.chk_chan_cam2.isChecked():
+                cfg_c2 = RTMPChannelConfig(
+                    channel_id="cam2",
+                    name="Cam 2 (Rechts)",
+                    stream_url=base_url,
+                    stream_key=self.txt_stream_key_cam2.text().strip(),
+                    enabled=True,
+                    width=1920,
+                    height=1080,
+                    fps=fps,
+                    bitrate_kbps=bitrate // 2,
+                    codec=codec
+                )
+                self.stream_manager.configure_channel(cfg_c2)
+
+            self.stream_manager.start_all_enabled()
+
+            # If UVC live capture is not running yet, auto-start it if cameras are selected
+            if not self.live_capture_manager.is_running and self.combo_live_input_mode.currentData() == "uvc":
+                self._toggle_uvc_live_capture()
+
+            self.btn_master_stream_toggle.setText("⏹ LIVE-STREAM STOPPEN")
+            self.btn_master_stream_toggle.setStyleSheet(
+                "background-color: #059669; color: white; font-weight: 800; font-size: 13px; padding: 12px; border-radius: 10px;"
+            )
+            self.lbl_stream_tally.setText("🔴 LIVE")
+            self.lbl_stream_tally.setStyleSheet(
+                "background-color: #dc2626; color: white; font-weight: 900; font-size: 13px; padding: 6px 14px; border-radius: 8px;"
+            )
+            self.status_bar.showMessage("OBS-Stream aktiv!")
+
+    def _handle_stream_telemetry(self, stats_dict: dict):
+        """Thread-safe slot updating GUI with current live stream telemetry."""
+        if not stats_dict:
+            return
+
+        total_kbps = sum(s.current_bitrate_kbps for s in stats_dict.values())
+        max_uptime = max((s.uptime_sec for s in stats_dict.values()), default=0.0)
+        total_drops = sum(s.frames_dropped for s in stats_dict.values())
+        avg_fps = max((s.current_fps for s in stats_dict.values()), default=0.0)
+
+        m, s = divmod(int(max_uptime), 60)
+        h, m = divmod(m, 60)
+        uptime_str = f"{h:02d}:{m:02d}:{s:02d}"
+
+        active_count = sum(1 for s in stats_dict.values() if s.is_live)
+        if active_count > 0:
+            self.lbl_stream_tally.setText(f"🔴 LIVE ({active_count})")
+            self.lbl_stream_telemetry.setText(
+                f"Bitrate: {total_kbps:.0f} kbps ({total_kbps/1024:.1f} MB/s) | FPS: {avg_fps:.1f} | Uptime: {uptime_str} | Drops: {total_drops}"
+            )
+        else:
+            if self.stream_manager.is_any_live():
+                self.lbl_stream_tally.setText("🟡 VERBINDE")
+                self.lbl_stream_telemetry.setText("Verbinde mit RTMP-Server...")
+            else:
+                self.lbl_stream_tally.setText("⚪ BEREIT")
+                self.lbl_stream_telemetry.setText("Bereit für Live-Stream.")
 
 
 def launch_gui():

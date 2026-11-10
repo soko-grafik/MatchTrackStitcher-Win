@@ -1,0 +1,238 @@
+"""
+MatchTrack-Stitcher Live Capture Engine.
+Supports:
+- Dual USB-C UVC Webcams (DirectShow / MediaFoundation on Windows)
+- Direct network stream ingest (RTSP / RTMP / HTTP streams)
+- Real-time device discovery and friendly name resolution
+- Dedicated low-latency capture threads with ring buffers and automatic re-connection
+"""
+import os
+import subprocess
+import sys
+import threading
+import time
+from dataclasses import dataclass
+from typing import Optional, List, Dict, Tuple, Any
+
+import cv2
+import numpy as np
+
+from .logger import get_logger
+
+logger = get_logger("live_capture")
+
+
+@dataclass
+class VideoDeviceInfo:
+    index: int
+    name: str
+    device_id: str = ""
+    is_uvc: bool = True
+
+
+def enumerate_video_devices(max_devices: int = 6) -> List[VideoDeviceInfo]:
+    """
+    Discovers available camera devices on Windows using PnP enumeration and OpenCV DirectShow probing.
+    Returns a list of VideoDeviceInfo objects with user-friendly names.
+    """
+    discovered_names = []
+    if sys.platform == "win32":
+        try:
+            ps_cmd = (
+                "Get-CimInstance Win32_PnPEntity | "
+                "Where-Object { $_.PNPClass -eq 'Camera' -or $_.Service -eq 'usbvideo' } | "
+                "Select-Object -ExpandProperty Name"
+            )
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True,
+                text=True,
+                timeout=4
+            )
+            if res.returncode == 0:
+                discovered_names = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+        except Exception as e:
+            logger.warning(f"Fehler bei Windows Kamera-PnP-Abfrage: {e}")
+
+    devices: List[VideoDeviceInfo] = []
+    for idx in range(max_devices):
+        try:
+            cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+            if cap.isOpened():
+                name = discovered_names[idx] if idx < len(discovered_names) else f"Kamera {idx}"
+                devices.append(VideoDeviceInfo(index=idx, name=name, is_uvc=True))
+                cap.release()
+            else:
+                cap.release()
+        except Exception:
+            pass
+
+    return devices
+
+
+class CameraCaptureThread(threading.Thread):
+    """
+    Dedicated worker thread capturing frames continuously from a single video source
+    (UVC webcam device index or RTSP/RTMP URL) with zero accumulated latency.
+    """
+    def __init__(self, source: Any, width: int = 1920, height: int = 1080, fps: int = 30, name: str = "Camera"):
+        super().__init__(daemon=True, name=f"LiveCapture_{name}")
+        self.source = source  # int (e.g. 0, 1) or str (RTSP/RTMP URL)
+        self.req_width = width
+        self.req_height = height
+        self.req_fps = fps
+        self.camera_name = name
+
+        self.cap: Optional[cv2.VideoCapture] = None
+        self.stop_event = threading.Event()
+        self.lock = threading.Lock()
+
+        self.latest_frame: Optional[np.ndarray] = None
+        self.latest_timestamp: float = 0.0
+        self.frame_count: int = 0
+        self.is_connected: bool = False
+        self.actual_fps: float = 0.0
+
+    def run(self):
+        logger.info(f"Starte Live-Capture Thread für '{self.camera_name}' (Quelle: {self.source})...")
+        fps_calc_time = time.time()
+        fps_calc_frames = 0
+
+        while not self.stop_event.is_set():
+            if self.cap is None or not self.cap.isOpened():
+                self._open_capture()
+                if self.cap is None or not self.cap.isOpened():
+                    time.sleep(1.0)
+                    continue
+
+            ret, frame = self.cap.read()
+            if not ret or frame is None:
+                logger.warning(f"Kamerabildverlust auf '{self.camera_name}'. Versuche Reconnect...")
+                with self.lock:
+                    self.is_connected = False
+                self._close_capture()
+                time.sleep(1.0)
+                continue
+
+            now = time.time()
+            with self.lock:
+                self.latest_frame = frame
+                self.latest_timestamp = now
+                self.frame_count += 1
+                self.is_connected = True
+
+            fps_calc_frames += 1
+            if now - fps_calc_time >= 1.0:
+                with self.lock:
+                    self.actual_fps = fps_calc_frames / (now - fps_calc_time)
+                fps_calc_time = now
+                fps_calc_frames = 0
+
+        self._close_capture()
+        logger.info(f"Live-Capture Thread für '{self.camera_name}' beendet.")
+
+    def _open_capture(self):
+        self._close_capture()
+        try:
+            if isinstance(self.source, int):
+                # Windows DirectShow for low-latency UVC webcams
+                cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW)
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.req_width)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.req_height)
+                cap.set(cv2.CAP_PROP_FPS, self.req_fps)
+                # Attempt to set MJPG or YUY2 for high frame-rate 1080p
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffer for real-time responsiveness
+            else:
+                # Network Stream (RTSP / RTMP / HTTP)
+                cap = cv2.VideoCapture(str(self.source), cv2.CAP_FFMPEG)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+            if cap.isOpened():
+                actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                actual_fps = cap.get(cv2.CAP_PROP_FPS)
+                logger.info(f"Kamera '{self.camera_name}' erfolgreich geöffnet: {actual_w}x{actual_h} @ {actual_fps:.0f} FPS")
+                self.cap = cap
+                with self.lock:
+                    self.is_connected = True
+            else:
+                cap.release()
+                self.cap = None
+        except Exception as e:
+            logger.warning(f"Konnte Kamera '{self.camera_name}' nicht öffnen: {e}")
+            self.cap = None
+
+    def _close_capture(self):
+        if self.cap is not None:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
+
+    def get_latest_frame(self) -> Tuple[Optional[np.ndarray], float]:
+        with self.lock:
+            if self.latest_frame is not None:
+                return self.latest_frame.copy(), self.latest_timestamp
+            return None, 0.0
+
+    def stop(self):
+        self.stop_event.set()
+
+
+class DualLiveCaptureManager:
+    """
+    Coordinates synchronized real-time live ingestion from two cameras (Left & Right)
+    for seamless panorama stitching and live broadcast streaming.
+    """
+    def __init__(self):
+        self.cam_left: Optional[CameraCaptureThread] = None
+        self.cam_right: Optional[CameraCaptureThread] = None
+        self.is_running = False
+
+    def start(self, source_left: Any, source_right: Any, width: int = 1920, height: int = 1080, fps: int = 30):
+        self.stop()
+        self.cam_left = CameraCaptureThread(source_left, width, height, fps, name="Links")
+        self.cam_right = CameraCaptureThread(source_right, width, height, fps, name="Rechts")
+        self.cam_left.start()
+        self.cam_right.start()
+        self.is_running = True
+        logger.info(f"Dual-Live-Capture gestartet (Links: {source_left}, Rechts: {source_right})")
+
+    def stop(self):
+        if self.cam_left:
+            self.cam_left.stop()
+            self.cam_left = None
+        if self.cam_right:
+            self.cam_right.stop()
+            self.cam_right = None
+        self.is_running = False
+
+    def get_synced_frames(self, max_diff_sec: float = 0.08) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], bool]:
+        """
+        Retrieves the latest available frame pair from both cameras.
+        Returns: (frame_left, frame_right, is_synchronized)
+        """
+        if not self.cam_left or not self.cam_right:
+            return None, None, False
+
+        fl, tl = self.cam_left.get_latest_frame()
+        fr, tr = self.cam_right.get_latest_frame()
+
+        if fl is None or fr is None:
+            return fl, fr, False
+
+        diff = abs(tl - tr)
+        is_synced = diff <= max_diff_sec
+        return fl, fr, is_synced
+
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "left_connected": self.cam_left.is_connected if self.cam_left else False,
+            "right_connected": self.cam_right.is_connected if self.cam_right else False,
+            "left_fps": self.cam_left.actual_fps if self.cam_left else 0.0,
+            "right_fps": self.cam_right.actual_fps if self.cam_right else 0.0,
+            "is_running": self.is_running
+        }
+

@@ -267,6 +267,44 @@ class StitcherEngine:
 
         return stitched, crop_box, ball_px, self.ai_broadcast.cam_zoom
 
+    def stitch_live_pair(
+        self,
+        frame_l: np.ndarray,
+        frame_r: np.ndarray,
+        pano_width: int = 2560,
+        pano_height: int = 720,
+        broadcast_width: int = 1920,
+        broadcast_height: int = 1080
+    ) -> Tuple[np.ndarray, np.ndarray, Tuple[int, int, int, int]]:
+        """
+        Real-time pipeline for live streaming:
+        1. Warps and stitches incoming live frames (Cam Left & Cam Right) using calibrated LUTs.
+        2. Detects ball/players via AI Broadcast Tracker to smoothly steer the virtual follow-cam.
+        3. Crops and scales the 16:9 Broadcast frame.
+        Returns: (stitched_panorama, broadcast_16x9, (crop_x, crop_y, crop_w, crop_h)).
+        """
+        luts = self.update_luts(pano_width, pano_height)
+        self.color_matcher.enabled = getattr(self.rig, 'auto_color_match', True)
+        self.color_matcher.set_strength(getattr(self.rig, 'color_match_strength', 1.0))
+        stitched = apply_stitch(frame_l, frame_r, luts, color_matcher=self.color_matcher)
+
+        tx, ty, tz, ball_found, ball_px = self.ai_broadcast.detect_action(stitched)
+        self.ai_broadcast.update_camera(tx, ty, tz)
+        crop_box = self.ai_broadcast.get_crop_rect(pano_width, pano_height)
+        cx, cy, cw, ch = crop_box
+
+        # Extract 16:9 crop and resize to target broadcast resolution
+        crop_raw = stitched[cy:cy+ch, cx:cx+cw]
+        if crop_raw.size > 0:
+            if (crop_raw.shape[1], crop_raw.shape[0]) != (broadcast_width, broadcast_height):
+                broadcast_frame = cv2.resize(crop_raw, (broadcast_width, broadcast_height), interpolation=cv2.INTER_LINEAR)
+            else:
+                broadcast_frame = crop_raw
+        else:
+            broadcast_frame = np.zeros((broadcast_height, broadcast_width, 3), dtype=np.uint8)
+
+        return stitched, broadcast_frame, crop_box
+
     def render_video_to_file(self, 
                              output_filepath: str, 
                              out_width: int = 3840, 

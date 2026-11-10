@@ -178,10 +178,24 @@
         "server_url": "https://matchtrack.de",
         "team_id": "team_b2dd2fd6f5",
         "category": "Pokalspiel",
-        "auto_upload": false,
+        "auto_upload": true,
         "notify_team": false,
-        "fast_hls": false,
+        "fast_hls": true,
         "concurrency": 3
+    },
+    "livestream": {
+        "server_url": "rtmp://matchtrack.de:1935/live",
+        "stream_key_bcast": "broadcast_1",
+        "stream_key_pano": "panorama_1",
+        "stream_key_cam1": "cam1",
+        "stream_key_cam2": "cam2",
+        "chan_bcast_enabled": true,
+        "chan_pano_enabled": true,
+        "chan_cam1_enabled": false,
+        "chan_cam2_enabled": false,
+        "encoder": "h264_nvenc",
+        "bitrate_kbps": 6000,
+        "wifi_ssid": ""
     },
     "ui_view": {
         "view_mode": "8:3",
