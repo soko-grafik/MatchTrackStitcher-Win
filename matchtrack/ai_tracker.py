@@ -149,7 +149,7 @@ def get_pitch_polygon_bbox(corners: List[List[float]]) -> Tuple[float, float, fl
 class BroadcastConfig:
     """Settings for AI Broadcast Camera with Pure Horizontal Panning and Fixed 1.0x Full-Height View."""
     enabled: bool = True
-    ai_tracking: bool = True
+    ai_tracking: bool = False
     enable_dynamic_zoom: bool = False    # Default FALSE: Pure horizontal left-right pan, NO zoom pumping
     fixed_zoom_factor: float = 1.0       # Fixed zoom level (1.0 = Full height 16:9 framing)
     tracking_mode: str = "hybrid_fusion" # 'hybrid_fusion', 'player_density', 'ball_centric', 'smooth_tactic'
@@ -293,6 +293,16 @@ class AIBroadcastTracker:
                     logger.warning("YOLO-Pose konnte nicht geladen werden, Fallback auf YOLO11.")
                     self.detector_backend = YOLODetectorBackend()
                     self.detector_backend.load(self.device, use_fp16)
+            elif str(backend_type).startswith("autocam_") or str(backend_type).startswith("custom_"):
+                # Once Sport Autocam ONNX model or user custom model
+                from .paths import get_available_ai_models
+                avail_map = {m["id"]: m for m in get_available_ai_models()}
+                m_meta = avail_map.get(backend_type)
+                m_path = m_meta["path"] if m_meta else getattr(self.config, "custom_model_path", "")
+                self.config.selected_model_path = m_path
+                logger.info(f"Autocam / Custom ONNX Modell aktiv: {backend_type} (Pfad: {m_path})")
+                self.detector_backend = YOLODetectorBackend()
+                self.detector_backend.load(self.device, use_fp16)
             else:
                 self.detector_backend = YOLODetectorBackend()
                 self.detector_backend.load(self.device, use_fp16)

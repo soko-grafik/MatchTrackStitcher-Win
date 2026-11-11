@@ -52,2940 +52,40 @@ from ..wide_angle_rectifier import WideAngleConfig, WideAngleRectifier
 logger = get_logger("gui")
 
 
-class NoWheelSlider(QSlider):
-    """
-    QSlider that ignores mouse-wheel events so that scrolling over the slider
-    scrolls the parent QScrollArea instead of accidentally modifying values.
-    """
-    def wheelEvent(self, event: QWheelEvent):
-        event.ignore()
 
-
-class NoWheelDoubleSpinBox(QDoubleSpinBox):
-    """
-    QDoubleSpinBox that ignores mouse-wheel events to prevent accidental value changes.
-    """
-    def wheelEvent(self, event: QWheelEvent):
-        event.ignore()
-
-
-class NoWheelSpinBox(QSpinBox):
-    """
-    QSpinBox that ignores mouse-wheel events to prevent accidental value changes.
-    """
-    def wheelEvent(self, event: QWheelEvent):
-        event.ignore()
-
-
-class NoWheelComboBox(QComboBox):
-    """
-    QComboBox that ignores mouse-wheel events when popup is closed to prevent accidental selection changes.
-    """
-    def wheelEvent(self, event: QWheelEvent):
-        event.ignore()
-
-
-class ScrollAreaWheelFilter(QObject):
-    """
-    Event filter for interactive input controls (Sliders, SpinBoxes, ComboBoxes)
-    inside scroll areas: ensures mouse-wheel events scroll the enclosing QScrollArea
-    instead of altering input values.
-    """
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.Wheel:
-            if isinstance(obj, (QSlider, QAbstractSpinBox, QComboBox)):
-                parent = obj.parentWidget()
-                while parent is not None:
-                    if isinstance(parent, QScrollArea):
-                        QApplication.sendEvent(parent.viewport(), event)
-                        return True
-                    parent = parent.parentWidget()
-                event.ignore()
-                return True
-        return False
-
-
-class LabeledSliderSpinBox(QWidget):
-    """
-    Ergonomic combined widget with:
-    - Title Label + precise formatted QDoubleSpinBox
-    - Smooth horizontal QSlider underneath with real-time feedback
-    - ↺ Quick-Reset Button to return to default value.
-    """
-    valueChanged = Signal(float)
-
-    def __init__(self, label_text: str, min_val: float, max_val: float, default_val: float, 
-                 step: float = 0.1, suffix: str = "°", decimals: int = 1, parent=None):
-        super().__init__(parent)
-        self.default_val = default_val
-        self.step = step
-        self.multiplier = int(round(1.0 / step)) if step < 1.0 else 1
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 2, 0, 6)
-        layout.setSpacing(3)
-
-        # Header row: Title Label + SpinBox
-        header = QHBoxLayout()
-        self.lbl_title = QLabel(label_text)
-        self.lbl_title.setStyleSheet("font-weight: 600; color: #d4d4d8; font-size: 12px;")
-        
-        self.spin = NoWheelDoubleSpinBox()
-        self.spin.setRange(min_val, max_val)
-        self.spin.setValue(default_val)
-        self.spin.setSingleStep(step)
-        self.spin.setDecimals(decimals)
-        if suffix:
-            self.spin.setSuffix(f" {suffix}")
-        self.spin.setStyleSheet("background-color: #111117; border: 1px solid #282839; border-radius: 6px; padding: 2px 8px; font-weight: 600; color: #60a5fa;")
-
-        header.addWidget(self.lbl_title)
-        header.addStretch()
-        header.addWidget(self.spin)
-        layout.addLayout(header)
-
-        # Slider row: Smooth Slider + ↺ Reset Button
-        slider_row = QHBoxLayout()
-        slider_row.setSpacing(6)
-        
-        self.slider = NoWheelSlider(Qt.Horizontal)
-        self.slider.setTracking(True)
-        self.slider.setRange(int(round(min_val * self.multiplier)), int(round(max_val * self.multiplier)))
-        self.slider.setValue(int(round(default_val * self.multiplier)))
-
-        btn_reset = QToolButton()
-        btn_reset.setText("↺")
-        btn_reset.setToolTip(f"Auf Standardwert ({default_val}{suffix}) zurücksetzen")
-        btn_reset.setStyleSheet("background-color: #1e1e28; border: 1px solid #2e2e3e; border-radius: 6px; color: #9ca3af; font-weight: bold; padding: 2px 7px;")
-        btn_reset.clicked.connect(self.reset_default)
-
-        slider_row.addWidget(self.slider, 1)
-        slider_row.addWidget(btn_reset)
-        layout.addLayout(slider_row)
-
-        # Connect signals
-        self.spin.valueChanged.connect(self._on_spin_changed)
-        self.slider.valueChanged.connect(self._on_slider_changed)
-
-    def _on_spin_changed(self, val: float):
-        slider_val = int(round(val * self.multiplier))
-        if self.slider.value() != slider_val:
-            self.slider.blockSignals(True)
-            self.slider.setValue(slider_val)
-            self.slider.blockSignals(False)
-        self.valueChanged.emit(val)
-
-    def _on_slider_changed(self, s_val: int):
-        val = s_val / float(self.multiplier)
-        if abs(self.spin.value() - val) > 1e-4:
-            self.spin.blockSignals(True)
-            self.spin.setValue(val)
-            self.spin.blockSignals(False)
-        self.valueChanged.emit(val)
-
-    def value(self) -> float:
-        return self.spin.value()
-
-    def setValue(self, val: float):
-        self.spin.setValue(val)
-
-    def reset_default(self):
-        self.setValue(self.default_val)
-
-
-class LogEmitter(QObject):
-    log_signal = Signal(object)
-
-
-class LogViewerWidget(QWidget):
-    """
-    Real-Time System Log Viewer with HTML color formatting,
-    level filtering, clipboard export, and direct log file opening.
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.emitter = LogEmitter()
-        self.emitter.log_signal.connect(self._on_log_signal)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
-
-        # Header Toolbar
-        tb_layout = QHBoxLayout()
-        tb_layout.setSpacing(6)
-
-        self.combo_filter = QComboBox()
-        self.combo_filter.addItem("Alle Logs (Debug, Info, Warn, Fehler)", "ALL")
-        self.combo_filter.addItem("Nur Info, Warnungen & Fehler", "INFO")
-        self.combo_filter.addItem("Nur Warnungen & Fehler", "WARNING")
-        self.combo_filter.addItem("Nur Fehler (Errors)", "ERROR")
-        self.combo_filter.currentIndexChanged.connect(self.refresh_display)
-
-        self.chk_autoscroll = QCheckBox("Auto-Scroll")
-        self.chk_autoscroll.setChecked(True)
-        self.chk_autoscroll.setStyleSheet("color: #ccc;")
-
-        btn_copy = QPushButton("📋 Kopieren")
-        btn_copy.setToolTip("Gesamtes Log in die Zwischenablage kopieren")
-        btn_copy.setStyleSheet("padding: 3px 8px; font-size: 11px;")
-        btn_copy.clicked.connect(self.copy_to_clipboard)
-
-        btn_open_file = QPushButton("📂 Datei")
-        btn_open_file.setToolTip("matchtrack.log im Texteditor öffnen")
-        btn_open_file.setStyleSheet("padding: 3px 8px; font-size: 11px;")
-        btn_open_file.clicked.connect(self.open_log_file)
-
-        btn_clear = QPushButton("🗑️ Leeren")
-        btn_clear.setToolTip("Loganzeige leeren")
-        btn_clear.setStyleSheet("padding: 3px 8px; font-size: 11px;")
-        btn_clear.clicked.connect(self.clear_logs)
-
-        tb_layout.addWidget(self.combo_filter, 1)
-        tb_layout.addWidget(self.chk_autoscroll)
-        tb_layout.addWidget(btn_copy)
-        tb_layout.addWidget(btn_open_file)
-        tb_layout.addWidget(btn_clear)
-        layout.addLayout(tb_layout)
-
-        # Log Output Box
-        self.txt_log = QPlainTextEdit()
-        self.txt_log.setReadOnly(True)
-        self.txt_log.setMaximumBlockCount(1500)
-        self.txt_log.setStyleSheet("""
-            QPlainTextEdit {
-                background-color: #0b0f14;
-                color: #e0e0e0;
-                font-family: 'Consolas', 'Courier New', monospace;
-                font-size: 11px;
-                line-height: 1.3;
-                border: 1px solid #233140;
-                border-radius: 4px;
-                padding: 6px;
-            }
-        """)
-        layout.addWidget(self.txt_log, 1)
-
-        # Subscribe to GuiLogHandler
-        self.gui_handler = get_gui_handler()
-        self.gui_handler.subscribe(lambda rec: self.emitter.log_signal.emit(rec))
-
-        # Initial populate
-        self.refresh_display()
-
-    @Slot(object)
-    def _on_log_signal(self, rec: GuiLogRecord):
-        if self._matches_filter(rec.level):
-            formatted_line = self._format_record_html(rec)
-            self.txt_log.appendHtml(formatted_line)
-            if self.chk_autoscroll.isChecked():
-                self.txt_log.verticalScrollBar().setValue(self.txt_log.verticalScrollBar().maximum())
-
-    def _matches_filter(self, level: str) -> bool:
-        mode = self.combo_filter.currentData()
-        if mode == "ALL":
-            return True
-        if mode == "INFO":
-            return level in ("INFO", "WARNING", "ERROR", "CRITICAL")
-        if mode == "WARNING":
-            return level in ("WARNING", "ERROR", "CRITICAL")
-        if mode == "ERROR":
-            return level in ("ERROR", "CRITICAL")
-        return True
-
-    def _format_record_html(self, rec: GuiLogRecord) -> str:
-        color = "#a0a0a0"
-        tag_bg = "#222"
-        if rec.level == "ERROR":
-            color = "#ff6b6b"
-            tag_bg = "#5c1d1d"
-        elif rec.level == "WARNING":
-            color = "#feca57"
-            tag_bg = "#574218"
-        elif rec.level == "INFO":
-            color = "#48dbfb"
-            tag_bg = "#193c4d"
-        elif rec.level == "DEBUG":
-            color = "#747d8c"
-            tag_bg = "#2f3542"
-
-        msg_safe = rec.message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        return (
-            f'<span style="color: #636e72;">[{rec.timestamp}]</span> '
-            f'<span style="background-color: {tag_bg}; color: {color}; font-weight: bold; padding: 1px 4px; border-radius: 2px;">{rec.level:<7}</span> '
-            f'<span style="color: #dfe6e9;">{msg_safe}</span>'
-        )
-
-    def refresh_display(self):
-        self.txt_log.clear()
-        records = self.gui_handler.get_all_records()
-        for rec in records:
-            if self._matches_filter(rec.level):
-                self.txt_log.appendHtml(self._format_record_html(rec))
-        if self.chk_autoscroll.isChecked():
-            self.txt_log.verticalScrollBar().setValue(self.txt_log.verticalScrollBar().maximum())
-
-    def copy_to_clipboard(self):
-        text = self.txt_log.toPlainText()
-        QApplication.clipboard().setText(text)
-
-    def open_log_file(self):
-        log_path = get_log_file_path()
-        if os.path.exists(log_path):
-            try:
-                os.startfile(log_path)
-            except Exception:
-                import subprocess
-                subprocess.Popen(["notepad.exe", log_path])
-
-    def clear_logs(self):
-        self.gui_handler.clear()
-        self.txt_log.clear()
-
-
-class RenderWorker(QThread):
-    """Background worker for non-blocking video export (32:9 master, 16:9 follow-cam, or both)."""
-    progress_signal = Signal(int, int, float, float, str)
-    finished_signal = Signal(bool, str)
-
-    def __init__(self, 
-                 engine: StitcherEngine, 
-                 out_path: str, 
-                 width: int, 
-                 height: int, 
-                 mode: str, 
-                 codec: str, 
-                 bitrate: int, 
-                 start_frame: int = 0, 
-                 end_frame: Optional[int] = None, 
-                 audio_source: str = "left",
-                 use_lookahead: bool = True,
-                 wide_angle_rectifier: Optional[Any] = None):
-        super().__init__()
-        self.engine = engine
-        self.out_path = out_path
-        self.width = width
-        self.height = height
-        self.mode = mode
-        self.codec = codec
-        self.bitrate = bitrate
-        self.start_frame = start_frame
-        self.end_frame = end_frame
-        self.audio_source = audio_source
-        self.use_lookahead = use_lookahead
-        self.wide_angle_rectifier = wide_angle_rectifier
-        self.rendered_16x9_path: Optional[str] = None
-        self.rendered_32x9_path: Optional[str] = None
-
-    def run(self):
-        try:
-            def callback(processed, total, fps, eta, stage_text=""):
-                self.progress_signal.emit(processed, total, fps, eta, stage_text)
-
-            if self.mode == "wide_angle":
-                self.rendered_16x9_path = self.out_path
-                success = self.engine.render_wide_angle_video(
-                    output_filepath=self.out_path,
-                    out_width=self.width,
-                    out_height=self.height,
-                    codec=self.codec,
-                    bitrate_mbps=self.bitrate,
-                    start_frame=self.start_frame,
-                    end_frame=self.end_frame,
-                    wide_angle_rectifier=self.wide_angle_rectifier,
-                    progress_callback=callback
-                )
-            elif self.engine.is_panorama_mode():
-                if self.mode == "21:10":
-                    self.rendered_32x9_path = self.out_path
-                    success = self.engine.convert_panorama_to_21x10(
-                        output_filepath=self.out_path,
-                        out_width=self.width,
-                        out_height=self.height,
-                        codec=self.codec,
-                        bitrate_mbps=self.bitrate,
-                        start_frame=self.start_frame,
-                        end_frame=self.end_frame,
-                        progress_callback=callback
-                    )
-                elif self.mode == "16:9_tactical":
-                    self.rendered_16x9_path = self.out_path
-                    success = self.engine.convert_panorama_to_16x9_tactical(
-                        output_filepath=self.out_path,
-                        out_width=self.width,
-                        out_height=self.height,
-                        codec=self.codec,
-                        bitrate_mbps=self.bitrate,
-                        start_frame=self.start_frame,
-                        end_frame=self.end_frame,
-                        progress_callback=callback
-                    )
-                elif self.mode == "16:9_autocam":
-                    self.rendered_16x9_path = self.out_path
-                    success = self.engine.render_broadcast_from_panorama(
-                        output_filepath=self.out_path,
-                        out_width=self.width,
-                        out_height=self.height,
-                        codec=self.codec,
-                        bitrate_mbps=self.bitrate,
-                        start_frame=self.start_frame,
-                        end_frame=self.end_frame,
-                        use_lookahead=self.use_lookahead,
-                        progress_callback=callback
-                    )
-                else:
-                    self.rendered_32x9_path = self.out_path
-                    success = self.engine.convert_panorama_to_21x10(
-                        output_filepath=self.out_path,
-                        out_width=self.width,
-                        out_height=self.height,
-                        codec=self.codec,
-                        bitrate_mbps=self.bitrate,
-                        start_frame=self.start_frame,
-                        end_frame=self.end_frame,
-                        progress_callback=callback
-                    )
-            elif self.mode == "both":
-                base, ext = os.path.splitext(self.out_path)
-                tag = "8x3" if (hasattr(self.engine, 'is_4_3_mode') and self.engine.is_4_3_mode()) else "32x9"
-                pano_master_path = f"{base}_master_{tag}{ext}"
-                self.rendered_16x9_path = self.out_path
-                self.rendered_32x9_path = pano_master_path
-                success = self.engine.render_two_stage_broadcast(
-                    output_16x9_filepath=self.out_path,
-                    output_32x9_filepath=pano_master_path,
-                    out_16x9_width=self.width,
-                    out_16x9_height=self.height,
-                    codec=self.codec,
-                    bitrate_mbps=self.bitrate,
-                    start_frame=self.start_frame,
-                    end_frame=self.end_frame,
-                    audio_source=self.audio_source,
-                    use_lookahead=self.use_lookahead,
-                    keep_32x9=True,
-                    progress_callback=callback
-                )
-            elif self.mode == "16:9_autocam":
-                self.rendered_16x9_path = self.out_path
-                success = self.engine.render_two_stage_broadcast(
-                    output_16x9_filepath=self.out_path,
-                    out_16x9_width=self.width,
-                    out_16x9_height=self.height,
-                    codec=self.codec,
-                    bitrate_mbps=self.bitrate,
-                    start_frame=self.start_frame,
-                    end_frame=self.end_frame,
-                    audio_source=self.audio_source,
-                    use_lookahead=self.use_lookahead,
-                    keep_32x9=False,
-                    progress_callback=callback
-                )
-            elif self.mode == "16:9_tactical":
-                self.rendered_16x9_path = self.out_path
-                def cb_tact(proc, total, fps, eta):
-                    self.progress_signal.emit(proc, total, fps, eta, "16:9 Taktik-Warp Rendering...")
-
-                success = self.engine.render_video_to_file(
-                    output_filepath=self.out_path,
-                    out_width=self.width,
-                    out_height=self.height,
-                    mode="16:9_tactical",
-                    codec=self.codec,
-                    bitrate_mbps=self.bitrate,
-                    start_frame=self.start_frame,
-                    end_frame=self.end_frame,
-                    audio_source=self.audio_source,
-                    progress_callback=cb_tact
-                )
-            elif self.mode == "21:10":
-                self.rendered_32x9_path = self.out_path
-                def cb_2110(proc, total, fps, eta):
-                    self.progress_signal.emit(proc, total, fps, eta, "21:10 Panorama Rendering...")
-
-                success = self.engine.render_video_to_file(
-                    output_filepath=self.out_path,
-                    out_width=self.width,
-                    out_height=self.height,
-                    mode="21:10",
-                    codec=self.codec,
-                    bitrate_mbps=self.bitrate,
-                    start_frame=self.start_frame,
-                    end_frame=self.end_frame,
-                    audio_source=self.audio_source,
-                    progress_callback=cb_2110
-                )
-            else: # Panorama (8:3 or 32:9)
-                self.rendered_32x9_path = self.out_path
-                is_8x3 = hasattr(self.engine, 'is_4_3_mode') and self.engine.is_4_3_mode()
-                pano_title = "8:3 Panorama" if is_8x3 else "32:9 Panorama"
-                def cb_pano(proc, total, fps, eta):
-                    self.progress_signal.emit(proc, total, fps, eta, f"{pano_title} Rendering...")
-
-                success = self.engine.render_video_to_file(
-                    output_filepath=self.out_path,
-                    out_width=self.width,
-                    out_height=self.height,
-                    mode="8:3" if is_8x3 else "32:9",
-                    codec=self.codec,
-                    bitrate_mbps=self.bitrate,
-                    start_frame=self.start_frame,
-                    end_frame=self.end_frame,
-                    audio_source=self.audio_source,
-                    progress_callback=cb_pano
-                )
-
-            if success:
-                self.finished_signal.emit(True, "Export erfolgreich abgeschlossen!")
-            else:
-                self.finished_signal.emit(False, "Export wurde abgebrochen oder es trat ein Fehler auf.")
-        except Exception as e:
-            logger.critical(f"Kritischer Ausnahmefehler im RenderWorker: {e}", exc_info=True)
-            self.finished_signal.emit(False, f"Schwerwiegender interner Fehler: {e}")
-
-
-class CloudUploadWorker(QThread):
-    """Background worker for resumable chunked HTTPS upload to MatchTrack Online."""
-    progress_signal = Signal(object, object, float, float, str)
-    finished_signal = Signal(bool, str, dict)
-
-    def __init__(self, client: MatchTrackOnlineClient, upload_kwargs: Dict[str, Any]):
-        super().__init__()
-        self.client = client
-        self.upload_kwargs = upload_kwargs
-        self.stop_event = threading.Event()
-
-    def cancel(self):
-        self.stop_event.set()
-
-    def run(self):
-        try:
-            def cb(sent_b, total_b, speed_mb_s, eta_s, msg):
-                self.progress_signal.emit(sent_b, total_b, speed_mb_s, eta_s, msg)
-
-            res = self.client.upload_match(
-                stop_event=self.stop_event,
-                progress_callback=cb,
-                **self.upload_kwargs
-            )
-            self.finished_signal.emit(True, res.get("message", "Upload erfolgreich abgeschlossen!"), res)
-        except InterruptedError as ie:
-            self.finished_signal.emit(False, str(ie), {})
-        except Exception as e:
-            logger.error(f"CloudUploadWorker Fehler: {e}", exc_info=True)
-            self.finished_signal.emit(False, str(e), {})
-
-
-class DjiQRCodeDialog(QDialog):
-    """Dialog displaying a DJI Action compatible QR-Code for instant camera live-stream configuration."""
-    def __init__(self, qr_pil_image, wifi_ssid: str, rtmp_url: str, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("📱 DJI Live-Stream QR-Code")
-        self.setMinimumWidth(380)
-        self.setStyleSheet("""
-            QDialog { background-color: #12121a; color: #f4f4f6; }
-            QLabel { color: #e4e4e7; font-size: 12px; }
-            QPushButton { background-color: #27273a; color: #f4f4f6; border: 1px solid #3f3f5a; border-radius: 8px; padding: 6px 14px; font-weight: 600; }
-            QPushButton:hover { background-color: #3b3b55; }
-        """)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
-
-        lbl_hdr = QLabel("📷 Halte die DJI Action vor diesen QR-Code:")
-        lbl_hdr.setStyleSheet("font-weight: 700; font-size: 13px; color: #38bdf8;")
-        lbl_hdr.setAlignment(Qt.AlignCenter)
-        layout.addWidget(lbl_hdr)
-
-        lbl_qr = QLabel()
-        lbl_qr.setAlignment(Qt.AlignCenter)
-        if qr_pil_image:
-            import io
-            buf = io.BytesIO()
-            qr_pil_image.save(buf, format="PNG")
-            pix = QPixmap()
-            pix.loadFromData(buf.getvalue(), "PNG")
-            lbl_qr.setPixmap(pix.scaled(280, 280, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        else:
-            lbl_qr.setText("QR-Code konnte nicht generiert werden.")
-        layout.addWidget(lbl_qr)
-
-        info_box = QLabel(f"WLAN: <b>{wifi_ssid}</b><br>RTMP: <b>{rtmp_url}</b>")
-        info_box.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 8px; font-size: 11px;")
-        info_box.setAlignment(Qt.AlignCenter)
-        info_box.setWordWrap(True)
-        layout.addWidget(info_box)
-
-        btn_close = QPushButton("Schließen")
-        btn_close.clicked.connect(self.accept)
-        layout.addWidget(btn_close)
-
-
-class CloudLoginDialog(QDialog):
-    """Secure login dialog for connecting MatchTrack-Stitcher to MatchTrack Online via API-Key or Username/Password."""
-    def __init__(self, client: MatchTrackOnlineClient, initial_url: str = "", parent=None):
-        super().__init__(parent)
-        self.client = client
-        self.setWindowTitle("☁️ Mit MatchTrack Online verbinden")
-        self.setMinimumWidth(460)
-        self.setStyleSheet("""
-            QDialog { background-color: #12121a; color: #f4f4f6; }
-            QLabel { color: #e4e4e7; font-size: 12px; }
-            QLineEdit {
-                background-color: #0b0b10;
-                border: 1px solid #2e2e40;
-                border-radius: 8px;
-                padding: 8px 10px;
-                color: #ffffff;
-                font-size: 12px;
-            }
-            QLineEdit:focus { border-color: #3b82f6; }
-        """)
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-        layout.setContentsMargins(18, 18, 18, 18)
-
-        lbl_header = QLabel("🔑 Verbindung mit MatchTrack Online")
-        lbl_header.setStyleSheet("font-size: 15px; font-weight: bold; color: #60a5fa;")
-        layout.addWidget(lbl_header)
-
-        lbl_sub = QLabel(
-            "Verbinde dich per API-Key (im Web-Admin unter 'Einstellungen → API-Keys & Stitcher' "
-            "generierbar) oder mit Benutzername & Passwort. Die Zugangsdaten werden lokal "
-            "über die Windows-DPAPI verschlüsselt gespeichert."
-        )
-        lbl_sub.setStyleSheet("color: #9ca3af; font-size: 11px;")
-        lbl_sub.setWordWrap(True)
-        layout.addWidget(lbl_sub)
-
-        layout.addWidget(QLabel("Server-URL (HTTPS):"))
-        self.txt_url = QLineEdit()
-        self.txt_url.setPlaceholderText("https://analyse.dein-verein.de")
-        self.txt_url.setText(initial_url or client.server_url or "")
-        layout.addWidget(self.txt_url)
-
-        layout.addWidget(QLabel("Authentifizierungs-Methode:"))
-        mode_row = QHBoxLayout()
-        self.btn_mode_apikey = QPushButton("🔑 API-Key (Empfohlen)")
-        self.btn_mode_apikey.setCheckable(True)
-        self.btn_mode_userpw = QPushButton("👤 Benutzername & Passwort")
-        self.btn_mode_userpw.setCheckable(True)
-
-        is_currently_apikey = not client.username or (client.access_token and client.access_token.startswith("mto_ak_"))
-        self.btn_mode_apikey.setChecked(bool(is_currently_apikey))
-        self.btn_mode_userpw.setChecked(not bool(is_currently_apikey))
-
-        self.btn_mode_apikey.clicked.connect(lambda: self._switch_auth_mode("apikey"))
-        self.btn_mode_userpw.clicked.connect(lambda: self._switch_auth_mode("userpw"))
-        mode_row.addWidget(self.btn_mode_apikey)
-        mode_row.addWidget(self.btn_mode_userpw)
-        layout.addLayout(mode_row)
-
-        # Container 1: API-Key Eingabe
-        self.apikey_container = QWidget()
-        ak_layout = QVBoxLayout(self.apikey_container)
-        ak_layout.setContentsMargins(0, 4, 0, 0)
-        ak_layout.setSpacing(6)
-        ak_layout.addWidget(QLabel("API-Key (mto_ak_...):"))
-        ak_row = QHBoxLayout()
-        self.txt_apikey = QLineEdit()
-        self.txt_apikey.setEchoMode(QLineEdit.Password)
-        self.txt_apikey.setPlaceholderText("mto_ak_...")
-        if client.access_token and client.access_token.startswith("mto_ak_"):
-            self.txt_apikey.setText(client.access_token)
-        btn_toggle_ak = QPushButton("👁")
-        btn_toggle_ak.setCheckable(True)
-        btn_toggle_ak.setFixedWidth(38)
-        btn_toggle_ak.setToolTip("API-Key ein-/ausblenden")
-        btn_toggle_ak.toggled.connect(
-            lambda checked: self.txt_apikey.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
-        )
-        ak_row.addWidget(self.txt_apikey, 1)
-        ak_row.addWidget(btn_toggle_ak)
-        ak_layout.addLayout(ak_row)
-
-        lbl_ak_hint = QLabel(
-            "💡 Tipp: Einen neuen API-Key kannst du im Web-Adminbereich unter "
-            "„System Einstellungen → API-Keys & Stitcher“ mit 1 Klick erzeugen."
-        )
-        lbl_ak_hint.setStyleSheet("color: #6ee7b7; font-size: 10px;")
-        lbl_ak_hint.setWordWrap(True)
-        ak_layout.addWidget(lbl_ak_hint)
-        layout.addWidget(self.apikey_container)
-
-        # Container 2: Benutzername & Passwort Eingabe
-        self.userpw_container = QWidget()
-        up_layout = QVBoxLayout(self.userpw_container)
-        up_layout.setContentsMargins(0, 4, 0, 0)
-        up_layout.setSpacing(6)
-        up_layout.addWidget(QLabel("Benutzername:"))
-        self.txt_user = QLineEdit()
-        self.txt_user.setPlaceholderText("Benutzername eingeben...")
-        self.txt_user.setText(client.username or "")
-        up_layout.addWidget(self.txt_user)
-
-        up_layout.addWidget(QLabel("Passwort:"))
-        pw_row = QHBoxLayout()
-        self.txt_pass = QLineEdit()
-        self.txt_pass.setEchoMode(QLineEdit.Password)
-        self.txt_pass.setPlaceholderText("Passwort eingeben...")
-        btn_toggle_pw = QPushButton("👁")
-        btn_toggle_pw.setCheckable(True)
-        btn_toggle_pw.setFixedWidth(38)
-        btn_toggle_pw.setToolTip("Passwort ein-/ausblenden")
-        btn_toggle_pw.toggled.connect(
-            lambda checked: self.txt_pass.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
-        )
-        pw_row.addWidget(self.txt_pass, 1)
-        pw_row.addWidget(btn_toggle_pw)
-        up_layout.addLayout(pw_row)
-        layout.addWidget(self.userpw_container)
-
-        self.chk_remember = QCheckBox("🔒 Zugangsdaten sicher über Windows-DPAPI auf diesem PC speichern")
-        self.chk_remember.setChecked(True)
-        self.chk_remember.setStyleSheet("color: #10b981; font-weight: 600; margin-top: 4px;")
-        layout.addWidget(self.chk_remember)
-
-        self.lbl_error = QLabel("")
-        self.lbl_error.setStyleSheet("color: #ef4444; font-size: 11px; font-weight: 600;")
-        self.lbl_error.setWordWrap(True)
-        self.lbl_error.setVisible(False)
-        layout.addWidget(self.lbl_error)
-
-        btn_row = QHBoxLayout()
-        btn_cancel = QPushButton("Abbrechen")
-        btn_cancel.clicked.connect(self.reject)
-        self.btn_login = QPushButton("☁️ Sicher verbinden")
-        self.btn_login.setStyleSheet(
-            "background-color: #2563eb; color: white; font-weight: bold; padding: 8px 16px; border-radius: 8px;"
-        )
-        self.btn_login.setDefault(True)
-        self.btn_login.clicked.connect(self._do_login)
-        btn_row.addStretch()
-        btn_row.addWidget(btn_cancel)
-        btn_row.addWidget(self.btn_login)
-        layout.addLayout(btn_row)
-
-        self._switch_auth_mode("apikey" if is_currently_apikey else "userpw")
-
-    def _switch_auth_mode(self, mode: str):
-        is_ak = (mode == "apikey")
-        self.btn_mode_apikey.setChecked(is_ak)
-        self.btn_mode_userpw.setChecked(not is_ak)
-        active_style = (
-            "background-color: #1e3a8a; color: #93c5fd; border: 1px solid #3b82f6; "
-            "font-weight: bold; padding: 7px 10px; border-radius: 8px;"
-        )
-        inactive_style = (
-            "background-color: #161622; color: #9ca3af; border: 1px solid #2e2e40; "
-            "font-weight: normal; padding: 7px 10px; border-radius: 8px;"
-        )
-        self.btn_mode_apikey.setStyleSheet(active_style if is_ak else inactive_style)
-        self.btn_mode_userpw.setStyleSheet(inactive_style if is_ak else active_style)
-        self.apikey_container.setVisible(is_ak)
-        self.userpw_container.setVisible(not is_ak)
-        self.lbl_error.setVisible(False)
-        self.adjustSize()
-
-    def _do_login(self):
-        self.lbl_error.setVisible(False)
-        self.btn_login.setEnabled(False)
-        self.btn_login.setText("Verbinde...")
-        QApplication.processEvents()
-        try:
-            if self.btn_mode_apikey.isChecked():
-                self.client.login_with_api_key(
-                    server_url=self.txt_url.text(),
-                    api_key=self.txt_apikey.text(),
-                    remember=self.chk_remember.isChecked()
-                )
-            else:
-                self.client.login(
-                    server_url=self.txt_url.text(),
-                    username=self.txt_user.text(),
-                    password=self.txt_pass.text(),
-                    remember=self.chk_remember.isChecked()
-                )
-            self.accept()
-        except Exception as e:
-            self.lbl_error.setText(f"❌ {e}")
-            self.lbl_error.setVisible(True)
-        finally:
-            self.btn_login.setEnabled(True)
-            self.btn_login.setText("☁️ Sicher verbinden")
-
-
-
-class InteractivePanoramaViewport(QWidget):
-    """
-    High-Resolution Interactive Viewport supporting:
-    - 32:9 Tactical Panorama & 16:9 Broadcast
-    - Semi-Transparent 32:9 Frame Overlay (Matte/Letterbox) with customizable opacity
-    - Photoshop-style Interactive 4-Corner Drag & Drop Distortion (Corner Pinning)
-    - Ball Tracking Reticle, Center Pitch Picker, and Horizon Guides.
-    """
-    framing_dragged = Signal(float, float)
-    center_picked = Signal(float)
-    corner_dragged = Signal(str, int, float, float) # (camera_side 'left'/'right', corner_idx 0..3, norm_x, norm_y)
-    corner_drag_finished = Signal()
-    pitch_corners_changed = Signal(list) # 6 freely movable pitch polygon corners [[x_tl, y_tl], [x_tc, y_tc], [x_tr, y_tr], [x_br, y_br], [x_bc, y_bc], [x_bl, y_bl]]
-    grid_quadrant_clicked = Signal(int) # 1, 2, 3, 4 (or 0 for toggle back to grid)
-    wide_angle_corners_changed = Signal(list) # 4 pitch corners [[x_tl, y_tl], [x_tr, y_tr], [x_br, y_br], [x_bl, y_bl]]
-    wide_angle_step_changed = Signal(int) # 0..3 for sequential click step, or -1 when finished
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMinimumSize(480, 220)
-        self.setMouseTracking(True) # Track mouse motion for instant hover highlights
-        self.setStyleSheet("background-color: #0d0d0d; border: 1px solid #333; border-radius: 6px;")
-        
-        self.current_frame_bgr: Optional[np.ndarray] = None
-        self.current_qimage: Optional[QImage] = None
-        self.rig_ref: Optional[RigConfiguration] = None
-        
-        # Display overlays
-        self.show_grid = True
-        self.show_seam = True
-        self.show_autocam_box = True
-        self.show_ball_tracking = True
-        self.show_center_line = True
-        self.pick_center_mode = False
-
-        # 2D Tactical Radar Minimap (FIFA Pitch)
-        self.show_radar = True
-        self.radar_position = "top_right"
-        self.radar_width = 320
-        self.radar_opacity = 0.85
-        self.radar_players: List[Tuple[float, float, int]] = []
-        self.radar_ball: Optional[Tuple[float, float]] = None
-        self.radar_cam_span: Optional[Tuple[float, float]] = None
-
-        # Tactical VAR Offside Line & Player Skeletons
-        self.show_offside_line = True
-        self.show_skeletons = False
-        self.show_speed = False
-        self.current_offside_line: Optional[Tuple[float, int, str]] = None
-        self.current_detections: List[Any] = []
-        self.ball_speed_kmh: Optional[float] = None
-        
-        # Semi-transparent 32:9 Frame Overlay
-        self.show_transparent_frame = True
-        self.frame_opacity = 0.50 # 50% dark translucent overlay outside the 32:9 frame
-        
-        # Corner Pinning (Photoshop-style Drag & Drop)
-        self.corner_pin_mode = False
-        self.corner_pin_camera = "both" # 'left', 'right', 'both'
-        self.hovered_corner: Optional[Tuple[str, int]] = None # ('left'|'right', 0..3)
-        self.dragging_corner: Optional[Tuple[str, int]] = None
-        self.drag_start_pos = QPoint()
-
-        # 6 Freely Movable Pitch Field ROI Points [TL, TC, TR, BR, BC, BL] (Normalized 0.0 - 1.0)
-        # Includes Top-Center (TC) and Bottom-Center (BC) on the halfway line (Mittellinie)
-        self.show_pitch_roi = True
-        self.pitch_roi_mode = False
-        self.tactical_mode = "points" # 'points' (setup mode on panorama with live PIP) or 'full' (16:9 fullscreen)
-        self.pip_rect: Optional[QRectF] = None
-        self.pitch_corners: List[List[float]] = [
-            [0.0, 0.0],  # 0: Top-Left (TL - Video-Ecke Oben-Links)
-            [0.5, 0.0],  # 1: Top-Center (TC - Video-Mittellinie Oben)
-            [1.0, 0.0],  # 2: Top-Right (TR - Video-Ecke Oben-Rechts)
-            [1.0, 1.0],  # 3: Bottom-Right (BR - Video-Ecke Unten-Rechts)
-            [0.5, 1.0],  # 4: Bottom-Center (BC - Video-Mittellinie Unten)
-            [0.0, 1.0]   # 5: Bottom-Left (BL - Video-Ecke Unten-Links)
-        ]
-        self.hovered_pitch_corner: Optional[int] = None
-        self.dragging_pitch_corner: Optional[int] = None
-        
-        self.autocam_box: Optional[Tuple[int, int, int, int]] = None
-        self.ball_px: Optional[Tuple[int, int]] = None
-        self.view_mode = "32:9" # '32:9' or '16:9' or '16:9_tactical'
-        
-        # Zoom & Pan state
-        self.zoom_level = 1.0
-        self.pan_offset = QPoint(0, 0)
-        self.is_panning = False
-        self.is_framing_dragging = False
-        self.last_mouse_pos = QPoint()
-        self.last_framing_pos = QPoint()
-
-        self.dynamic_zoom: float = 1.35
-
-        # 4-Point Wide-Angle Calibration & Trapezoid View (DJI Action 4)
-        self.wide_angle_edit_mode = False
-        self.wide_angle_step: int = -1  # 0..3 for sequential click placement, -1 when inactive
-        self.wide_angle_corners: List[List[float]] = [
-            [0.15, 0.25],  # 0: TL (Top-Left, hinten links)
-            [0.85, 0.25],  # 1: TR (Top-Right, hinten rechts)
-            [0.95, 0.88],  # 2: BR (Bottom-Right, vorne rechts)
-            [0.05, 0.88]   # 3: BL (Bottom-Left, vorne links)
-        ]
-        self.hovered_wa_corner: Optional[int] = None
-        self.dragging_wa_corner: Optional[int] = None
-
-    def set_wide_angle_corners(self, corners: List[List[float]]):
-        """Sets normalized 4-point pitch corners for wide-angle trapezoid rectification."""
-        if corners and len(corners) == 4:
-            self.wide_angle_corners = [[float(c[0]), float(c[1])] for c in corners]
-            self.update()
-
-    def set_wide_angle_edit_mode(self, enabled: bool):
-        """Toggles interactive wide-angle 4-point corner drag and drop."""
-        self.wide_angle_edit_mode = enabled
-        if not enabled:
-            self.hovered_wa_corner = None
-            self.dragging_wa_corner = None
-            self.wide_angle_step = -1
-            self.setCursor(Qt.ArrowCursor)
-        self.update()
-
-    def start_wide_angle_marking(self):
-        """Initiates sequential 4-point click-to-place calibration (TL -> TR -> BR -> BL)."""
-        self.wide_angle_edit_mode = True
-        self.wide_angle_step = 0
-        self.setCursor(Qt.CrossCursor)
-        self.wide_angle_step_changed.emit(0)
-        self.update()
-
-    def _get_wa_corner_screen_points(self, target_rect: QRectF) -> List[QPointF]:
-        """Calculates viewport screen pixel coordinates for the 4 normalized wide-angle corners."""
-        pts = []
-        for x_norm, y_norm in self.wide_angle_corners:
-            sx = target_rect.left() + x_norm * target_rect.width()
-            sy = target_rect.top() + y_norm * target_rect.height()
-            pts.append(QPointF(sx, sy))
-        return pts
-
-    def _hit_test_wa_corner(self, pos: QPoint, target_rect: QRectF, radius: float = 18.0) -> Optional[int]:
-        """Returns corner index (0..3) if mouse click/hover is within threshold radius."""
-        pts = self._get_wa_corner_screen_points(target_rect)
-        for idx, pt in enumerate(pts):
-            dist = math.hypot(pos.x() - pt.x(), pos.y() - pt.y())
-            if dist <= radius:
-                return idx
-        return None
-
-    def set_pitch_corners(self, corners: List[List[float]]):
-        """Sets normalized pitch polygon points."""
-        if corners and len(corners) == 6:
-            self.pitch_corners = [[float(c[0]), float(c[1])] for c in corners]
-            self.update()
-        elif corners and len(corners) == 4:
-            tl, tr, br, bl = corners
-            tc = [(tl[0] + tr[0]) * 0.5, (tl[1] + tr[1]) * 0.5]
-            bc = [(bl[0] + br[0]) * 0.5, (bl[1] + br[1]) * 0.5]
-            self.pitch_corners = [tl, tc, tr, br, bc, bl]
-            self.update()
-
-    def set_pitch_roi_mode(self, enabled: bool):
-        """Toggles interactive drag-and-drop pitch boundary editing."""
-        self.pitch_roi_mode = enabled
-        if not enabled:
-            self.hovered_pitch_corner = None
-            self.dragging_pitch_corner = None
-            self.setCursor(Qt.ArrowCursor)
-        self.update()
-
-    def set_rig(self, rig: RigConfiguration):
-        """Sets reference to current RigConfiguration for reading corner coordinates."""
-        self.rig_ref = rig
-        self.update()
-
-    def set_corner_pin_mode(self, enabled: bool):
-        """Toggles Photoshop-style interactive corner dragging mode."""
-        self.corner_pin_mode = enabled
-        if not enabled:
-            self.hovered_corner = None
-            self.dragging_corner = None
-            self.setCursor(Qt.ArrowCursor)
-        self.update()
-
-    def set_corner_pin_camera(self, cam_side: str):
-        """Filters which camera's corner handles are visible ('left', 'right', 'both')."""
-        self.corner_pin_camera = cam_side
-        self.update()
-
-    def set_transparent_frame_enabled(self, enabled: bool):
-        """Toggles semi-transparent 32:9 framing overlay."""
-        self.show_transparent_frame = enabled
-        self.update()
-
-    def set_frame_opacity(self, opacity: float):
-        """Sets opacity of the semi-transparent frame matte (0.0 to 1.0)."""
-        self.frame_opacity = max(0.0, min(1.0, opacity))
-        self.update()
-
-    def set_pick_center_mode(self, enabled: bool):
-        """Toggles interactive click-to-center mode for the soccer pitch center line."""
-        self.pick_center_mode = enabled
-        if enabled:
-            self.setCursor(Qt.CrossCursor)
-        else:
-            self.setCursor(Qt.ArrowCursor)
-        self.update()
-
-    def set_radar_enabled(self, enabled: bool):
-        """Toggles 2D tactical radar display."""
-        self.show_radar = enabled
-        self.update()
-
-    def set_radar_position(self, pos: str):
-        """Sets anchor position ('top_right', 'bottom_right', 'bottom_center', 'top_left', 'bottom_left')."""
-        self.radar_position = pos
-        self.update()
-
-    def set_radar_width(self, width: int):
-        """Sets radar width in pixels."""
-        self.radar_width = max(180, min(600, int(width)))
-        self.update()
-
-    def set_radar_opacity(self, opacity: float):
-        """Sets radar opacity (0.2 to 1.0)."""
-        self.radar_opacity = max(0.2, min(1.0, float(opacity)))
-        self.update()
-
-    def set_offside_line_enabled(self, enabled: bool):
-        """Toggles FIFA VAR virtual offside line display."""
-        self.show_offside_line = enabled
-        self.update()
-
-    def set_skeletons_enabled(self, enabled: bool):
-        """Toggles player skeleton keypoint and limb display."""
-        self.show_skeletons = enabled
-        self.update()
-
-    def set_speed_badges_enabled(self, enabled: bool):
-        """Toggles player and ball real-time metric speed badges."""
-        self.show_speed = enabled
-        self.update()
-
-    def set_frame(self, 
-                  frame_bgr: np.ndarray, 
-                  autocam_box: Optional[Tuple[int, int, int, int]] = None, 
-                  ball_px: Optional[Tuple[int, int]] = None, 
-                  dynamic_zoom: float = 1.35,
-                  players: Optional[List[Tuple[float, float, int]]] = None,
-                  ball_norm: Optional[Tuple[float, float]] = None,
-                  cam_span: Optional[Tuple[float, float]] = None,
-                  offside_line: Optional[Tuple[float, int, str]] = None,
-                  detections: Optional[List[Any]] = None,
-                  ball_speed_kmh: Optional[float] = None):
-        """Updates the displayed frame, broadcast box, ball reticle, 2D tactical radar, offside line, detections, and speeds."""
-        self.current_frame_bgr = frame_bgr
-        self.autocam_box = autocam_box
-        self.ball_px = ball_px
-        self.dynamic_zoom = dynamic_zoom
-        self.current_offside_line = offside_line
-        self.current_detections = detections if detections is not None else []
-        self.ball_speed_kmh = ball_speed_kmh
-
-        if players is not None:
-            self.radar_players = players
-        if ball_norm is not None:
-            self.radar_ball = ball_norm
-        elif ball_px is not None and frame_bgr is not None:
-            self.radar_ball = (ball_px[0] / max(1, frame_bgr.shape[1]), ball_px[1] / max(1, frame_bgr.shape[0]))
-        if cam_span is not None:
-            self.radar_cam_span = cam_span
-
-        if frame_bgr is None:
-            self.current_qimage = None
-            self.update()
-            return
-
-        if self.view_mode == "16:9" and autocam_box is not None:
-            # Crop to 16:9 broadcast view
-            bx, by, bw, bh = autocam_box
-            cropped = frame_bgr[by:by+bh, bx:bx+bw]
-            h, w, ch = cropped.shape
-            bytes_per_line = ch * w
-            rgb_frame = cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
-            self.current_qimage = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
-        else:
-            h, w, ch = frame_bgr.shape
-            bytes_per_line = ch * w
-            rgb_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-            self.current_qimage = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
-
-        self.update()
-
-    def update_preview_image(self, 
-                             frame_bgr: np.ndarray, 
-                             autocam_box: Optional[Tuple[int, int, int, int]] = None, 
-                             ball_px: Optional[Tuple[int, int]] = None):
-        """Helper / alias to update the preview frame from live-streaming or capture engines."""
-        self.set_frame(frame_bgr, autocam_box=autocam_box, ball_px=ball_px)
-
-    def reset_zoom(self):
-        self.zoom_level = 1.0
-        self.pan_offset = QPoint(0, 0)
-        self.update()
-
-    def set_zoom(self, zoom: float):
-        self.zoom_level = max(0.5, min(5.0, zoom))
-        self.update()
-
-    def _get_target_rect(self) -> Optional[QRectF]:
-        if self.current_qimage is None:
-            return None
-        vw, vh = self.width(), self.height()
-        iw, ih = self.current_qimage.width(), self.current_qimage.height()
-        scale_fit = min(vw / iw, vh / ih)
-        draw_w = iw * scale_fit * self.zoom_level
-        draw_h = ih * scale_fit * self.zoom_level
-        draw_x = (vw - draw_w) * 0.5 + self.pan_offset.x()
-        draw_y = (vh - draw_h) * 0.5 + self.pan_offset.y()
-        return QRectF(draw_x, draw_y, draw_w, draw_h)
-
-    def _get_corner_screen_points(self, side: str, target_rect: QRectF) -> list:
-        """Computes screen pixel coordinates for 4 corners of left or right camera."""
-        if not self.rig_ref:
-            corners = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
-        elif side == "left":
-            corners = self.rig_ref.left_pose.corners
-        else:
-            corners = self.rig_ref.right_pose.corners
-
-        pts = []
-        half_w = target_rect.width() * 0.5
-        top = target_rect.top()
-        h = target_rect.height()
-        x_base = target_rect.left() if side == "left" else (target_rect.left() + half_w)
-
-        for cx, cy in corners:
-            px = x_base + cx * half_w
-            py = top + cy * h
-            pts.append(QPointF(px, py))
-        return pts
-
-    def _get_pitch_roi_screen_polygon(self, target_rect: QRectF) -> List[QPointF]:
-        """Calculates pixel coordinates on screen for the 4 freely movable pitch corners."""
-        pts = []
-        for cx, cy in self.pitch_corners:
-            px = target_rect.left() + cx * target_rect.width()
-            py = target_rect.top() + cy * target_rect.height()
-            pts.append(QPointF(px, py))
-        return pts
-
-    def _hit_test_pitch_roi(self, pos: QPoint, target_rect: QRectF) -> Optional[int]:
-        """Tests if mouse position is within hit radius (32px) or on the badge of any pitch point."""
-        pts = self._get_pitch_roi_screen_polygon(target_rect)
-        x, y = float(pos.x()), float(pos.y())
-        p_qpt = QPointF(x, y)
-
-        # 1. Direct circular hit test with generous 32px tolerance
-        tol = 32.0
-        for idx, pt in enumerate(pts):
-            dist = np.hypot(x - pt.x(), y - pt.y())
-            if dist <= tol:
-                return idx
-
-        # 2. Check if mouse is on handle label badge
-        for idx, pt in enumerate(pts):
-            bx = pt.x() + (12 if idx in (0, 4, 5) else -130)
-            by = pt.y() + (14 if idx in (0, 1, 2) else -22)
-            cbadge = QRectF(bx - 6, by - 6, 137, 30)
-            if cbadge.contains(p_qpt):
-                return idx
-
-        return None
-
-    def _get_tactical_16x9_screen_handles(self, target_rect: QRectF) -> Tuple[List[QPointF], QRectF]:
-        """Calculates screen positions for the 6 control handles and the centered 16:9 target frame rect."""
-        canvas_h = target_rect.height()
-        canvas_w = target_rect.width()
-        frame_h = canvas_h
-        frame_w = frame_h * (16.0 / 9.0)
-        frame_x0 = target_rect.left() + (canvas_w - frame_w) * 0.5
-        frame_x1 = frame_x0 + frame_w
-        mid_x = target_rect.left() + canvas_w * 0.5
-        top = target_rect.top()
-        bottom = target_rect.bottom()
-
-        frame_rect = QRectF(frame_x0, top, frame_w, frame_h)
-        handles = [
-            QPointF(frame_x0, top),    # 0: TL
-            QPointF(mid_x, top),       # 1: TC (Wölbung Oben)
-            QPointF(frame_x1, top),    # 2: TR
-            QPointF(frame_x1, bottom), # 3: BR
-            QPointF(mid_x, bottom),    # 4: BC (Wölbung Unten)
-            QPointF(frame_x0, bottom)  # 5: BL
-        ]
-        return handles, frame_rect
-
-    def _hit_test_tactical_16x9_handles(self, pos: QPoint, target_rect: QRectF) -> Optional[int]:
-        """Tests if mouse position is within hit radius (35px) of any of the 6 tactical warp control handles or their badge."""
-        handles, _ = self._get_tactical_16x9_screen_handles(target_rect)
-        tol = 35.0
-        x, y = float(pos.x()), float(pos.y())
-        p_qpt = QPointF(x, y)
-        for idx, pt in enumerate(handles):
-            dist = np.hypot(x - pt.x(), y - pt.y())
-            if dist <= tol:
-                return idx
-        for idx, pt in enumerate(handles):
-            bx = pt.x() + (14 if idx in (0, 4, 5) else (-140 if idx in (2, 3) else -65))
-            by = pt.y() + (16 if idx in (0, 1, 2) else -24)
-            badge = QRectF(bx - 6, by - 6, 142, 32)
-            if badge.contains(p_qpt):
-                return idx
-        return None
-
-    def _hit_test_corners(self, pos: QPoint, target_rect: QRectF) -> Optional[Tuple[str, int]]:
-        """Tests if mouse position is within hit radius (14px) of any active corner handle."""
-        sides_to_check = []
-        if self.corner_pin_camera in ("left", "both"):
-            sides_to_check.append("left")
-        if self.corner_pin_camera in ("right", "both"):
-            sides_to_check.append("right")
-
-        for side in sides_to_check:
-            pts = self._get_corner_screen_points(side, target_rect)
-            for idx, pt in enumerate(pts):
-                dx = pos.x() - pt.x()
-                dy = pos.y() - pt.y()
-                if (dx * dx + dy * dy) <= (15.0 * 15.0):
-                    return (side, idx)
-        return None
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        try:
-            self._render_viewport(painter)
-        finally:
-            painter.end()
-
-    def _render_viewport(self, painter: QPainter):
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-
-        painter.fillRect(self.rect(), QColor("#0d0d0d"))
-
-        if self.current_qimage is None:
-            painter.setPen(QColor("#666666"))
-            painter.setFont(QFont("Segoe UI", 12))
-            painter.drawText(self.rect(), Qt.AlignCenter, "Kein Video geladen. Bitte links und rechts DJI Action 4 Videos öffnen.")
-            return
-
-        target_rect = self._get_target_rect()
-        if target_rect is None:
-            return
-
-        vw, vh = self.width(), self.height()
-        iw, ih = self.current_qimage.width(), self.current_qimage.height()
-
-        # 1. Draw Stitched Frame Image
-        painter.drawImage(target_rect, self.current_qimage)
-
-        # 2. Semi-Transparent 32:9 / 8:3 / 21:10 Frame Overlay (Matte/Letterbox)
-        if self.show_transparent_frame and self.view_mode in ("32:9", "8:3", "21:10"):
-            matte_alpha = int(np.clip(self.frame_opacity * 255, 0, 255))
-            if matte_alpha > 0:
-                mask_color = QColor(0, 0, 0, matte_alpha)
-                # Shading regions outside target_rect within viewport
-                if target_rect.top() > 0:
-                    painter.fillRect(QRectF(0, 0, vw, target_rect.top()), mask_color)
-                if target_rect.bottom() < vh:
-                    painter.fillRect(QRectF(0, target_rect.bottom(), vw, vh - target_rect.bottom()), mask_color)
-                if target_rect.left() > 0:
-                    painter.fillRect(QRectF(0, target_rect.top(), target_rect.left(), target_rect.height()), mask_color)
-                if target_rect.right() < vw:
-                    painter.fillRect(QRectF(target_rect.right(), target_rect.top(), vw - target_rect.right(), target_rect.height()), mask_color)
-
-            # Elegant Glowing Boundary Border
-            pen_frame = QPen(QColor(52, 152, 219, 210), 2, Qt.SolidLine)
-            painter.setPen(pen_frame)
-            painter.drawRect(target_rect)
-
-            # High-Precision Corner Brackets (⌜ ⌝ ⌞ ⌟)
-            pen_bracket = QPen(QColor(46, 204, 113, 240), 3, Qt.SolidLine)
-            painter.setPen(pen_bracket)
-            blen = 18.0
-            tl = target_rect.topLeft()
-            tr = target_rect.topRight()
-            br = target_rect.bottomRight()
-            bl = target_rect.bottomLeft()
-
-            # Top-Left Bracket ⌜
-            painter.drawLine(QPointF(tl.x(), tl.y() + blen), tl)
-            painter.drawLine(tl, QPointF(tl.x() + blen, tl.y()))
-            # Top-Right Bracket ⌝
-            painter.drawLine(QPointF(tr.x() - blen, tr.y()), tr)
-            painter.drawLine(tr, QPointF(tr.x(), tr.y() + blen))
-            # Bottom-Right Bracket ⌟
-            painter.drawLine(QPointF(br.x(), br.y() - blen), br)
-            painter.drawLine(br, QPointF(br.x() - blen, br.y()))
-            # Bottom-Left Bracket ⌞
-            painter.drawLine(QPointF(bl.x() + blen, bl.y()), bl)
-            painter.drawLine(bl, QPointF(bl.x(), bl.y() - blen))
-
-            # Framing Header Tag
-            is_8x3 = (self.view_mode == "8:3") or getattr(self, 'is_4_3', False) or (self.current_qimage and abs(self.current_qimage.width() / max(1, self.current_qimage.height()) - (8.0 / 3.0)) < 0.25)
-            if self.view_mode == "21:10":
-                tag_title = "🔲 21:10 Panorama (Gestaucht)"
-            elif is_8x3 and self.view_mode != "32:9":
-                tag_title = "🔲 8:3 Panorama-Ausschnitt"
-            elif self.view_mode == "8:3":
-                tag_title = "🔲 8:3 Panorama-Ausschnitt"
-            else:
-                tag_title = "🔲 32:9 Panorama-Ausschnitt"
-            tag_frame = QRectF(target_rect.center().x() - 105, target_rect.top() + 6, 210, 20)
-            painter.fillRect(tag_frame, QColor(41, 128, 185, 210))
-            painter.setPen(QColor(255, 255, 255))
-            painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
-            painter.drawText(tag_frame, Qt.AlignCenter, tag_title)
-
-        # 3. Overlays for 32:9 / 8:3 / 21:10 mode
-        if self.view_mode in ("32:9", "8:3", "21:10"):
-            # Field Center Reference Line (50% Center)
-            if self.show_center_line:
-                center_x = target_rect.left() + target_rect.width() * 0.5
-                pen_center = QPen(QColor(241, 196, 15, 220), 2, Qt.DashDotLine)
-                painter.setPen(pen_center)
-                painter.drawLine(int(center_x), int(target_rect.top()), int(center_x), int(target_rect.bottom()))
-                
-                tag_center = QRectF(center_x - 65, target_rect.top() + 6, 130, 20)
-                painter.fillRect(tag_center, QColor(241, 196, 15, 210))
-                painter.setPen(QColor(0, 0, 0))
-                painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
-                painter.drawText(tag_center, Qt.AlignCenter, "🎯 Spielfeld-Mitte")
-
-            if self.show_seam:
-                seam_x = target_rect.left() + target_rect.width() * 0.5
-                pen_seam = QPen(QColor(255, 75, 75, 180), 1, Qt.DotLine)
-                painter.setPen(pen_seam)
-                painter.drawLine(int(seam_x), int(target_rect.top()), int(seam_x), int(target_rect.bottom()))
-
-            if self.show_grid:
-                pen_grid = QPen(QColor(70, 230, 110, 140), 1, Qt.SolidLine)
-                painter.setPen(pen_grid)
-                horiz_y = target_rect.top() + target_rect.height() * 0.5
-                painter.drawLine(int(target_rect.left()), int(horiz_y), int(target_rect.right()), int(horiz_y))
-                ground_y = target_rect.top() + target_rect.height() * 0.8
-                painter.drawLine(int(target_rect.left()), int(ground_y), int(target_rect.right()), int(ground_y))
-
-            # 16:9 Broadcast Box
-            if self.show_autocam_box and self.autocam_box is not None:
-                bx, by, bw, bh = self.autocam_box
-                scale_x = target_rect.width() / float(iw)
-                scale_y = target_rect.height() / float(ih)
-                rect_x = target_rect.left() + bx * scale_x
-                rect_y = target_rect.top() + by * scale_y
-                rect_w = bw * scale_x
-                rect_h = bh * scale_y
-
-                # Gold Broadcast Box
-                pen_box = QPen(QColor(241, 196, 15, 230), 2, Qt.SolidLine)
-                painter.setPen(pen_box)
-                painter.drawRect(QRectF(rect_x, rect_y, rect_w, rect_h))
-
-                # Broadcast Tag
-                tag_rect = QRectF(rect_x, max(0.0, rect_y - 20.0), 160.0, 20.0)
-                painter.fillRect(tag_rect, QColor(241, 196, 15, 210))
-                painter.setPen(QColor(0, 0, 0))
-                painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
-                painter.drawText(tag_rect, Qt.AlignCenter, "🎥 16:9 Ball-Follow Cam")
-
-            # Ball Tracking Reticle
-            if self.show_ball_tracking and self.ball_px is not None:
-                b_px_x, b_px_y = self.ball_px
-                scale_x = target_rect.width() / float(iw)
-                scale_y = target_rect.height() / float(ih)
-                screen_bx = target_rect.left() + b_px_x * scale_x
-                screen_by = target_rect.top() + b_px_y * scale_y
-
-                # Green pulsing target circle
-                pen_ball = QPen(QColor(46, 204, 113, 230), 2, Qt.SolidLine)
-                painter.setPen(pen_ball)
-                painter.drawEllipse(QPoint(int(screen_bx), int(screen_by)), 14, 14)
-                painter.drawLine(int(screen_bx - 18), int(screen_by), int(screen_bx + 18), int(screen_by))
-                painter.drawLine(int(screen_bx), int(screen_by - 18), int(screen_bx), int(screen_by + 18))
-
-                painter.setPen(QColor(46, 204, 113))
-                painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
-                ball_txt = "⚽ Ball"
-                if self.show_speed and getattr(self, 'ball_speed_kmh', None) is not None and self.ball_speed_kmh > 4.0:
-                    ball_txt = f"⚽ {self.ball_speed_kmh:.1f} km/h"
-                painter.drawText(int(screen_bx + 16), int(screen_by - 6), ball_txt)
-
-            # 3b. Player Skeletons & Extremities (YOLO-Pose / Tactical Analysis)
-            if self.show_skeletons and self.current_detections:
-                for det in self.current_detections:
-                    if getattr(det, 'keypoints', None) is not None:
-                        kpts = det.keypoints
-                        team_id = getattr(det, 'team_id', 0)
-                        col_limb = QColor(239, 68, 68, 220) if team_id == 1 else (QColor(234, 179, 8, 220) if team_id in (2, -1) else QColor(59, 130, 246, 220))
-                        painter.setPen(QPen(col_limb, 2, Qt.SolidLine))
-                        # Connect limbs
-                        for i1, i2 in SKELETON_CONNECTIONS:
-                            if i1 < len(kpts) and i2 < len(kpts):
-                                if kpts[i1, 2] > 0.25 and kpts[i2, 2] > 0.25:
-                                    p1 = QPointF(target_rect.left() + kpts[i1, 0] * target_rect.width(),
-                                                 target_rect.top() + kpts[i1, 1] * target_rect.height())
-                                    p2 = QPointF(target_rect.left() + kpts[i2, 0] * target_rect.width(),
-                                                 target_rect.top() + kpts[i2, 1] * target_rect.height())
-                                    painter.drawLine(p1, p2)
-                        # Draw joints
-                        painter.setPen(QPen(QColor(255, 255, 255), 1))
-                        painter.setBrush(col_limb)
-                        for i in range(len(kpts)):
-                            if kpts[i, 2] > 0.25:
-                                pt = QPointF(target_rect.left() + kpts[i, 0] * target_rect.width(),
-                                             target_rect.top() + kpts[i, 1] * target_rect.height())
-                                r = 3.0 if i in (15, 16) else 2.0  # Emphasize feet/ankles for VAR
-                                painter.drawEllipse(pt, r, r)
-                        # Heading direction arrow
-                        if getattr(det, 'heading_deg', None) is not None:
-                            cx = target_rect.left() + det.center[0] * target_rect.width()
-                            cy = target_rect.top() + det.center[1] * target_rect.height()
-                            rad = math.radians(det.heading_deg)
-                            hx = cx + 18.0 * math.cos(rad)
-                            hy = cy + 18.0 * math.sin(rad)
-                            painter.setPen(QPen(QColor(255, 255, 255, 220), 1.5, Qt.SolidLine))
-                            painter.drawLine(QPointF(cx, cy), QPointF(hx, hy))
-                    else:
-                        # Draw tactical feet anchor for non-pose backends
-                        cx = target_rect.left() + det.center[0] * target_rect.width()
-                        bottom_y = target_rect.top() + det.bbox[3] * target_rect.height()
-                        col = QColor(239, 68, 68, 200) if getattr(det, 'team_id', 0) == 1 else (QColor(234, 179, 8, 200) if getattr(det, 'team_id', 0) in (2, -1) else QColor(59, 130, 246, 200))
-                        painter.setPen(QPen(QColor(255, 255, 255, 180), 1))
-                        painter.setBrush(col)
-                        painter.drawEllipse(QPointF(cx, bottom_y), 3.0, 3.0)
-
-            # 3c. FIFA VAR Virtual Offside Line
-            if self.show_offside_line and self.current_offside_line is not None:
-                off_x, off_team, off_label = self.current_offside_line
-                ox = target_rect.left() + off_x * target_rect.width()
-                if target_rect.left() <= ox <= target_rect.right():
-                    col_off = QColor(239, 68, 68, 230) if off_team == 1 else QColor(59, 130, 246, 230)
-                    pen_off = QPen(col_off, 2, Qt.DashLine)
-                    painter.setPen(pen_off)
-                    painter.drawLine(QPointF(ox, target_rect.top()), QPointF(ox, target_rect.bottom()))
-                    
-                    # VAR Offside Badge Tag
-                    badge_w, badge_h = 160.0, 20.0
-                    badge_y = target_rect.bottom() - 26.0
-                    badge_rect = QRectF(ox - badge_w * 0.5, badge_y, badge_w, badge_h)
-                    painter.fillRect(badge_rect, QColor(0, 0, 0, 215))
-                    painter.setPen(col_off)
-                    painter.drawRect(badge_rect)
-                    painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
-                    painter.drawText(badge_rect, Qt.AlignCenter, off_label)
-
-            # 3d. Real-Time Player Metric Speed Badges (SkillCorner / TacticAI)
-            if self.show_speed and self.current_detections:
-                for det in self.current_detections:
-                    spd = getattr(det, 'speed_kmh', None)
-                    if spd is not None and spd > 1.5:
-                        cx = target_rect.left() + det.center[0] * target_rect.width()
-                        head_y = target_rect.top() + det.bbox[1] * target_rect.height() - 15.0
-                        
-                        is_sprint = (spd >= 25.2)
-                        badge_txt = f"🔥 {spd:.1f} km/h" if is_sprint else f"⚡ {spd:.1f} km/h"
-                        bw = 78.0 if is_sprint else 68.0
-                        bh = 17.0
-                        rect_badge = QRectF(cx - bw * 0.5, head_y, bw, bh)
-                        
-                        bg_col = QColor(185, 28, 28, 220) if is_sprint else QColor(15, 23, 42, 210)
-                        painter.fillRect(rect_badge, bg_col)
-                        painter.setPen(QColor(239, 68, 68) if is_sprint else QColor(56, 189, 248))
-                        painter.drawRect(rect_badge)
-                        painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
-                        painter.drawText(rect_badge, Qt.AlignCenter, badge_txt)
-
-        # 4. Photoshop-style Corner Pinning Handles & Wireframes
-        if self.corner_pin_mode:
-            banner_rect = QRectF(0, 0, self.width(), 32)
-            painter.fillRect(banner_rect, QColor(142, 68, 173, 235))
-            painter.setPen(QColor(255, 255, 255))
-            painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
-            painter.drawText(banner_rect, Qt.AlignCenter, "📐 Ecken-Verzerrung (Corner Pin): Ziehen Sie die runden Eckpunkte (Cyan = Links, Gold = Rechts) per Maus")
-
-            # Left Camera Quad & Handles
-            if self.corner_pin_camera in ("left", "both"):
-                pts_l = self._get_corner_screen_points("left", target_rect)
-                painter.setPen(QPen(QColor(0, 210, 211, 220), 2, Qt.DashLine))
-                painter.setBrush(QColor(0, 210, 211, 20))
-                painter.drawPolygon(pts_l)
-
-                tag_names = ["TL (Links)", "TR (Mitte)", "BR (Mitte)", "BL (Links)"]
-                for idx, pt in enumerate(pts_l):
-                    is_active = (self.hovered_corner == ("left", idx) or self.dragging_corner == ("left", idx))
-                    r = 13 if is_active else 9
-
-                    # Outer glow / ring
-                    painter.setPen(QPen(QColor(0, 210, 211, 255), 3 if is_active else 2))
-                    painter.setBrush(QColor(0, 210, 211, 230) if is_active else QColor(10, 25, 35, 220))
-                    painter.drawEllipse(pt, r, r)
-
-                    # Center crosshair + dot
-                    painter.setPen(QPen(QColor(255, 255, 255), 2))
-                    painter.drawEllipse(pt, 3, 3)
-                    painter.drawLine(QPointF(pt.x() - 6, pt.y()), QPointF(pt.x() + 6, pt.y()))
-                    painter.drawLine(QPointF(pt.x(), pt.y() - 6), QPointF(pt.x(), pt.y() + 6))
-
-                    # Corner Label Badge
-                    bx = pt.x() + (14 if idx in (0, 3) else -72)
-                    by = pt.y() + (16 if idx in (0, 1) else -22)
-                    badge = QRectF(bx, by, 66, 18)
-                    painter.fillRect(badge, QColor(0, 0, 0, 210))
-                    painter.setPen(QColor(0, 210, 211))
-                    painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
-                    painter.drawText(badge, Qt.AlignCenter, tag_names[idx])
-
-            # Right Camera Quad & Handles
-            if self.corner_pin_camera in ("right", "both"):
-                pts_r = self._get_corner_screen_points("right", target_rect)
-                painter.setPen(QPen(QColor(255, 159, 67, 220), 2, Qt.DashLine))
-                painter.setBrush(QColor(255, 159, 67, 20))
-                painter.drawPolygon(pts_r)
-
-                tag_names_r = ["TL (Mitte)", "TR (Rechts)", "BR (Rechts)", "BL (Mitte)"]
-                for idx, pt in enumerate(pts_r):
-                    is_active = (self.hovered_corner == ("right", idx) or self.dragging_corner == ("right", idx))
-                    r = 13 if is_active else 9
-
-                    # Outer glow / ring
-                    painter.setPen(QPen(QColor(255, 159, 67, 255), 3 if is_active else 2))
-                    painter.setBrush(QColor(255, 159, 67, 230) if is_active else QColor(35, 22, 10, 220))
-                    painter.drawEllipse(pt, r, r)
-
-                    # Center crosshair + dot
-                    painter.setPen(QPen(QColor(255, 255, 255), 2))
-                    painter.drawEllipse(pt, 3, 3)
-                    painter.drawLine(QPointF(pt.x() - 6, pt.y()), QPointF(pt.x() + 6, pt.y()))
-                    painter.drawLine(QPointF(pt.x(), pt.y() - 6), QPointF(pt.x(), pt.y() + 6))
-
-                    # Corner Label Badge
-                    bx = pt.x() + (14 if idx in (0, 3) else -72)
-                    by = pt.y() + (16 if idx in (0, 1) else -22)
-                    badge = QRectF(bx, by, 66, 18)
-                    painter.fillRect(badge, QColor(0, 0, 0, 210))
-                    painter.setPen(QColor(255, 159, 67))
-                    painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
-                    painter.drawText(badge, Qt.AlignCenter, tag_names_r[idx])
-
-        # 5. 16:9 Tactical Warp Overlay & 6-Point Grab Handles on Panorama
-        if self.view_mode == "16:9_tactical":
-            # A. Calculate Centered 16:9 Target Frame within Panorama Viewport
-            box_h = target_rect.height()
-            box_w = box_h * (16.0 / 9.0)
-            box_x = target_rect.left() + (target_rect.width() - box_w) * 0.5
-            box_y = target_rect.top()
-            frame_16x9_rect = QRectF(box_x, box_y, box_w, box_h)
-
-            # B. Render Live Rectified 16:9 Video inside the 16:9 Target Frame
-            w_dst = int(round(box_w))
-            h_dst = int(round(box_h))
-            if self.current_frame_bgr is not None and w_dst > 20 and h_dst > 20:
-                try:
-                    map_x, map_y = generate_tactical_16x9_luts(
-                        self.current_frame_bgr.shape[1], self.current_frame_bgr.shape[0],
-                        w_dst, h_dst,
-                        self.pitch_corners,
-                        margin_percent=0.0
-                    )
-                    warped_bgr = apply_tactical_16x9_warp(self.current_frame_bgr, map_x, map_y)
-                    warped_rgb = cv2.cvtColor(warped_bgr, cv2.COLOR_BGR2RGB)
-                    warped_qimg = QImage(warped_rgb.data, w_dst, h_dst, warped_rgb.strides[0], QImage.Format_RGB888).copy()
-                    painter.drawImage(frame_16x9_rect, warped_qimg)
-                except Exception:
-                    pass
-
-            # C. Draw Translucent Dark Letterbox Outside the 16:9 Target Frame
-            left_w = max(0.0, box_x - target_rect.left())
-            right_w = max(0.0, target_rect.right() - frame_16x9_rect.right())
-            if left_w > 0:
-                painter.fillRect(QRectF(target_rect.left(), target_rect.top(), left_w, box_h), QColor(0, 0, 0, 160))
-            if right_w > 0:
-                painter.fillRect(QRectF(frame_16x9_rect.right(), target_rect.top(), right_w, box_h), QColor(0, 0, 0, 160))
-
-            # D. Glowing 16:9 Target Frame Border & Corner Accents
-            painter.setPen(QPen(QColor(52, 152, 219, 240), 2.5, Qt.SolidLine))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawRect(frame_16x9_rect)
-
-            acc_len = 24.0
-            pen_acc = QPen(QColor(241, 196, 15, 255), 3.0)
-            painter.setPen(pen_acc)
-            # TL
-            painter.drawLine(QPointF(frame_16x9_rect.left(), frame_16x9_rect.top()), QPointF(frame_16x9_rect.left() + acc_len, frame_16x9_rect.top()))
-            painter.drawLine(QPointF(frame_16x9_rect.left(), frame_16x9_rect.top()), QPointF(frame_16x9_rect.left(), frame_16x9_rect.top() + acc_len))
-            # TR
-            painter.drawLine(QPointF(frame_16x9_rect.right(), frame_16x9_rect.top()), QPointF(frame_16x9_rect.right() - acc_len, frame_16x9_rect.top()))
-            painter.drawLine(QPointF(frame_16x9_rect.right(), frame_16x9_rect.top()), QPointF(frame_16x9_rect.right(), frame_16x9_rect.top() + acc_len))
-            # BR
-            painter.drawLine(QPointF(frame_16x9_rect.right(), frame_16x9_rect.bottom()), QPointF(frame_16x9_rect.right() - acc_len, frame_16x9_rect.bottom()))
-            painter.drawLine(QPointF(frame_16x9_rect.right(), frame_16x9_rect.bottom()), QPointF(frame_16x9_rect.right(), frame_16x9_rect.bottom() - acc_len))
-            # BL
-            painter.drawLine(QPointF(frame_16x9_rect.left(), frame_16x9_rect.bottom()), QPointF(frame_16x9_rect.left() + acc_len, frame_16x9_rect.bottom()))
-            painter.drawLine(QPointF(frame_16x9_rect.left(), frame_16x9_rect.bottom()), QPointF(frame_16x9_rect.left(), frame_16x9_rect.bottom() - acc_len))
-
-            # 16:9 Title Badge
-            badge_16x9 = QRectF(frame_16x9_rect.center().x() - 110, frame_16x9_rect.top() + 8, 220, 22)
-            painter.fillRect(badge_16x9, QColor(0, 0, 0, 210))
-            painter.setPen(QColor(52, 152, 219))
-            painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
-            painter.drawText(badge_16x9, Qt.AlignCenter, "📺 16:9 Video-Zielbereich (Live-Warp)")
-
-            # E. Draw 6 Draggable Control Points DIRECTLY on the Actual Panorama Video Features
-            poly_pts = self._get_pitch_roi_screen_polygon(target_rect)
-            if len(poly_pts) == 6:
-                qpoly = QPolygonF(poly_pts)
-                painter.setPen(QPen(QColor(224, 86, 253, 230), 2, Qt.DashLine))
-                painter.setBrush(QColor(224, 86, 253, 15))
-                painter.drawPolygon(qpoly)
-
-                # Midline
-                pt_tc = poly_pts[1]
-                pt_bc = poly_pts[4]
-                painter.setPen(QPen(QColor(241, 196, 15, 230), 2, Qt.DashDotLine))
-                painter.drawLine(pt_tc, pt_bc)
-                
-                mid_x = (pt_tc.x() + pt_bc.x()) * 0.5
-                mid_y = (pt_tc.y() + pt_bc.y()) * 0.5
-                painter.setPen(QPen(QColor(241, 196, 15, 180), 1.5, Qt.DotLine))
-                painter.drawEllipse(QPointF(mid_x, mid_y), 24, 24)
-
-                # Drag handles with coordinates
-                corner_labels = [
-                    f"🚩 Video TL ({int(self.pitch_corners[0][0]*100)}%, {int(self.pitch_corners[0][1]*100)}%)",
-                    f"📍 ↕ Wölbung Oben ({int(self.pitch_corners[1][1]*100)}%)",
-                    f"🚩 Video TR ({int(self.pitch_corners[2][0]*100)}%, {int(self.pitch_corners[2][1]*100)}%)",
-                    f"🚩 Video BR ({int(self.pitch_corners[3][0]*100)}%, {int(self.pitch_corners[3][1]*100)}%)",
-                    f"📍 ↕ Wölbung Unten ({int(self.pitch_corners[4][1]*100)}%)",
-                    f"🚩 Video BL ({int(self.pitch_corners[5][0]*100)}%, {int(self.pitch_corners[5][1]*100)}%)"
-                ]
-
-                for idx, pt in enumerate(poly_pts):
-                    is_active = (self.hovered_pitch_corner == idx or self.dragging_pitch_corner == idx)
-                    is_mid = (idx in (1, 4))
-                    radius = 14 if is_active else 10
-
-                    if is_active:
-                        painter.setPen(Qt.NoPen)
-                        painter.setBrush(QColor(241, 196, 15, 100) if is_mid else QColor(224, 86, 253, 100))
-                        painter.drawEllipse(pt, 26, 26)
-
-                    painter.setPen(QPen(QColor(255, 255, 255), 2))
-                    if is_mid:
-                        painter.setBrush(QColor(243, 156, 18, 245) if is_active else QColor(241, 196, 15, 220))
-                    else:
-                        painter.setBrush(QColor(224, 86, 253, 245) if is_active else QColor(190, 46, 221, 220))
-                    painter.drawEllipse(pt, radius, radius)
-
-                    painter.setPen(QPen(QColor(0, 0, 0, 220), 1.5))
-                    if is_mid:
-                        painter.drawLine(QPointF(pt.x(), pt.y() - 5), QPointF(pt.x(), pt.y() + 5))
-                        painter.drawLine(QPointF(pt.x() - 3, pt.y() - 2), QPointF(pt.x(), pt.y() - 5))
-                        painter.drawLine(QPointF(pt.x() + 3, pt.y() - 2), QPointF(pt.x(), pt.y() - 5))
-                        painter.drawLine(QPointF(pt.x() - 3, pt.y() + 2), QPointF(pt.x(), pt.y() + 5))
-                        painter.drawLine(QPointF(pt.x() + 3, pt.y() + 2), QPointF(pt.x(), pt.y() + 5))
-                    else:
-                        painter.drawLine(QPointF(pt.x() - 5, pt.y()), QPointF(pt.x() + 5, pt.y()))
-                        painter.drawLine(QPointF(pt.x(), pt.y() - 5), QPointF(pt.x(), pt.y() + 5))
-
-                    bx = pt.x() + (12 if idx in (0, 4, 5) else -135)
-                    by = pt.y() + (14 if idx in (0, 1, 2) else -24)
-                    cbadge = QRectF(bx, by, 130, 20)
-                    painter.fillRect(cbadge, QColor(0, 0, 0, 220))
-                    painter.setPen(QColor(241, 196, 15) if is_mid else QColor(224, 86, 253))
-                    painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
-                    painter.drawText(cbadge, Qt.AlignCenter, corner_labels[idx])
-
-            # Top HUD banner
-            banner_rect = QRectF(0, 0, self.width(), 32)
-            painter.fillRect(banner_rect, QColor(41, 128, 185, 235))
-            painter.setPen(QColor(255, 255, 255))
-            painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
-            painter.drawText(banner_rect, Qt.AlignCenter, "📐 16:9 Taktik-Warp: Ziehen Sie die 6 Punkte auf den Video-Rändern, um das Panorama in den 16:9 Rahmen einzupassen.")
-
-        # 6. Pitch Field ROI (Action Polygon with Mittellinie) Overlay & Handles in Panorama
-        elif self.show_pitch_roi and self.view_mode in ("32:9", "8:3", "21:10"):
-            poly_pts = self._get_pitch_roi_screen_polygon(target_rect)
-            if len(poly_pts) >= 4:
-                qpoly = QPolygonF(poly_pts)
-                painter.setBrush(QColor(46, 204, 113, 20))
-                painter.setPen(Qt.NoPen)
-                painter.drawPolygon(qpoly)
-
-                pen_roi = QPen(QColor(46, 204, 113, 230), 2, Qt.DashLine)
-                painter.setPen(pen_roi)
-                painter.setBrush(Qt.NoBrush)
-                painter.drawPolygon(qpoly)
-
-                if len(poly_pts) == 6:
-                    pt_tc = poly_pts[1]
-                    pt_bc = poly_pts[4]
-                    painter.setPen(QPen(QColor(241, 196, 15, 220), 2, Qt.DashDotLine))
-                    painter.drawLine(pt_tc, pt_bc)
-
-                    mid_x = (pt_tc.x() + pt_bc.x()) * 0.5
-                    mid_y = (pt_tc.y() + pt_bc.y()) * 0.5
-                    painter.setPen(QPen(QColor(241, 196, 15, 170), 1.5, Qt.DotLine))
-                    painter.drawEllipse(QPointF(mid_x, mid_y), 24, 24)
-
-                cx = sum(p.x() for p in poly_pts) / float(len(poly_pts))
-                cy = sum(p.y() for p in poly_pts) / float(len(poly_pts))
-                badge_w, badge_h = 180.0, 20.0
-                badge_rect = QRectF(cx - badge_w * 0.5, cy - badge_h * 0.5, badge_w, badge_h)
-                painter.fillRect(badge_rect, QColor(0, 0, 0, 190))
-                painter.setPen(QColor(46, 204, 113))
-                painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
-                painter.drawText(badge_rect, Qt.AlignCenter, "🌱 Spielfeld-Zone (Aktiv)")
-
-                if self.pitch_roi_mode:
-                    banner_rect = QRectF(0, 0, self.width(), 32)
-                    painter.fillRect(banner_rect, QColor(39, 174, 96, 235))
-                    painter.setPen(QColor(255, 255, 255))
-                    painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
-                    painter.drawText(banner_rect, Qt.AlignCenter, "🌱 Spielfeld-Punkte: Ziehen Sie die 4 Eckfahnen & die 2 Mittellinien-Punkte frei per Maus")
-
-                    if len(poly_pts) == 6:
-                        corner_labels = [
-                            "🚩 Oben-Links (TL)",
-                            "📍 Mittellinie Oben (TC)",
-                            "🚩 Oben-Rechts (TR)",
-                            "🚩 Unten-Rechts (BR)",
-                            "📍 Mittellinie Unten (BC)",
-                            "🚩 Unten-Links (BL)"
-                        ]
-                    else:
-                        corner_labels = [f"Punkt {i+1}" for i in range(len(poly_pts))]
-
-                    for idx, pt in enumerate(poly_pts):
-                        is_active = (self.hovered_pitch_corner == idx or self.dragging_pitch_corner == idx)
-                        is_midpoint = (len(poly_pts) == 6 and idx in (1, 4))
-                        radius = 12 if is_active else 8
-
-                        if is_active:
-                            painter.setPen(Qt.NoPen)
-                            painter.setBrush(QColor(241, 196, 15, 90) if is_midpoint else QColor(46, 204, 113, 80))
-                            painter.drawEllipse(pt, 22, 22)
-
-                        painter.setPen(QPen(QColor(255, 255, 255), 2))
-                        if is_midpoint:
-                            painter.setBrush(QColor(243, 156, 18, 245) if is_active else QColor(241, 196, 15, 220))
-                        else:
-                            painter.setBrush(QColor(46, 204, 113, 245) if is_active else QColor(39, 174, 96, 220))
-                        painter.drawEllipse(pt, radius, radius)
-
-                        painter.setPen(QPen(QColor(0, 0, 0, 220), 1.5))
-                        painter.drawLine(QPointF(pt.x() - 5, pt.y()), QPointF(pt.x() + 5, pt.y()))
-                        painter.drawLine(QPointF(pt.x(), pt.y() - 5), QPointF(pt.x(), pt.y() + 5))
-
-                        bx = pt.x() + (12 if idx in (0, 4, 5) else -130)
-                        by = pt.y() + (14 if idx in (0, 1, 2) else -22)
-                        cbadge = QRectF(bx, by, 125, 18)
-                        painter.fillRect(cbadge, QColor(0, 0, 0, 215))
-                        painter.setPen(QColor(241, 196, 15) if is_midpoint else QColor(46, 204, 113))
-                        painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
-                        painter.drawText(cbadge, Qt.AlignCenter, corner_labels[idx])
-
-        # Pick Center Banner Mode
-        if self.pick_center_mode:
-            banner_rect = QRectF(0, 0, self.width(), 32)
-            painter.fillRect(banner_rect, QColor(41, 128, 185, 230))
-            painter.setPen(QColor(255, 255, 255))
-            painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
-            painter.drawText(banner_rect, Qt.AlignCenter, "📍 Klicken Sie auf die Spielfeld-Mittellinie / Anstoßkreis im Bild zum sofortigen Zentrieren")
-
-        # 7. 2D Tactical Radar Minimap Overlay (FIFA Standard Pitch)
-        if self.show_radar and self.current_frame_bgr is not None:
-            SoccerRadarRenderer.paint_radar_qt(
-                painter=painter,
-                widget_w=self.width(),
-                widget_h=self.height(),
-                players=self.radar_players,
-                ball_norm=self.radar_ball,
-                cam_span=self.radar_cam_span,
-                radar_w=self.radar_width,
-                pos=self.radar_position,
-                opacity=self.radar_opacity,
-                offside_line=self.current_offside_line if self.show_offside_line else None
-            )
-
-        # 8. Wide-Angle 4-Point Pitch Trapezoid Overlay & Loupe
-        if self.wide_angle_edit_mode or self.view_mode in ("wide_angle", "wide_angle_raw") or self.wide_angle_step >= 0:
-            self._render_wide_angle_overlay(painter, target_rect)
-
-        # HUD in top-left
-        painter.setPen(QColor(220, 220, 220, 220))
-        painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        is_8x3 = (self.view_mode == "8:3") or (self.current_qimage and abs(self.current_qimage.width() / max(1, self.current_qimage.height()) - (8.0 / 3.0)) < 0.25)
-        if self.view_mode == "8:3":
-            mode_str = "🌟 8:3 Taktik-Panorama"
-        elif self.view_mode == "grid":
-            mode_str = "🔲 4-Kanal Multiview Grid (1, 2, 3, 4)"
-            hud_text = f"{mode_str} | Klick auf Quadrant [1-4] zum Vergrößern | Doppelklick: Zurück zum Grid"
-        elif self.view_mode == "cam1":
-            mode_str = "📹 Cam 1 Links (Live-Feed)"
-            hud_text = f"{mode_str} ({iw}x{ih}) | Doppelklick: Zurück zum 4er-Grid"
-        elif self.view_mode == "cam2":
-            mode_str = "📹 Cam 2 Rechts (Live-Feed)"
-            hud_text = f"{mode_str} ({iw}x{ih}) | Doppelklick: Zurück zum 4er-Grid"
-        elif self.view_mode == "wide_angle":
-            mode_str = "📐 Weitwinkel Begradigt (DJI Action 4 Trapez)"
-            hud_text = f"{mode_str} ({iw}x{ih}) | 4-Punkt Kalibrierung aktiv"
-        elif self.view_mode == "wide_angle_raw":
-            mode_str = "📷 Weitwinkel Original (4-Punkt Ecken)"
-            hud_text = f"{mode_str} ({iw}x{ih}) | Klicken Sie auf die Eckfahnen"
-        elif self.view_mode == "32:9":
-            mode_str = "🌟 8:3 Taktik-Panorama" if is_8x3 else "🌟 32:9 Taktik-Panorama"
-            hud_text = f"{mode_str} ({iw}x{ih}) | 🎬 TV-Zoom: {self.dynamic_zoom:.2f}x | Viewport: {int(self.zoom_level*100)}%"
-        elif self.view_mode == "21:10":
-            mode_str = "📐 21:10 Gestaucht"
-            hud_text = f"{mode_str} ({iw}x{ih}) | 🎬 TV-Zoom: {self.dynamic_zoom:.2f}x | Viewport: {int(self.zoom_level*100)}%"
-        elif self.view_mode == "16:9_tactical":
-            mode_str = "📐 16:9 Taktik-Warp (Live-Frame)"
-            hud_text = f"{mode_str} ({iw}x{ih}) | 🎬 TV-Zoom: {self.dynamic_zoom:.2f}x | Viewport: {int(self.zoom_level*100)}%"
-        else:
-            mode_str = "🎥 16:9 Auto-Broadcast"
-            hud_text = f"{mode_str} ({iw}x{ih}) | 🎬 TV-Zoom: {self.dynamic_zoom:.2f}x | Viewport: {int(self.zoom_level*100)}%"
-        painter.drawText(14, 24 if (not self.pick_center_mode and not self.corner_pin_mode and not self.pitch_roi_mode and self.view_mode != "16:9_tactical") else 48, hud_text)
-
-    def _render_wide_angle_overlay(self, painter: QPainter, target_rect: QRectF):
-        """Renders the 4-corner pitch calibration polygon, handles, and precision zoom loupe."""
-        if target_rect is None:
-            return
-
-        pts = self._get_wa_corner_screen_points(target_rect)
-        if len(pts) == 4:
-            qpoly = QPolygonF(pts)
-            # Translucent pitch fill
-            painter.setBrush(QColor(56, 189, 248, 25))
-            painter.setPen(Qt.NoPen)
-            painter.drawPolygon(qpoly)
-
-            # Dashed pitch border
-            painter.setPen(QPen(QColor(56, 189, 248, 230), 2, Qt.DashLine))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawPolygon(qpoly)
-
-            # Halfway line (Mittellinie) between top and bottom sidelines
-            pt_tc = QPointF((pts[0].x() + pts[1].x()) * 0.5, (pts[0].y() + pts[1].y()) * 0.5)
-            pt_bc = QPointF((pts[3].x() + pts[2].x()) * 0.5, (pts[3].y() + pts[2].y()) * 0.5)
-            painter.setPen(QPen(QColor(241, 196, 15, 220), 2, Qt.DashDotLine))
-            painter.drawLine(pt_tc, pt_bc)
-
-            # Center circle
-            mid_x = (pt_tc.x() + pt_bc.x()) * 0.5
-            mid_y = (pt_tc.y() + pt_bc.y()) * 0.5
-            painter.setPen(QPen(QColor(241, 196, 15, 170), 1.5, Qt.DotLine))
-            painter.drawEllipse(QPointF(mid_x, mid_y), 24, 24)
-
-            # Center badge
-            badge_w, badge_h = 190.0, 20.0
-            badge_rect = QRectF(mid_x - badge_w * 0.5, mid_y - badge_h * 0.5, badge_w, badge_h)
-            painter.fillRect(badge_rect, QColor(0, 0, 0, 200))
-            painter.setPen(QColor(56, 189, 248))
-            painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
-            painter.drawText(badge_rect, Qt.AlignCenter, "📐 Weitwinkel-Trapez (4m Stativ)")
-
-            # Corner configuration: [TL, TR, BR, BL]
-            corner_configs = [
-                ("🚩 Eckfahne TL (Hinten Links)", QColor(241, 196, 15)),   # Gold/Yellow
-                ("🚩 Eckfahne TR (Hinten Rechts)", QColor(56, 189, 248)),  # Cyan
-                ("🚩 Eckfahne BR (Vorne Rechts)", QColor(239, 68, 68)),    # Red/Coral
-                ("🚩 Eckfahne BL (Vorne Links)", QColor(34, 197, 94)),     # Green
-            ]
-
-            for idx, pt in enumerate(pts):
-                is_active = (self.hovered_wa_corner == idx or self.dragging_wa_corner == idx or self.wide_angle_step == idx)
-                label, col = corner_configs[idx]
-                radius = 14 if is_active else 10
-
-                if is_active:
-                    painter.setPen(Qt.NoPen)
-                    glow_col = QColor(col.red(), col.green(), col.blue(), 100)
-                    painter.setBrush(glow_col)
-                    painter.drawEllipse(pt, 26, 26)
-
-                painter.setPen(QPen(QColor(255, 255, 255), 2))
-                painter.setBrush(col)
-                painter.drawEllipse(pt, radius, radius)
-
-                # Crosshair inside dot
-                painter.setPen(QPen(QColor(0, 0, 0, 230), 1.5))
-                painter.drawLine(QPointF(pt.x() - 5, pt.y()), QPointF(pt.x() + 5, pt.y()))
-                painter.drawLine(QPointF(pt.x(), pt.y() - 5), QPointF(pt.x(), pt.y() + 5))
-
-                # Corner Label Badge
-                bx = pt.x() + (14 if idx in (0, 3) else -180)
-                by = pt.y() + (16 if idx in (0, 1) else -26)
-                cbadge = QRectF(bx, by, 168, 20)
-                painter.fillRect(cbadge, QColor(0, 0, 0, 215))
-                painter.setPen(col)
-                painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
-                nx, ny = self.wide_angle_corners[idx]
-                painter.drawText(cbadge, Qt.AlignCenter, f"{label} ({int(nx*100)}%, {int(ny*100)}%)")
-
-            # Magnifier / Loupe (Zoom Callout)
-            active_idx = self.dragging_wa_corner if self.dragging_wa_corner is not None else self.hovered_wa_corner
-            if active_idx is not None and self.current_qimage is not None and 0 <= active_idx < 4:
-                pt_scr = pts[active_idx]
-                nx, ny = self.wide_angle_corners[active_idx]
-                iw = self.current_qimage.width()
-                ih = self.current_qimage.height()
-                src_cx = int(nx * iw)
-                src_cy = int(ny * ih)
-
-                # Loupe window geometry
-                loupe_diam = 110.0
-                lx = pt_scr.x() + (40.0 if pt_scr.x() < self.width() - 160 else -140.0)
-                ly = pt_scr.y() - (70.0 if pt_scr.y() > 140 else -40.0)
-                loupe_rect = QRectF(lx, ly, loupe_diam, loupe_diam)
-
-                # Crop around source center
-                crop_size = 48
-                crop_x = max(0, min(iw - crop_size, src_cx - crop_size // 2))
-                crop_y = max(0, min(ih - crop_size, src_cy - crop_size // 2))
-                cropped_img = self.current_qimage.copy(crop_x, crop_y, crop_size, crop_size)
-
-                painter.save()
-                path = QPainterPath()
-                path.addEllipse(loupe_rect)
-                painter.setClipPath(path)
-                painter.drawImage(loupe_rect, cropped_img)
-                painter.restore()
-
-                # Loupe border & crosshair
-                painter.setPen(QPen(corner_configs[active_idx][1], 2.5))
-                painter.setBrush(Qt.NoBrush)
-                painter.drawEllipse(loupe_rect)
-
-                center_loupe = loupe_rect.center()
-                painter.setPen(QPen(QColor(255, 255, 255, 230), 1.5))
-                painter.drawLine(QPointF(center_loupe.x() - 14, center_loupe.y()), QPointF(center_loupe.x() + 14, center_loupe.y()))
-                painter.drawLine(QPointF(center_loupe.x(), center_loupe.y() - 14), QPointF(center_loupe.x(), center_loupe.y() + 14))
-
-        # Top sequential step banner
-        if self.wide_angle_step >= 0:
-            step_texts = [
-                "🎯 Klick 1/4: Klicken Sie auf die Eckfahne OBEN LINKS (TL - Hinten Links)",
-                "🎯 Klick 2/4: Klicken Sie auf die Eckfahne OBEN RECHTS (TR - Hinten Rechts)",
-                "🎯 Klick 3/4: Klicken Sie auf die Eckfahne UNTEN RECHTS (BR - Vorne Rechts)",
-                "🎯 Klick 4/4: Klicken Sie auf die Eckfahne UNTEN LINKS (BL - Vorne Links)",
-            ]
-            banner_txt = step_texts[self.wide_angle_step] if self.wide_angle_step < len(step_texts) else "Markierung abgeschlossen!"
-            banner_rect = QRectF(0, 0, self.width(), 36)
-            painter.fillRect(banner_rect, QColor(234, 88, 12, 245))  # Orange
-            painter.setPen(QColor(255, 255, 255))
-            painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
-            painter.drawText(banner_rect, Qt.AlignCenter, banner_txt)
-
-    def wheelEvent(self, event: QWheelEvent):
-        delta = event.angleDelta().y()
-        if delta > 0:
-            self.zoom_level = min(5.0, self.zoom_level * 1.15)
-        else:
-            self.zoom_level = max(0.8, self.zoom_level / 1.15)
-        self.update()
-
-    def mousePressEvent(self, event: QMouseEvent):
-        target_rect = self._get_target_rect()
-
-        # WA-1. Wide-Angle Sequential 4-Click Mode
-        if self.wide_angle_step >= 0 and target_rect is not None and event.button() == Qt.LeftButton:
-            pos = event.pos()
-            if target_rect.contains(pos):
-                nx = float((pos.x() - target_rect.left()) / max(1.0, target_rect.width()))
-                ny = float((pos.y() - target_rect.top()) / max(1.0, target_rect.height()))
-                self.wide_angle_corners[self.wide_angle_step] = [
-                    float(np.clip(nx, 0.0, 1.0)),
-                    float(np.clip(ny, 0.0, 1.0))
-                ]
-                self.wide_angle_step += 1
-                if self.wide_angle_step >= 4:
-                    self.wide_angle_step = -1
-                    self.setCursor(Qt.ArrowCursor)
-                    self.wide_angle_step_changed.emit(-1)
-                else:
-                    self.wide_angle_step_changed.emit(self.wide_angle_step)
-                self.wide_angle_corners_changed.emit(self.wide_angle_corners)
-                self.update()
-                return
-
-        # WA-2. Wide-Angle Corner Dragging
-        if (self.wide_angle_edit_mode or self.view_mode in ("wide_angle", "wide_angle_raw")) and target_rect is not None and event.button() == Qt.LeftButton:
-            hit = self._hit_test_wa_corner(event.pos(), target_rect)
-            if hit is not None:
-                self.dragging_wa_corner = hit
-                self.update()
-                return
-
-        # 0. Grid Quadrant Click (Slot 1, 2, 3, 4 Zoom-In)
-        if self.view_mode == "grid" and target_rect is not None and event.button() == Qt.LeftButton:
-            pos = event.pos()
-            if target_rect.contains(pos):
-                rel_x = (pos.x() - target_rect.left()) / max(1.0, target_rect.width())
-                rel_y = (pos.y() - target_rect.top()) / max(1.0, target_rect.height())
-                quad = 1 if (rel_x < 0.5 and rel_y < 0.5) else (2 if rel_x >= 0.5 and rel_y < 0.5 else (3 if rel_x < 0.5 else 4))
-                self.grid_quadrant_clicked.emit(quad)
-                return
-
-        # 1. Pitch ROI / Tactical 16:9 Corner Dragging
-        if (self.pitch_roi_mode or self.view_mode == "16:9_tactical") and target_rect is not None and event.button() == Qt.LeftButton:
-            hit = self._hit_test_pitch_roi(event.pos(), target_rect)
-            if hit is not None:
-                self.dragging_pitch_corner = hit
-                self.update()
-                return
-
-        # 2. Corner Pin Dragging
-        if self.corner_pin_mode and target_rect is not None and event.button() == Qt.LeftButton:
-            hit = self._hit_test_corners(event.pos(), target_rect)
-            if hit is not None:
-                self.dragging_corner = hit
-                self.drag_start_pos = event.pos()
-                self.update()
-                return
-
-        # 3. Pick Center Mode
-        if self.pick_center_mode and target_rect is not None and event.button() == Qt.LeftButton:
-            if target_rect.contains(event.pos()):
-                norm_x = float((event.pos().x() - target_rect.left()) / target_rect.width())
-                self.center_picked.emit(norm_x)
-                return
-
-        # 4. Normal Pan / Framing Drag
-        if event.button() == Qt.LeftButton:
-            self.is_panning = True
-            self.last_mouse_pos = event.pos()
-        elif event.button() in (Qt.RightButton, Qt.MiddleButton):
-            self.is_framing_dragging = True
-            self.last_framing_pos = event.pos()
-
-    def mouseMoveEvent(self, event: QMouseEvent):
-        target_rect = self._get_target_rect()
-
-        # WA-1. Active Wide-Angle Corner Dragging
-        if self.dragging_wa_corner is not None and target_rect is not None:
-            norm_x = float((event.pos().x() - target_rect.left()) / max(target_rect.width(), 1.0))
-            norm_y = float((event.pos().y() - target_rect.top()) / max(target_rect.height(), 1.0))
-            idx = int(self.dragging_wa_corner)
-            norm_x = float(np.clip(norm_x, 0.0, 1.0))
-            norm_y = float(np.clip(norm_y, 0.0, 1.0))
-            self.wide_angle_corners[idx] = [norm_x, norm_y]
-            self.wide_angle_corners_changed.emit(self.wide_angle_corners)
-            self.update()
-            return
-
-        # 1. Active Pitch ROI / Tactical 16:9 Corner Dragging
-        if self.dragging_pitch_corner is not None and target_rect is not None:
-            norm_x = float((event.pos().x() - target_rect.left()) / max(target_rect.width(), 1.0))
-            norm_y = float((event.pos().y() - target_rect.top()) / max(target_rect.height(), 1.0))
-            idx = int(self.dragging_pitch_corner)
-
-            norm_x = float(np.clip(norm_x, -0.2, 1.2))
-            norm_y = float(np.clip(norm_y, -0.2, 1.2))
-
-            self.pitch_corners[idx] = [norm_x, norm_y]
-            self.pitch_corners_changed.emit(self.pitch_corners)
-            self.update()
-            return
-
-        # 2. Active Corner Dragging
-        if self.dragging_corner is not None and target_rect is not None:
-            side, idx = self.dragging_corner
-            half_w = target_rect.width() * 0.5
-            x_base = target_rect.left() if side == "left" else (target_rect.left() + half_w)
-            
-            norm_x = float((event.pos().x() - x_base) / max(half_w, 1.0))
-            norm_y = float((event.pos().y() - target_rect.top()) / max(target_rect.height(), 1.0))
-            
-            norm_x = float(np.clip(norm_x, -0.8, 2.0))
-            norm_y = float(np.clip(norm_y, -0.8, 2.0))
-            
-            self.corner_dragged.emit(side, idx, norm_x, norm_y)
-            self.update()
-            return
-
-        # 3. Viewport Panning
-        if getattr(self, 'is_panning', False):
-            diff = event.pos() - self.last_mouse_pos
-            self.pan_offset += diff
-            self.last_mouse_pos = event.pos()
-            self.update()
-            return
-
-        # 4. Framing Shift
-        if getattr(self, 'is_framing_dragging', False):
-            diff = event.pos() - self.last_framing_pos
-            dh_deg = -(diff.x() / max(self.width(), 100)) * 40.0
-            dv_shift = (diff.y() / max(self.height(), 100)) * 1.5
-            self.last_framing_pos = event.pos()
-            self.framing_dragged.emit(dh_deg, dv_shift)
-            return
-
-        # WA-Hover Detection
-        if (self.wide_angle_edit_mode or self.view_mode in ("wide_angle", "wide_angle_raw")) and target_rect is not None and self.dragging_wa_corner is None:
-            hit = self._hit_test_wa_corner(event.pos(), target_rect)
-            if hit != self.hovered_wa_corner:
-                self.hovered_wa_corner = hit
-                if hit is not None:
-                    self.setCursor(Qt.SizeAllCursor)
-                elif self.wide_angle_step >= 0:
-                    self.setCursor(Qt.CrossCursor)
-                else:
-                    self.setCursor(Qt.ArrowCursor)
-                self.update()
-                return
-
-        # 5. Pitch ROI / Tactical 16:9 Corner Hover Detection
-        if (self.pitch_roi_mode or self.view_mode == "16:9_tactical") and target_rect is not None and self.dragging_pitch_corner is None:
-            hit = self._hit_test_pitch_roi(event.pos(), target_rect)
-            if hit != self.hovered_pitch_corner:
-                self.hovered_pitch_corner = hit
-                if hit is not None:
-                    self.setCursor(Qt.SizeAllCursor)
-                else:
-                    self.setCursor(Qt.ArrowCursor)
-                self.update()
-                return
-
-        # 6. Corner Hover Detection
-        if self.corner_pin_mode and target_rect is not None:
-            hit = self._hit_test_corners(event.pos(), target_rect)
-            if hit != self.hovered_corner:
-                self.hovered_corner = hit
-                if hit is not None:
-                    self.setCursor(Qt.SizeAllCursor)
-                else:
-                    self.setCursor(Qt.ArrowCursor)
-                self.update()
-
-    def mouseReleaseEvent(self, event: QMouseEvent):
-        if self.dragging_wa_corner is not None:
-            self.dragging_wa_corner = None
-            self.wide_angle_corners_changed.emit(self.wide_angle_corners)
-            self.update()
-
-        if self.dragging_pitch_corner is not None:
-            self.dragging_pitch_corner = None
-            self.update()
-
-        if self.dragging_corner is not None:
-            self.dragging_corner = None
-            self.corner_drag_finished.emit()
-            self.update()
-
-        if event.button() == Qt.LeftButton:
-            self.is_panning = False
-        elif event.button() in (Qt.RightButton, Qt.MiddleButton):
-            self.is_framing_dragging = False
-
-    def leaveEvent(self, event):
-        if self.hovered_wa_corner is not None:
-            self.hovered_wa_corner = None
-            self.setCursor(Qt.ArrowCursor)
-            self.update()
-        if self.hovered_pitch_corner is not None:
-            self.hovered_pitch_corner = None
-            if not self.pick_center_mode and not self.corner_pin_mode:
-                self.setCursor(Qt.ArrowCursor)
-        if self.hovered_corner is not None:
-            self.hovered_corner = None
-            if not self.pick_center_mode and not self.pitch_roi_mode:
-                self.setCursor(Qt.ArrowCursor)
-            self.update()
-        super().leaveEvent(event)
-
-    def mouseDoubleClickEvent(self, event: QMouseEvent):
-        if self.view_mode != "grid":
-            self.grid_quadrant_clicked.emit(0)
-            return
-        self.reset_zoom()
-
-
-
-
-class OBSOutputSettingsWidget(QWidget):
-    """
-    1:1 OBS Studio Output Settings Panel.
-    Provides identical layout, controls, and options to OBS Studio (Ausgabe -> Erweitert/Einfach).
-    Includes Stream, Aufnahme, Audio, and Replaypuffer tabs.
-    """
-    settingsChanged = Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._init_ui()
-
-    def _init_ui(self):
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(2, 4, 2, 4)
-        main_layout.setSpacing(6)
-
-        obs_style = """
-            QGroupBox {
-                font-weight: bold;
-                color: #e2e8f0;
-                border: 1px solid #282c3c;
-                border-radius: 8px;
-                margin-top: 6px;
-                padding-top: 10px;
-                background-color: #141622;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 4px;
-            }
-            QLabel {
-                color: #cbd5e1;
-                font-size: 11px;
-            }
-            QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
-                background-color: #0d0f17;
-                border: 1px solid #282d3e;
-                border-radius: 5px;
-                padding: 3px 6px;
-                color: #f1f5f9;
-                font-size: 11px;
-            }
-            QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover, QLineEdit:hover {
-                border-color: #3b82f6;
-            }
-            QComboBox::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 18px;
-                border-left: 1px solid #252939;
-            }
-            QCheckBox {
-                color: #e2e8f0;
-                font-size: 11px;
-                spacing: 6px;
-            }
-            QRadioButton {
-                color: #e2e8f0;
-                font-size: 11px;
-                spacing: 5px;
-            }
-            QTabWidget::pane {
-                border: 1px solid #282c3c;
-                background-color: #12141e;
-                border-radius: 6px;
-                padding: 6px;
-            }
-            QTabBar::tab {
-                background-color: #1a1c28;
-                color: #94a3b8;
-                font-weight: 600;
-                font-size: 11px;
-                padding: 5px 12px;
-                border-top-left-radius: 5px;
-                border-top-right-radius: 5px;
-                margin-right: 2px;
-                border: 1px solid #242838;
-                border-bottom: none;
-            }
-            QTabBar::tab:selected {
-                background-color: #2563eb;
-                color: #ffffff;
-                border-color: #2563eb;
-            }
-            QTabBar::tab:hover:!selected {
-                background-color: #232738;
-                color: #cbd5e1;
-            }
-        """
-        self.setStyleSheet(obs_style)
-
-        # -------------------------------------------------------------
-        # Header: Ausgabemodus [ Erweitert | Einfach ] + Popout Button
-        # -------------------------------------------------------------
-        header_box = QGroupBox("⚙️ OBS Studio Ausgabe")
-        header_inner = QVBoxLayout(header_box)
-        header_inner.setContentsMargins(6, 8, 6, 6)
-        header_inner.setSpacing(6)
-
-        mode_row = QHBoxLayout()
-        mode_row.setSpacing(8)
-
-        lbl_mode = QLabel("Ausgabemodus")
-        lbl_mode.setStyleSheet("font-weight: 700; color: #f8fafc; font-size: 11px;")
-        mode_row.addWidget(lbl_mode)
-
-        self.combo_output_mode = NoWheelComboBox()
-        self.combo_output_mode.addItem("Erweitert", "advanced")
-        self.combo_output_mode.addItem("Einfach", "simple")
-        self.combo_output_mode.setStyleSheet("background-color: #1a1e2c; font-weight: bold; min-width: 100px;")
-        self.combo_output_mode.currentIndexChanged.connect(self._on_output_mode_changed)
-        mode_row.addWidget(self.combo_output_mode, 1)
-
-        self.btn_popout = QPushButton("🗗 OBS-Fenster")
-        self.btn_popout.setToolTip("OBS Ausgabe-Einstellungen als eigenständiges Dialog-Fenster öffnen")
-        self.btn_popout.setStyleSheet("""
-            QPushButton {
-                background-color: #1e293b;
-                border: 1px solid #334155;
-                color: #38bdf8;
-                font-weight: bold;
-                padding: 3px 8px;
-                border-radius: 5px;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #2563eb;
-                color: #ffffff;
-                border-color: #3b82f6;
-            }
-        """)
-        self.btn_popout.clicked.connect(self.open_popout_dialog)
-        mode_row.addWidget(self.btn_popout)
-
-        header_inner.addLayout(mode_row)
-
-        # -------------------------------------------------------------
-        # Stacked Widget: Page 0 = Erweitert (Tabs), Page 1 = Einfach
-        # -------------------------------------------------------------
-        self.stack = QStackedWidget()
-
-        # =============================================================
-        # PAGE 0: ADVANCED MODE (Erweitert) with 4 Tabs
-        # =============================================================
-        self.tab_widget = QTabWidget()
-
-        # -------------------------------------------------------------
-        # TAB 1: STREAM
-        # -------------------------------------------------------------
-        tab_stream = QWidget()
-        stream_layout = QVBoxLayout(tab_stream)
-        stream_layout.setContentsMargins(4, 4, 4, 4)
-        stream_layout.setSpacing(8)
-
-        # Streameinstellungen Header
-        lbl_stream_head = QLabel("Streameinstellungen")
-        lbl_stream_head.setStyleSheet("font-weight: 800; color: #f8fafc; font-size: 11px; border-bottom: 1px solid #282d3e; padding-bottom: 2px;")
-        stream_layout.addWidget(lbl_stream_head)
-
-        grid_stream = QGridLayout()
-        grid_stream.setHorizontalSpacing(8)
-        grid_stream.setVerticalSpacing(5)
-        grid_stream.setColumnStretch(1, 1)
-
-        # Row 0: Audiospur (Radio 1..6)
-        lbl_at = QLabel("Audiospur")
-        lbl_at.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_stream.addWidget(lbl_at, 0, 0)
-
-        audio_track_layout = QHBoxLayout()
-        audio_track_layout.setSpacing(10)
-        self.audio_group = QButtonGroup(self)
-        self.radio_tracks = []
-        for i in range(1, 7):
-            rb = QRadioButton(str(i))
-            if i == 1:
-                rb.setChecked(True)
-            self.audio_group.addButton(rb, i)
-            self.radio_tracks.append(rb)
-            audio_track_layout.addWidget(rb)
-        audio_track_layout.addStretch()
-        grid_stream.addLayout(audio_track_layout, 0, 1)
-
-        # Row 1: Audiokodierer
-        lbl_ae = QLabel("Audiokodierer")
-        lbl_ae.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_stream.addWidget(lbl_ae, 1, 0)
-        self.combo_audio_encoder = NoWheelComboBox()
-        self.combo_audio_encoder.addItem("FFmpeg AAC", "aac")
-        grid_stream.addWidget(self.combo_audio_encoder, 1, 1)
-
-        # Row 2: Videokodierer
-        lbl_ve = QLabel("Videokodierer")
-        lbl_ve.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_stream.addWidget(lbl_ve, 2, 0)
-        self.combo_video_encoder = NoWheelComboBox()
-        self.combo_video_encoder.addItem("NVIDIA NVENC H.264", "h264_nvenc")
-        self.combo_video_encoder.addItem("x264 (Software CPU)", "libx264")
-        self.combo_video_encoder.addItem("Intel QuickSync H.264 (QSV)", "h264_qsv")
-        self.combo_video_encoder.addItem("NVIDIA NVENC HEVC / H.265", "hevc_nvenc")
-        self.combo_video_encoder.currentIndexChanged.connect(self._on_video_encoder_changed)
-        grid_stream.addWidget(self.combo_video_encoder, 2, 1)
-
-        # Row 3: Ausgabe umskalieren
-        lbl_rescale = QLabel("Ausgabe umskalieren")
-        lbl_rescale.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_stream.addWidget(lbl_rescale, 3, 0)
-
-        rescale_layout = QHBoxLayout()
-        rescale_layout.setSpacing(6)
-        self.chk_rescale = QCheckBox("Aktivieren")
-        self.chk_rescale.setChecked(False)
-        self.chk_rescale.toggled.connect(self._on_rescale_toggled)
-        rescale_layout.addWidget(self.chk_rescale)
-
-        self.combo_rescale_res = NoWheelComboBox()
-        self.combo_rescale_res.addItem("1920x1080 (1080p)", "1080p")
-        self.combo_rescale_res.addItem("1280x720 (720p)", "720p")
-        self.combo_rescale_res.addItem("854x480 (480p)", "480p")
-        self.combo_rescale_res.addItem("640x360 (360p)", "360p")
-        self.combo_rescale_res.setEnabled(False)
-        rescale_layout.addWidget(self.combo_rescale_res, 1)
-        grid_stream.addLayout(rescale_layout, 3, 1)
-
-        stream_layout.addLayout(grid_stream)
-
-        # Kodierereinstellungen Header
-        lbl_enc_head = QLabel("Kodierereinstellungen")
-        lbl_enc_head.setStyleSheet("font-weight: 800; color: #f8fafc; font-size: 11px; border-bottom: 1px solid #282d3e; padding-bottom: 2px; margin-top: 4px;")
-        stream_layout.addWidget(lbl_enc_head)
-
-        grid_enc = QGridLayout()
-        grid_enc.setHorizontalSpacing(8)
-        grid_enc.setVerticalSpacing(5)
-        grid_enc.setColumnStretch(1, 1)
-
-        # 1. Qualitätsregulierungsmethode
-        lbl_rc = QLabel("Qualitätsregulierungsmethode")
-        lbl_rc.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_enc.addWidget(lbl_rc, 0, 0)
-        self.combo_rc = NoWheelComboBox()
-        self.combo_rc.addItem("Variable Bitrate (VBR)", "vbr")
-        self.combo_rc.addItem("Konstante Bitrate (CBR)", "cbr")
-        self.combo_rc.addItem("Konstanter Quantisierungsparameter (CQP)", "cqp")
-        self.combo_rc.addItem("Verlustfrei", "lossless")
-        self.combo_rc.currentIndexChanged.connect(self._on_rc_changed)
-        grid_enc.addWidget(self.combo_rc, 0, 1)
-
-        # 2. Bitrate
-        lbl_bitrate = QLabel("Bitrate")
-        lbl_bitrate.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_enc.addWidget(lbl_bitrate, 1, 0)
-        self.spn_bitrate = NoWheelSpinBox()
-        self.spn_bitrate.setRange(200, 50000)
-        self.spn_bitrate.setSingleStep(250)
-        self.spn_bitrate.setValue(3000)
-        self.spn_bitrate.setSuffix(" Kbps")
-        grid_enc.addWidget(self.spn_bitrate, 1, 1)
-
-        # 3. Maximale Bitrate (0 = Pegelbegrenzung)
-        self.lbl_max_bitrate = QLabel("Maximale Bitrate (0 = Pegelbegrenzung)")
-        self.lbl_max_bitrate.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_enc.addWidget(self.lbl_max_bitrate, 2, 0)
-        self.spn_max_bitrate = NoWheelSpinBox()
-        self.spn_max_bitrate.setRange(0, 50000)
-        self.spn_max_bitrate.setSingleStep(250)
-        self.spn_max_bitrate.setValue(5000)
-        self.spn_max_bitrate.setSuffix(" Kbps")
-        grid_enc.addWidget(self.spn_max_bitrate, 2, 1)
-
-        # 4. Keyframeintervall (Sekunden, 0 = automatisch)
-        lbl_keyint = QLabel("Keyframeintervall (Sekunden, 0 = automatisch)")
-        lbl_keyint.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_enc.addWidget(lbl_keyint, 3, 0)
-        self.spn_keyint = NoWheelDoubleSpinBox()
-        self.spn_keyint.setRange(0.0, 10.0)
-        self.spn_keyint.setSingleStep(0.5)
-        self.spn_keyint.setDecimals(1)
-        self.spn_keyint.setValue(2.0)
-        self.spn_keyint.setSuffix(" s")
-        grid_enc.addWidget(self.spn_keyint, 3, 1)
-
-        # 5. Voreinstellung
-        lbl_preset = QLabel("Voreinstellung")
-        lbl_preset.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_enc.addWidget(lbl_preset, 4, 0)
-        self.combo_preset = NoWheelComboBox()
-        self.combo_preset.addItem("P1: Schnellste (Geringste Qualität)", "p1")
-        self.combo_preset.addItem("P2: Schneller", "p2")
-        self.combo_preset.addItem("P3: Schnell", "p3")
-        self.combo_preset.addItem("P4: Mittel (Mittlere Qualität)", "p4")
-        self.combo_preset.addItem("P5: Langsam (Gute Qualität)", "p5")
-        self.combo_preset.addItem("P6: Langsamer (Bessere Qualität)", "p6")
-        self.combo_preset.addItem("P7: Langsamste (Beste Qualität)", "p7")
-        self.combo_preset.setCurrentIndex(3) # P4 default
-        grid_enc.addWidget(self.combo_preset, 4, 1)
-
-        # 6. Tuning
-        self.lbl_tuning = QLabel("Tuning")
-        self.lbl_tuning.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_enc.addWidget(self.lbl_tuning, 5, 0)
-        self.combo_tuning = NoWheelComboBox()
-        self.combo_tuning.addItem("Hohe Qualität", "hq")
-        self.combo_tuning.addItem("Niedrige Latenz", "ll")
-        self.combo_tuning.addItem("Ultraniedrige Latenz", "ull")
-        self.combo_tuning.addItem("Verlustfrei", "lossless")
-        grid_enc.addWidget(self.combo_tuning, 5, 1)
-
-        # 7. Mehrere Durchgänge
-        self.lbl_multipass = QLabel("Mehrere Durchgänge")
-        self.lbl_multipass.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_enc.addWidget(self.lbl_multipass, 6, 0)
-        self.combo_multipass = NoWheelComboBox()
-        self.combo_multipass.addItem("Ein Durchgang", "disabled")
-        self.combo_multipass.addItem("Zwei Durchgänge (Geviertelte Auflösung)", "qres")
-        self.combo_multipass.addItem("Zwei Durchgänge (Volle Auflösung)", "fullres")
-        self.combo_multipass.setCurrentIndex(1) # qres default
-        grid_enc.addWidget(self.combo_multipass, 6, 1)
-
-        # 8. Profil
-        lbl_profile = QLabel("Profil")
-        lbl_profile.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_enc.addWidget(lbl_profile, 7, 0)
-        self.combo_profile = NoWheelComboBox()
-        self.combo_profile.addItem("main", "main")
-        self.combo_profile.addItem("high", "high")
-        self.combo_profile.addItem("baseline", "baseline")
-        grid_enc.addWidget(self.combo_profile, 7, 1)
-
-        # 9. Lookahead
-        grid_enc.addWidget(QLabel(""), 8, 0)
-        self.chk_lookahead = QCheckBox("Lookahead 🛈")
-        self.chk_lookahead.setToolTip("Aktiviert dynamische Frame-Vorausschau (Lookahead-Puffer mit 32 Frames) für optimale Bitratenverteilung.")
-        self.chk_lookahead.setChecked(True)
-        grid_enc.addWidget(self.chk_lookahead, 8, 1)
-
-        # 10. Adaptive Quantisierung
-        grid_enc.addWidget(QLabel(""), 9, 0)
-        self.chk_aq = QCheckBox("Adaptive Quantisierung 🛈")
-        self.chk_aq.setToolTip("Aktiviert Spatial & Temporal Adaptive Quantization (Psycho-Visual Tuning) für schärfere Rasen- und Spielerkonturen.")
-        self.chk_aq.setChecked(True)
-        grid_enc.addWidget(self.chk_aq, 9, 1)
-
-        # 11. B-Frames
-        lbl_bf = QLabel("B-Frames")
-        lbl_bf.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_enc.addWidget(lbl_bf, 10, 0)
-        self.spn_bframes = NoWheelSpinBox()
-        self.spn_bframes.setRange(0, 16)
-        self.spn_bframes.setValue(2)
-        grid_enc.addWidget(self.spn_bframes, 10, 1)
-
-        # 12. Benutzerdefinierte Kodiereroptionen
-        lbl_co = QLabel("Benutzerdefinierte Kodiereroptionen 🛈")
-        lbl_co.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_enc.addWidget(lbl_co, 11, 0)
-        self.txt_custom_opts = QLineEdit()
-        self.txt_custom_opts.setPlaceholderText("z.B. no-scenecut=1 rc-lookahead=32")
-        self.txt_custom_opts.setToolTip("Zusätzliche FFmpeg Parameter für den ausgewählten Kodierer.")
-        grid_enc.addWidget(self.txt_custom_opts, 11, 1)
-
-        # Framerate Row
-        lbl_fps = QLabel("Framerate")
-        lbl_fps.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        grid_enc.addWidget(lbl_fps, 12, 0)
-        self.combo_fps = NoWheelComboBox()
-        self.combo_fps.addItem("30 FPS (Standard für Live-Sport)", 30)
-        self.combo_fps.addItem("60 FPS (Sehr flüssig)", 60)
-        grid_enc.addWidget(self.combo_fps, 12, 1)
-
-        stream_layout.addLayout(grid_enc)
-        stream_layout.addStretch()
-
-        self.tab_widget.addTab(tab_stream, "Stream")
-
-        # -------------------------------------------------------------
-        # TAB 2: AUFNAHME
-        # -------------------------------------------------------------
-        tab_rec = QWidget()
-        rec_layout = QVBoxLayout(tab_rec)
-        rec_layout.setContentsMargins(4, 4, 4, 4)
-        rec_layout.setSpacing(8)
-
-        lbl_rec_head = QLabel("Aufnahmeeinstellungen")
-        lbl_rec_head.setStyleSheet("font-weight: 800; color: #f8fafc; font-size: 11px; border-bottom: 1px solid #282d3e; padding-bottom: 2px;")
-        rec_layout.addWidget(lbl_rec_head)
-
-        grid_rec = QGridLayout()
-        grid_rec.setHorizontalSpacing(8)
-        grid_rec.setVerticalSpacing(5)
-        grid_rec.setColumnStretch(1, 1)
-
-        grid_rec.addWidget(QLabel("Typ:"), 0, 0)
-        self.combo_rec_type = NoWheelComboBox()
-        self.combo_rec_type.addItem("Standard", "standard")
-        grid_rec.addWidget(self.combo_rec_type, 0, 1)
-
-        grid_rec.addWidget(QLabel("Aufnahmepfad:"), 1, 0)
-        rec_path_layout = QHBoxLayout()
-        self.txt_rec_path = QLineEdit("recordings")
-        btn_rec_browse = QPushButton("Durchsuchen...")
-        btn_rec_browse.setStyleSheet("background-color: #1e293b; color: #38bdf8; border: 1px solid #334155; padding: 2px 6px; border-radius: 4px;")
-        btn_rec_browse.clicked.connect(self._browse_rec_path)
-        rec_path_layout.addWidget(self.txt_rec_path, 1)
-        rec_path_layout.addWidget(btn_rec_browse)
-        grid_rec.addLayout(rec_path_layout, 1, 1)
-
-        grid_rec.addWidget(QLabel("Aufnahmeformat:"), 2, 0)
-        self.combo_rec_format = NoWheelComboBox()
-        self.combo_rec_format.addItem("mp4 (MPEG-4)", "mp4")
-        self.combo_rec_format.addItem("mkv (Matroska)", "mkv")
-        self.combo_rec_format.addItem("mov (QuickTime)", "mov")
-        self.combo_rec_format.addItem("ts (Transport Stream)", "ts")
-        grid_rec.addWidget(self.combo_rec_format, 2, 1)
-
-        grid_rec.addWidget(QLabel("Videokodierer:"), 3, 0)
-        self.combo_rec_video_encoder = NoWheelComboBox()
-        self.combo_rec_video_encoder.addItem("(Stream-Kodierer verwenden)", "same_as_stream")
-        self.combo_rec_video_encoder.addItem("NVIDIA NVENC H.264", "h264_nvenc")
-        self.combo_rec_video_encoder.addItem("x264 (Software CPU)", "libx264")
-        grid_rec.addWidget(self.combo_rec_video_encoder, 3, 1)
-
-        grid_rec.addWidget(QLabel("Audiokodierer:"), 4, 0)
-        self.combo_rec_audio_encoder = NoWheelComboBox()
-        self.combo_rec_audio_encoder.addItem("FFmpeg AAC", "aac")
-        grid_rec.addWidget(self.combo_rec_audio_encoder, 4, 1)
-
-        rec_layout.addLayout(grid_rec)
-        rec_layout.addStretch()
-        self.tab_widget.addTab(tab_rec, "Aufnahme")
-
-        # -------------------------------------------------------------
-        # TAB 3: AUDIO
-        # -------------------------------------------------------------
-        tab_audio = QWidget()
-        audio_layout = QVBoxLayout(tab_audio)
-        audio_layout.setContentsMargins(4, 4, 4, 4)
-        audio_layout.setSpacing(8)
-
-        lbl_aud_head = QLabel("Audiotrack-Bitraten")
-        lbl_aud_head.setStyleSheet("font-weight: 800; color: #f8fafc; font-size: 11px; border-bottom: 1px solid #282d3e; padding-bottom: 2px;")
-        audio_layout.addWidget(lbl_aud_head)
-
-        grid_aud = QGridLayout()
-        grid_aud.setHorizontalSpacing(8)
-        grid_aud.setVerticalSpacing(5)
-        grid_aud.setColumnStretch(1, 1)
-
-        self.audio_bitrate_combos = []
-        for i in range(1, 7):
-            grid_aud.addWidget(QLabel(f"Audiospur {i} Bitrate:"), i - 1, 0)
-            cb = NoWheelComboBox()
-            cb.addItem("320 kbps (Höchste Studioqualität)", 320)
-            cb.addItem("192 kbps (Hohe Qualität)", 192)
-            cb.addItem("160 kbps (Standard)", 160)
-            cb.addItem("128 kbps (Mittel)", 128)
-            cb.addItem("64 kbps (Niedrig)", 64)
-            cb.setCurrentIndex(2) # 160 kbps default
-            grid_aud.addWidget(cb, i - 1, 1)
-            self.audio_bitrate_combos.append(cb)
-
-        audio_layout.addLayout(grid_aud)
-        audio_layout.addStretch()
-        self.tab_widget.addTab(tab_audio, "Audio")
-
-        # -------------------------------------------------------------
-        # TAB 4: REPLAYPUFFER
-        # -------------------------------------------------------------
-        tab_replay = QWidget()
-        rep_layout = QVBoxLayout(tab_replay)
-        rep_layout.setContentsMargins(4, 4, 4, 4)
-        rep_layout.setSpacing(8)
-
-        lbl_rep_head = QLabel("Replaypuffer-Einstellungen")
-        lbl_rep_head.setStyleSheet("font-weight: 800; color: #f8fafc; font-size: 11px; border-bottom: 1px solid #282d3e; padding-bottom: 2px;")
-        rep_layout.addWidget(lbl_rep_head)
-
-        self.chk_replay = QCheckBox("Replaypuffer aktivieren")
-        rep_layout.addWidget(self.chk_replay)
-
-        grid_rep = QGridLayout()
-        grid_rep.setHorizontalSpacing(8)
-        grid_rep.setVerticalSpacing(5)
-        grid_rep.setColumnStretch(1, 1)
-
-        grid_rep.addWidget(QLabel("Maximale Replayzeit:"), 0, 0)
-        self.spn_replay_sec = NoWheelSpinBox()
-        self.spn_replay_sec.setRange(5, 300)
-        self.spn_replay_sec.setValue(20)
-        self.spn_replay_sec.setSuffix(" s")
-        grid_rep.addWidget(self.spn_replay_sec, 0, 1)
-
-        grid_rep.addWidget(QLabel("Maximaler Speicherverbrauch:"), 1, 0)
-        self.spn_replay_mem = NoWheelSpinBox()
-        self.spn_replay_mem.setRange(64, 8192)
-        self.spn_replay_mem.setValue(512)
-        self.spn_replay_mem.setSuffix(" MB")
-        grid_rep.addWidget(self.spn_replay_mem, 1, 1)
-
-        rep_layout.addLayout(grid_rep)
-        rep_layout.addStretch()
-        self.tab_widget.addTab(tab_replay, "Replaypuffer")
-
-        self.stack.addWidget(self.tab_widget)
-
-        # =============================================================
-        # PAGE 1: SIMPLE MODE (Einfach)
-        # =============================================================
-        page_simple = QWidget()
-        simple_layout = QVBoxLayout(page_simple)
-        simple_layout.setContentsMargins(4, 4, 4, 4)
-        simple_layout.setSpacing(8)
-
-        lbl_simp_head = QLabel("Einfache Streaming-Ausgabe")
-        lbl_simp_head.setStyleSheet("font-weight: 800; color: #f8fafc; font-size: 11px; border-bottom: 1px solid #282d3e; padding-bottom: 2px;")
-        simple_layout.addWidget(lbl_simp_head)
-
-        grid_simp = QGridLayout()
-        grid_simp.setHorizontalSpacing(8)
-        grid_simp.setVerticalSpacing(5)
-        grid_simp.setColumnStretch(1, 1)
-
-        grid_simp.addWidget(QLabel("Video-Bitrate:"), 0, 0)
-        self.spn_simple_bitrate = NoWheelSpinBox()
-        self.spn_simple_bitrate.setRange(200, 50000)
-        self.spn_simple_bitrate.setSingleStep(250)
-        self.spn_simple_bitrate.setValue(3000)
-        self.spn_simple_bitrate.setSuffix(" Kbps")
-        self.spn_simple_bitrate.valueChanged.connect(lambda v: self.spn_bitrate.setValue(v))
-        grid_simp.addWidget(self.spn_simple_bitrate, 0, 1)
-
-        grid_simp.addWidget(QLabel("Video-Kodierer:"), 1, 0)
-        self.combo_simple_encoder = NoWheelComboBox()
-        self.combo_simple_encoder.addItem("Hardware (NVENC H.264)", "h264_nvenc")
-        self.combo_simple_encoder.addItem("Software (x264)", "libx264")
-        self.combo_simple_encoder.addItem("Hardware (Intel QuickSync)", "h264_qsv")
-        self.combo_simple_encoder.addItem("Hardware (NVENC HEVC)", "hevc_nvenc")
-        self.combo_simple_encoder.currentIndexChanged.connect(self._on_simple_encoder_changed)
-        grid_simp.addWidget(self.combo_simple_encoder, 1, 1)
-
-        grid_simp.addWidget(QLabel("Audio-Bitrate:"), 2, 0)
-        self.combo_simple_audio_bitrate = NoWheelComboBox()
-        self.combo_simple_audio_bitrate.addItem("160 kbps", 160)
-        self.combo_simple_audio_bitrate.addItem("128 kbps", 128)
-        self.combo_simple_audio_bitrate.addItem("192 kbps", 192)
-        grid_simp.addWidget(self.combo_simple_audio_bitrate, 2, 1)
-
-        grid_simp.addWidget(QLabel("Kodierer-Voreinstellung:"), 3, 0)
-        self.combo_simple_preset = NoWheelComboBox()
-        self.combo_simple_preset.addItem("Schnell", "p2")
-        self.combo_simple_preset.addItem("Sehr schnell", "p1")
-        self.combo_simple_preset.addItem("Mittel / Ausgeglichen", "p4")
-        self.combo_simple_preset.addItem("Hohe Qualität", "p6")
-        self.combo_simple_preset.setCurrentIndex(2)
-        grid_simp.addWidget(self.combo_simple_preset, 3, 1)
-
-        simple_layout.addLayout(grid_simp)
-        simple_layout.addStretch()
-
-        self.stack.addWidget(page_simple)
-
-        header_inner.addWidget(self.stack)
-        main_layout.addWidget(header_box)
-
-    def _on_output_mode_changed(self, idx: int):
-        self.stack.setCurrentIndex(idx)
-        self.settingsChanged.emit()
-
-    def _on_video_encoder_changed(self, idx: int):
-        codec = self.combo_video_encoder.currentData()
-        is_nvenc = "nvenc" in codec.lower()
-        self.lbl_tuning.setEnabled(is_nvenc)
-        self.combo_tuning.setEnabled(is_nvenc)
-        self.lbl_multipass.setEnabled(is_nvenc)
-        self.combo_multipass.setEnabled(is_nvenc)
-        self.chk_lookahead.setEnabled(is_nvenc)
-        self.chk_aq.setEnabled(is_nvenc)
-        self.settingsChanged.emit()
-
-    def _on_simple_encoder_changed(self, idx: int):
-        enc_data = self.combo_simple_encoder.currentData()
-        enc_idx = self.combo_video_encoder.findData(enc_data)
-        if enc_idx >= 0:
-            self.combo_video_encoder.setCurrentIndex(enc_idx)
-
-    def _on_rescale_toggled(self, checked: bool):
-        self.combo_rescale_res.setEnabled(checked)
-        self.settingsChanged.emit()
-
-    def _on_rc_changed(self, idx: int):
-        rc = self.combo_rc.currentData()
-        is_vbr = (rc == "vbr")
-        self.lbl_max_bitrate.setEnabled(is_vbr)
-        self.spn_max_bitrate.setEnabled(is_vbr)
-        self.settingsChanged.emit()
-
-    def _browse_rec_path(self):
-        path = QFileDialog.getExistingDirectory(self, "Aufnahmeverzeichnis auswählen", self.txt_rec_path.text())
-        if path:
-            self.txt_rec_path.setText(path)
-            self.settingsChanged.emit()
-
-    def open_popout_dialog(self):
-        dialog = OBSAdvancedOutputDialog(self, parent=self.window())
-        dialog.exec()
-
-    def get_settings(self) -> dict:
-        """Collects all OBS output settings into a clean dictionary."""
-        return {
-            "output_mode": self.combo_output_mode.currentData(),
-            "audio_track": self.audio_group.checkedId() if self.audio_group.checkedId() > 0 else 1,
-            "audio_encoder": self.combo_audio_encoder.currentData(),
-            "video_encoder": self.combo_video_encoder.currentData(),
-            "rescale_output": self.chk_rescale.isChecked(),
-            "rescale_resolution": self.combo_rescale_res.currentText().split()[0],
-            "rate_control": self.combo_rc.currentData(),
-            "bitrate_kbps": self.spn_bitrate.value(),
-            "max_bitrate_kbps": self.spn_max_bitrate.value(),
-            "keyframe_interval_sec": self.spn_keyint.value(),
-            "preset": self.combo_preset.currentData(),
-            "tuning": self.combo_tuning.currentData(),
-            "multipass": self.combo_multipass.currentData(),
-            "profile": self.combo_profile.currentData(),
-            "lookahead": self.chk_lookahead.isChecked(),
-            "adaptive_quant": self.chk_aq.isChecked(),
-            "b_frames": self.spn_bframes.value(),
-            "custom_options": self.txt_custom_opts.text().strip(),
-            "fps": self.combo_fps.currentData() or 30,
-            "rec_type": self.combo_rec_type.currentData(),
-            "rec_path": self.txt_rec_path.text().strip(),
-            "rec_format": self.combo_rec_format.currentData(),
-            "rec_video_encoder": self.combo_rec_video_encoder.currentData(),
-            "rec_audio_encoder": self.combo_rec_audio_encoder.currentData(),
-            "replay_enabled": self.chk_replay.isChecked(),
-            "replay_sec": self.spn_replay_sec.value(),
-            "replay_mem_mb": self.spn_replay_mem.value()
-        }
-
-    def set_settings(self, cfg: dict):
-        """Populates all OBS output controls from a dictionary."""
-        if not isinstance(cfg, dict):
-            return
-
-        if "output_mode" in cfg:
-            idx = self.combo_output_mode.findData(cfg["output_mode"])
-            if idx >= 0: self.combo_output_mode.setCurrentIndex(idx)
-
-        if "audio_track" in cfg:
-            track = int(cfg["audio_track"])
-            btn = self.audio_group.button(track)
-            if btn: btn.setChecked(True)
-
-        if "video_encoder" in cfg:
-            idx = self.combo_video_encoder.findData(cfg["video_encoder"])
-            if idx >= 0: self.combo_video_encoder.setCurrentIndex(idx)
-
-        if "rescale_output" in cfg:
-            self.chk_rescale.setChecked(bool(cfg["rescale_output"]))
-
-        if "rescale_resolution" in cfg:
-            res_val = str(cfg["rescale_resolution"])
-            for i in range(self.combo_rescale_res.count()):
-                if res_val in self.combo_rescale_res.itemText(i):
-                    self.combo_rescale_res.setCurrentIndex(i)
-                    break
-
-        if "rate_control" in cfg:
-            idx = self.combo_rc.findData(cfg["rate_control"])
-            if idx >= 0: self.combo_rc.setCurrentIndex(idx)
-
-        if "bitrate_kbps" in cfg:
-            self.spn_bitrate.setValue(int(cfg["bitrate_kbps"]))
-            self.spn_simple_bitrate.setValue(int(cfg["bitrate_kbps"]))
-
-        if "max_bitrate_kbps" in cfg:
-            self.spn_max_bitrate.setValue(int(cfg["max_bitrate_kbps"]))
-
-        if "keyframe_interval_sec" in cfg:
-            self.spn_keyint.setValue(float(cfg["keyframe_interval_sec"]))
-
-        if "preset" in cfg:
-            idx = self.combo_preset.findData(cfg["preset"])
-            if idx >= 0: self.combo_preset.setCurrentIndex(idx)
-
-        if "tuning" in cfg:
-            idx = self.combo_tuning.findData(cfg["tuning"])
-            if idx >= 0: self.combo_tuning.setCurrentIndex(idx)
-
-        if "multipass" in cfg:
-            idx = self.combo_multipass.findData(cfg["multipass"])
-            if idx >= 0: self.combo_multipass.setCurrentIndex(idx)
-
-        if "profile" in cfg:
-            idx = self.combo_profile.findData(cfg["profile"])
-            if idx >= 0: self.combo_profile.setCurrentIndex(idx)
-
-        if "lookahead" in cfg:
-            self.chk_lookahead.setChecked(bool(cfg["lookahead"]))
-
-        if "adaptive_quant" in cfg:
-            self.chk_aq.setChecked(bool(cfg["adaptive_quant"]))
-
-        if "b_frames" in cfg:
-            self.spn_bframes.setValue(int(cfg["b_frames"]))
-
-        if "custom_options" in cfg:
-            self.txt_custom_opts.setText(str(cfg["custom_options"]))
-
-        if "fps" in cfg:
-            idx = self.combo_fps.findData(int(cfg["fps"]))
-            if idx >= 0: self.combo_fps.setCurrentIndex(idx)
-
-        if "rec_path" in cfg:
-            self.txt_rec_path.setText(str(cfg["rec_path"]))
-
-        if "rec_format" in cfg:
-            idx = self.combo_rec_format.findData(cfg["rec_format"])
-            if idx >= 0: self.combo_rec_format.setCurrentIndex(idx)
-
-        if "replay_enabled" in cfg:
-            self.chk_replay.setChecked(bool(cfg["replay_enabled"]))
-
-        if "replay_sec" in cfg:
-            self.spn_replay_sec.setValue(int(cfg["replay_sec"]))
-
-        if "replay_mem_mb" in cfg:
-            self.spn_replay_mem.setValue(int(cfg["replay_mem_mb"]))
-
-
-class OBSAdvancedOutputDialog(QDialog):
-    """
-    Dedicated OBS Studio Output Settings Dialog window (matching OBS Studio 1:1).
-    Provides extra breathing room, full form controls, and OK/Abbrechen/Übernehmen buttons.
-    """
-    def __init__(self, settings_widget: OBSOutputSettingsWidget, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("OBS Studio - Ausgabe-Einstellungen")
-        self.resize(720, 600)
-        self.setMinimumSize(640, 480)
-        self.settings_widget = settings_widget
-
-        # Snapshot current settings for cancel/revert
-        self._initial_settings = settings_widget.get_settings()
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
-
-        # Embedded copy of settings widget
-        self.inner_widget = OBSOutputSettingsWidget(self)
-        self.inner_widget.btn_popout.hide() # Hide popout button inside dialog
-        self.inner_widget.set_settings(self._initial_settings)
-        layout.addWidget(self.inner_widget, 1)
-
-        # Bottom buttons: OK, Abbrechen, Übernehmen
-        btn_box = QHBoxLayout()
-        btn_box.addStretch()
-
-        btn_ok = QPushButton("OK")
-        btn_ok.setStyleSheet("background-color: #2563eb; color: white; font-weight: bold; padding: 6px 18px; border-radius: 6px; font-size: 11px;")
-        btn_ok.clicked.connect(self._on_ok)
-        btn_box.addWidget(btn_ok)
-
-        btn_cancel = QPushButton("Abbrechen")
-        btn_cancel.setStyleSheet("background-color: #1e2230; color: #94a3b8; padding: 6px 14px; border-radius: 6px; font-size: 11px;")
-        btn_cancel.clicked.connect(self.reject)
-        btn_box.addWidget(btn_cancel)
-
-        btn_apply = QPushButton("Übernehmen")
-        btn_apply.setStyleSheet("background-color: #1e293b; color: #38bdf8; font-weight: bold; padding: 6px 14px; border-radius: 6px; font-size: 11px;")
-        btn_apply.clicked.connect(self._on_apply)
-        btn_box.addWidget(btn_apply)
-
-        layout.addLayout(btn_box)
-
-    def _on_apply(self):
-        new_cfg = self.inner_widget.get_settings()
-        self.settings_widget.set_settings(new_cfg)
-
-    def _on_ok(self):
-        self._on_apply()
-        self.accept()
-
-
-class MainWindow(QMainWindow):
+# -----------------------------------------------------------------------------
+# Modular GUI Sub-Components
+# -----------------------------------------------------------------------------
+from .widgets import (
+    NoWheelSlider, NoWheelDoubleSpinBox, NoWheelSpinBox, NoWheelComboBox,
+    ScrollAreaWheelFilter, LabeledSliderSpinBox, LogEmitter, LogViewerWidget
+)
+from .workers import RenderWorker, CloudUploadWorker
+from .dialogs import DjiQRCodeDialog, CloudLoginDialog, OBSAdvancedOutputDialog
+from .obs_output_settings import OBSOutputSettingsWidget
+from .viewport import InteractivePanoramaViewport
+from .live_controller import LiveStreamMixin
+from .cloud_controller import CloudIntegrationMixin
+from .wide_angle_controller import WideAngleControllerMixin
+from .tabs import (
+    build_landing_page,
+    build_stitching_tab,
+    build_wide_angle_tab,
+    build_autocam_tab,
+    build_livestream_tab,
+    build_cloud_tab,
+    create_export_upload_subpage,
+    create_codec_combobox,
+    create_audio_combobox
+)
+
+
+class MainWindow(
+    QMainWindow,
+    LiveStreamMixin,
+    CloudIntegrationMixin,
+    WideAngleControllerMixin
+):
     stream_telemetry_signal = Signal(dict)
     ble_device_found_signal = Signal(object)
     ble_conn_changed_signal = Signal(str, bool)
@@ -3052,6 +152,9 @@ class MainWindow(QMainWindow):
         self.sync_angles = True
         self.in_point_frame = 0
         self.out_point_frame = 0
+        self.crop_mode: bool = False
+        self.transform_stretch_x: float = 1.0
+        self.transform_stretch_y: float = 1.0
 
         # Set Window Icon
         icon_path = os.path.join(os.path.dirname(__file__), "..", "assets", "icon.ico")
@@ -3065,6 +168,8 @@ class MainWindow(QMainWindow):
         # Connect Viewport Wide-Angle Signals
         self.viewport.wide_angle_corners_changed.connect(self._on_viewport_wa_corners_changed)
         self.viewport.wide_angle_step_changed.connect(self._on_viewport_wa_step_changed)
+        if hasattr(self.viewport, 'crop_rect_changed'):
+            self.viewport.crop_rect_changed.connect(self.on_crop_rect_from_viewport)
 
         self.apply_dark_theme()
         self.load_default_startup_settings()
@@ -3119,23 +224,23 @@ class MainWindow(QMainWindow):
         nav_layout.setContentsMargins(2, 2, 2, 2)
         nav_layout.setSpacing(4)
 
+        self.btn_nav_wizard = QPushButton("⚡ Autocam Assistent")
         self.btn_nav_home = QPushButton("🏠 Zentrale")
         self.btn_nav_stitch = QPushButton("🧵 Stitching")
         self.btn_nav_wide = QPushButton("📐 Weitwinkel")
-        self.btn_nav_ai = QPushButton("🎯 KI-Broadcast")
         self.btn_nav_export = QPushButton("🚀 Export")
         self.btn_nav_live = QPushButton("🔴 Live-Stream")
         self.btn_nav_cloud = QPushButton("☁️ Cloud-Upload")
 
+        self.btn_nav_wizard.clicked.connect(lambda: self.show_workspace(0))
         self.btn_nav_home.clicked.connect(self.show_landing_page)
-        self.btn_nav_stitch.clicked.connect(lambda: self.show_workspace(0))
-        self.btn_nav_wide.clicked.connect(lambda: self.show_workspace(1))
-        self.btn_nav_ai.clicked.connect(lambda: self.show_workspace(2))
+        self.btn_nav_stitch.clicked.connect(lambda: self.show_workspace(1))
+        self.btn_nav_wide.clicked.connect(lambda: self.show_workspace(2))
         self.btn_nav_export.clicked.connect(lambda: self.show_workspace(3))
         self.btn_nav_live.clicked.connect(lambda: self.show_workspace(4))
         self.btn_nav_cloud.clicked.connect(lambda: self.show_workspace(5))
 
-        for btn in [self.btn_nav_home, self.btn_nav_stitch, self.btn_nav_wide, self.btn_nav_ai, self.btn_nav_export, self.btn_nav_live, self.btn_nav_cloud]:
+        for btn in [self.btn_nav_wizard, self.btn_nav_home, self.btn_nav_stitch, self.btn_nav_wide, self.btn_nav_export, self.btn_nav_live, self.btn_nav_cloud]:
             btn.setStyleSheet("background-color: transparent; border: none; border-radius: 6px; font-weight: 700; font-size: 11px; padding: 5px 12px; color: #94a3b8;")
             nav_layout.addWidget(btn)
 
@@ -3453,605 +558,15 @@ class MainWindow(QMainWindow):
         self.right_pane.currentChanged.connect(self._on_tab_changed)
 
         # -------------------------------------------------------------------------
+        # TAB 0: ⚡ AUTOCAM 5-STEP ASSISTENT (Once Sport Autocam Style)
+        # -------------------------------------------------------------------------
+        self._init_stepper_wizard()
+        self.right_pane.addTab(self.tab_stepper, "⚡ Autocam")
+
+        # -------------------------------------------------------------------------
         # TAB 1: 🧵 STITCHING (Quellformat, Videos, Sync & Naht-/Farbkalibrierung)
         # -------------------------------------------------------------------------
-        self.tab_stitching = QWidget()
-        self.tab_media = self.tab_stitching  # alias for backwards compatibility
-        layout_tab_stitch = QVBoxLayout(self.tab_stitching)
-        layout_tab_stitch.setContentsMargins(4, 4, 4, 4)
-        layout_tab_stitch.setSpacing(6)
-
-        # ---------------------------------------------------------------------
-        # Card: Kamera-Quellformat & Stitching-Profil (4:3 vs 16:9)
-        # ---------------------------------------------------------------------
-        grp_src_format = QGroupBox("📷 Kamera-Quellformat & Stitching-Profil")
-        grp_src_format.setStyleSheet(
-            "QGroupBox { font-weight: bold; color: #38bdf8; border: 1px solid #282839; border-radius: 10px; margin-top: 6px; padding: 10px; background-color: #12121c; }"
-        )
-        layout_sf = QVBoxLayout(grp_src_format)
-        layout_sf.setSpacing(8)
-
-        row_sf = QHBoxLayout()
-        self.radio_src_4_3 = QRadioButton("4:3 Format (DJI Action 4 RockSteady ON)")
-        self.radio_src_4_3.setStyleSheet("font-weight: 700; color: #f4f4f6; font-size: 11px;")
-        self.radio_src_4_3.setChecked(True)
-        self.radio_src_4_3.toggled.connect(self._on_source_format_radio_changed)
-
-        self.radio_src_16_9 = QRadioButton("16:9 Format (Standard Webcams / 16:9 Kameras)")
-        self.radio_src_16_9.setStyleSheet("font-weight: 700; color: #f4f4f6; font-size: 11px;")
-
-        row_sf.addWidget(self.radio_src_4_3)
-        row_sf.addWidget(self.radio_src_16_9)
-        layout_sf.addLayout(row_sf)
-
-        self.lbl_src_format_desc = QLabel("💡 Ausgabeprofil: 8:3 Taktik-Panorama (2560x960) | DJI RockSteady Dewarp aktiv.")
-        self.lbl_src_format_desc.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 600;")
-        layout_sf.addWidget(self.lbl_src_format_desc)
-
-        layout_tab_stitch.addWidget(grp_src_format)
-
-        # Sub-Navigation Toggle: [ 🎥 Videos & Synchronisation ]  [ 🎨 Naht, Winkel & Farbe ]
-        sub_nav_frame = QFrame()
-        sub_nav_frame.setStyleSheet("QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 8px; padding: 2px; }")
-        sub_layout = QHBoxLayout(sub_nav_frame)
-        sub_layout.setContentsMargins(2, 2, 2, 2)
-        sub_layout.setSpacing(4)
-
-        self.btn_stitch_sub_media = QPushButton("🎥 Videos & Synchronisation")
-        self.btn_stitch_sub_calib = QPushButton("🎨 Naht, Winkel & Farbe")
-
-        self.btn_stitch_sub_media.clicked.connect(lambda: self.set_stitching_subpage(0))
-        self.btn_stitch_sub_calib.clicked.connect(lambda: self.set_stitching_subpage(1))
-
-        sub_layout.addWidget(self.btn_stitch_sub_media)
-        sub_layout.addWidget(self.btn_stitch_sub_calib)
-        layout_tab_stitch.addWidget(sub_nav_frame)
-
-        self.stitch_sub_stack = QStackedWidget()
-
-        # Sub-Page 0: Media & Sync
-        scroll_m = QScrollArea()
-        scroll_m.setWidgetResizable(True)
-        widget_m = QWidget()
-        layout_m = QVBoxLayout(widget_m)
-        layout_m.setSpacing(12)
-
-        # Card: Video Inputs
-        grp_inputs = QGroupBox("🎥 Kamera-Eingänge (Dual-Rig / Panorama)")
-        layout_in = QVBoxLayout(grp_inputs)
-        layout_in.setSpacing(10)
-
-        lbl_desc_inputs = QLabel("Laden Sie die Aufnahmen beider Kameras (80° Rig) oder ein 32:9 Panoramavideo:")
-        lbl_desc_inputs.setStyleSheet("color: #8e8e9c; font-size: 11px;")
-        lbl_desc_inputs.setWordWrap(True)
-        layout_in.addWidget(lbl_desc_inputs)
-
-        # Camera 1 (Links) Card
-        card_l = QFrame()
-        card_l.setStyleSheet("QFrame { background-color: #12121c; border: 1px solid #232334; border-radius: 10px; padding: 10px; }")
-        layout_card_l = QVBoxLayout(card_l)
-        layout_card_l.setSpacing(6)
-        row_hdr_l = QHBoxLayout()
-        lbl_title_l = QLabel("🎥 Kamera 1 (Links)")
-        lbl_title_l.setStyleSheet("font-weight: 700; font-size: 12px; color: #f4f4f6;")
-        self.badge_left = QLabel("⚪ Nicht geladen")
-        self.badge_left.setStyleSheet("background: #1c1c28; color: #8e8e9c; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600;")
-        row_hdr_l.addWidget(lbl_title_l)
-        row_hdr_l.addStretch()
-        row_hdr_l.addWidget(self.badge_left)
-        layout_card_l.addLayout(row_hdr_l)
-
-        self.lbl_file_left = QLabel("Keine Videodatei gewählt")
-        self.lbl_file_left.setStyleSheet("color: #8e8e9c; font-size: 11px; padding: 2px 0;")
-        self.lbl_file_left.setWordWrap(True)
-        layout_card_l.addWidget(self.lbl_file_left)
-
-        self.btn_open_left = QPushButton("📂 Linkes Video wählen...")
-        self.btn_open_left.setStyleSheet("background-color: #1a1a26; border: 1px solid #2d2d42; font-weight: 600; padding: 7px; color: #f4f4f6; border-radius: 8px;")
-        self.btn_open_left.clicked.connect(self.open_left_video)
-        layout_card_l.addWidget(self.btn_open_left)
-        layout_in.addWidget(card_l)
-
-        # Camera 2 (Rechts) Card
-        card_r = QFrame()
-        card_r.setStyleSheet("QFrame { background-color: #12121c; border: 1px solid #232334; border-radius: 10px; padding: 10px; }")
-        layout_card_r = QVBoxLayout(card_r)
-        layout_card_r.setSpacing(6)
-        row_hdr_r = QHBoxLayout()
-        lbl_title_r = QLabel("🎥 Kamera 2 (Rechts)")
-        lbl_title_r.setStyleSheet("font-weight: 700; font-size: 12px; color: #f4f4f6;")
-        self.badge_right = QLabel("⚪ Nicht geladen")
-        self.badge_right.setStyleSheet("background: #1c1c28; color: #8e8e9c; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600;")
-        row_hdr_r.addWidget(lbl_title_r)
-        row_hdr_r.addStretch()
-        row_hdr_r.addWidget(self.badge_right)
-        layout_card_r.addLayout(row_hdr_r)
-
-        self.lbl_file_right = QLabel("Keine Videodatei gewählt")
-        self.lbl_file_right.setStyleSheet("color: #8e8e9c; font-size: 11px; padding: 2px 0;")
-        self.lbl_file_right.setWordWrap(True)
-        layout_card_r.addWidget(self.lbl_file_right)
-
-        self.btn_open_right = QPushButton("📂 Rechtes Video wählen...")
-        self.btn_open_right.setStyleSheet("background-color: #1a1a26; border: 1px solid #2d2d42; font-weight: 600; padding: 7px; color: #f4f4f6; border-radius: 8px;")
-        self.btn_open_right.clicked.connect(self.open_right_video)
-        layout_card_r.addWidget(self.btn_open_right)
-        layout_in.addWidget(card_r)
-
-        # Panorama Direct Import
-        self.btn_open_pano = QPushButton("🎬 Fertiges 32:9 Panoramavideo laden...")
-        self.btn_open_pano.setStyleSheet("background-color: #161622; border: 1px solid #28283a; font-weight: 600; padding: 7px; color: #a1a1aa; border-radius: 8px;")
-        self.btn_open_pano.setToolTip("Lädt ein einzelnes fertiges 32:9 Panoramavideo direkt für 16:9 Follow-Cam oder Taktik-Warp")
-        self.btn_open_pano.clicked.connect(self.open_panorama_video)
-        layout_in.addWidget(self.btn_open_pano)
-
-        layout_m.addWidget(grp_inputs)
-
-        # Card: Audio Synchronization & Offset
-        grp_sync = QGroupBox("⚡ Audio-Synchronisation & Frame-Offset")
-        layout_sync = QVBoxLayout(grp_sync)
-        layout_sync.setSpacing(10)
-
-        lbl_sync_info = QLabel("Gleichen Sie den Versatz beider Kameras per Audio-Waveform automatisch ab oder justieren Sie manuell:")
-        lbl_sync_info.setStyleSheet("color: #8e8e9c; font-size: 11px;")
-        lbl_sync_info.setWordWrap(True)
-        layout_sync.addWidget(lbl_sync_info)
-
-        self.btn_auto_sync = QPushButton("⚡ Audio synchronisieren (Auto-Sync)")
-        self.btn_auto_sync.setStyleSheet("background-color: #2563eb; font-weight: bold; padding: 9px 14px; color: white; font-size: 12px; border-radius: 9px;")
-        self.btn_auto_sync.setToolTip("Automatische Audio-Synchronisation (FFT Cross-Correlation für Frame-Offset)")
-        self.btn_auto_sync.clicked.connect(self.run_audio_sync)
-        layout_sync.addWidget(self.btn_auto_sync)
-
-        lbl_manual_sync = QLabel("Manuelle Offset-Feinjustage (Kamera Rechts):")
-        lbl_manual_sync.setStyleSheet("font-weight: 600; color: #f4f4f6; margin-top: 4px;")
-        layout_sync.addWidget(lbl_manual_sync)
-
-        row_offset = QHBoxLayout()
-        row_offset.setSpacing(8)
-
-        self.slider_offset = NoWheelSlider(Qt.Horizontal)
-        self.slider_offset.setRange(-600, 600)
-        self.slider_offset.setValue(0)
-        self.slider_offset.valueChanged.connect(self.on_offset_slider_changed)
-        row_offset.addWidget(self.slider_offset, 1)
-
-        self.spin_offset = NoWheelSpinBox()
-        self.spin_offset.setRange(-5000, 5000)
-        self.spin_offset.setValue(0)
-        self.spin_offset.setSuffix(" F")
-        self.spin_offset.valueChanged.connect(self.on_offset_spin_changed)
-        row_offset.addWidget(self.spin_offset)
-
-        btn_offset_reset = QToolButton()
-        btn_offset_reset.setText("↺")
-        btn_offset_reset.setToolTip("Offset auf 0 zurücksetzen")
-        btn_offset_reset.clicked.connect(lambda: self.spin_offset.setValue(0))
-        row_offset.addWidget(btn_offset_reset)
-        layout_sync.addLayout(row_offset)
-
-        # Quick Frame Step Buttons
-        row_steps = QHBoxLayout()
-        row_steps.setSpacing(4)
-        for delta, txt in [(-5, "-5 F"), (-1, "-1 F"), (0, "0"), (1, "+1 F"), (5, "+5 F")]:
-            btn_step = QPushButton(txt)
-            btn_step.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 4px 6px; font-size: 11px; font-weight: 600; color: #cbd5e1;")
-            if delta == 0:
-                btn_step.clicked.connect(lambda chk=False: self.spin_offset.setValue(0))
-            else:
-                btn_step.clicked.connect(lambda chk=False, d=delta: self.adjust_offset_by(d))
-            row_steps.addWidget(btn_step)
-        layout_sync.addLayout(row_steps)
-
-        layout_m.addWidget(grp_sync)
-        layout_m.addStretch()
-        scroll_m.setWidget(widget_m)
-        self.stitch_sub_stack.addWidget(scroll_m)
-
-        # -------------------------------------------------------------------------
-        # Sub-Page 1: 🎨 Naht, Winkel & Farbe (Kalibrierung & Geometrie)
-        # -------------------------------------------------------------------------
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
-        scroll_layout.setSpacing(10)
-
-        # 1. Kamera-Profil & KI-Kalibrierung Card
-        grp_preset = QGroupBox("📷 Kamera-Profil & KI-Kalibrierung")
-        layout_preset = QVBoxLayout(grp_preset)
-        layout_preset.setSpacing(8)
-
-        lbl_profile_sel = QLabel("Objektiv-Profil:")
-        lbl_profile_sel.setStyleSheet("font-weight: 600; color: #f4f4f6; font-size: 11px;")
-        layout_preset.addWidget(lbl_profile_sel)
-
-        self.combo_preset = QComboBox()
-        for key, p in CAMERA_PRESETS.items():
-            self.combo_preset.addItem(f"{p.name} [{key}]", key)
-        self.combo_preset.currentIndexChanged.connect(self.on_preset_changed)
-        layout_preset.addWidget(self.combo_preset)
-
-        btn_preset_action4_4x3 = QPushButton("⚡ Quick-Preset: Action 4 (1080p 4:3 RockSteady)")
-        btn_preset_action4_4x3.setStyleSheet("background-color: #1e293b; border: 1px solid #38bdf8; font-weight: bold; padding: 7px; color: #38bdf8; border-radius: 8px;")
-        btn_preset_action4_4x3.setToolTip("Setzt 1080p 4:3 Dewarp Profil, 82.0° HFOV, ±36.5° Rig-Winkel und Naht-Überlappung mit 1 Klick.")
-        btn_preset_action4_4x3.clicked.connect(self.apply_action4_4x3_rocksteady_preset)
-        layout_preset.addWidget(btn_preset_action4_4x3)
-
-        self.ctrl_cam_fov = LabeledSliderSpinBox("Objektiv-Blickwinkel (HFOV / Brennweite):", 60.0, 140.0, 92.0, 0.2, "°")
-        self.ctrl_cam_fov.valueChanged.connect(self.on_cam_fov_changed)
-        layout_preset.addWidget(self.ctrl_cam_fov)
-
-        row_proj = QHBoxLayout()
-        lbl_proj = QLabel("Projektions-Typ:")
-        lbl_proj.setStyleSheet("font-weight: 600; color: #f4f4f6; font-size: 11px;")
-        self.combo_projection = NoWheelComboBox()
-        self.combo_projection.addItem("🌟 Zylindrisch (Standard Panorama)", "cylindrical")
-        self.combo_projection.addItem("📐 Pannini (Begradigt Linien & Perspektive)", "pannini")
-        self.combo_projection.addItem("📏 Rektilinear (100% Gerade)", "rectilinear")
-        self.combo_projection.currentIndexChanged.connect(self.on_projection_changed)
-        row_proj.addWidget(lbl_proj)
-        row_proj.addWidget(self.combo_projection, 1)
-        layout_preset.addLayout(row_proj)
-
-        line_c1 = QFrame()
-        line_c1.setFrameShape(QFrame.HLine)
-        line_c1.setStyleSheet("color: #232332;")
-        layout_preset.addWidget(line_c1)
-
-        self.btn_run_ai_calib = QPushButton("🎯 Nahtstelle automatisch kalibrieren")
-        self.btn_run_ai_calib.setStyleSheet("background-color: #2563eb; font-weight: bold; padding: 9px 12px; font-size: 12px; color: white; border-radius: 9px;")
-        self.btn_run_ai_calib.clicked.connect(self.run_auto_stitch_calibration)
-        layout_preset.addWidget(self.btn_run_ai_calib)
-        self.btn_auto_stitch = self.btn_run_ai_calib
-
-        self.chk_multi_frame_calib = QCheckBox("Multi-Frame Analyse (5 Video-Frames abtasten)")
-        self.chk_multi_frame_calib.setChecked(True)
-        self.chk_multi_frame_calib.setStyleSheet("color: #cbd5e1; font-size: 11px;")
-        layout_preset.addWidget(self.chk_multi_frame_calib)
-
-        scroll_layout.addWidget(grp_preset)
-
-        # 2. Spielfeld- & Horizont-Begradigung Card
-        grp_level = QGroupBox("🌅 Spielfeld- & Horizont-Begradigung")
-        layout_level = QVBoxLayout(grp_level)
-        layout_level.setSpacing(8)
-
-        self.ctrl_curvature = LabeledSliderSpinBox("Spielfeld-Linien Begradigung (Curvature):", -0.60, 0.60, 0.0, 0.01, "", decimals=2)
-        self.ctrl_curvature.setToolTip("Begradigt den V-förmigen Durchhang der Spielfeldlinien bei nach unten geneigten Kameras und zieht die Seitenlinien plan.")
-        self.ctrl_curvature.valueChanged.connect(self.on_curvature_changed)
-        layout_level.addWidget(self.ctrl_curvature)
-
-        self.ctrl_global_pitch = LabeledSliderSpinBox("Horizont-Ausgleich (+15° Begradigung):", 0.0, 45.0, 15.0, 0.2, "°")
-        self.ctrl_global_pitch.valueChanged.connect(self.on_rig_param_changed)
-        layout_level.addWidget(self.ctrl_global_pitch)
-
-        self.chk_auto_color_match = QCheckBox("🎨 Automatischer Farb- & Belichtungsabgleich (Kamera L ↔ R)")
-        self.chk_auto_color_match.setChecked(True)
-        self.chk_auto_color_match.setStyleSheet("color: #38bdf8; font-weight: bold; margin-top: 2px;")
-        self.chk_auto_color_match.setToolTip("Gleicht Helligkeit, Belichtung und Weißabgleich beider Kameras automatisch an der Nahtstelle ab. Entfernt die sichtbare Kante in der Bildmitte vollständig.")
-        self.chk_auto_color_match.toggled.connect(self.on_auto_color_match_toggled)
-        layout_level.addWidget(self.chk_auto_color_match)
-
-        self.ctrl_color_match_strength = LabeledSliderSpinBox("Farbangleich-Stärke:", 0.0, 100.0, 100.0, 5.0, "%", decimals=0)
-        self.ctrl_color_match_strength.setToolTip("Bestimmt, wie stark die Farben beider Kameras aufeinander abgestimmt werden (100% = vollständiger Abgleich).")
-        self.ctrl_color_match_strength.valueChanged.connect(self.on_color_match_strength_changed)
-        layout_level.addWidget(self.ctrl_color_match_strength)
-
-        self.chk_auto_crop = QCheckBox("✅ LIR Auto-Crop (Schwarze Ränder/Bögen entfernen)")
-        self.chk_auto_crop.setChecked(True)
-        self.chk_auto_crop.setStyleSheet("font-weight: 600; color: #10b981;")
-        self.chk_auto_crop.toggled.connect(self.toggle_auto_crop)
-        layout_level.addWidget(self.chk_auto_crop)
-
-        self.ctrl_safety_margin = LabeledSliderSpinBox("LIR Sicherheitsrand (Puffer):", 0.0, 5.0, 0.5, 0.1, "%", decimals=1)
-        self.ctrl_safety_margin.valueChanged.connect(self.on_safety_margin_changed)
-        layout_level.addWidget(self.ctrl_safety_margin)
-
-        self.ctrl_blend_width = LabeledSliderSpinBox("Nahtstellen-Übergangsbreite (Blending):", 1.0, 30.0, 8.0, 0.5, "°")
-        self.ctrl_blend_width.valueChanged.connect(self.on_rig_param_changed)
-        layout_level.addWidget(self.ctrl_blend_width)
-
-        scroll_layout.addWidget(grp_level)
-
-        # 3. 3D-Gehäuse Ausrichtung (Rig) Card
-        grp_rig = QGroupBox("📐 3D-Gehäuse Ausrichtung (Spreizung & Neigung)")
-        layout_rig = QVBoxLayout(grp_rig)
-        layout_rig.setSpacing(8)
-
-        self.chk_sync_yaw = QCheckBox("Winkel symmetrisch koppeln (± X°)")
-        self.chk_sync_yaw.setChecked(True)
-        self.chk_sync_yaw.toggled.connect(self.toggle_sync_angles)
-        layout_rig.addWidget(self.chk_sync_yaw)
-
-        self.ctrl_master_yaw = LabeledSliderSpinBox("Gesamter Spreizwinkel (80° Rig):", 40.0, 120.0, 80.0, 0.2, "°")
-        self.ctrl_master_yaw.valueChanged.connect(self.on_master_yaw_changed)
-        layout_rig.addWidget(self.ctrl_master_yaw)
-
-        self.ctrl_left_yaw = LabeledSliderSpinBox("Kamera Links Yaw (Gierwinkel):", -80.0, -10.0, -40.0, 0.2, "°")
-        self.ctrl_left_yaw.valueChanged.connect(self.on_left_yaw_changed)
-        layout_rig.addWidget(self.ctrl_left_yaw)
-
-        self.ctrl_right_yaw = LabeledSliderSpinBox("Kamera Rechts Yaw (Gierwinkel):", 10.0, 80.0, 40.0, 0.2, "°")
-        self.ctrl_right_yaw.valueChanged.connect(self.on_right_yaw_changed)
-        layout_rig.addWidget(self.ctrl_right_yaw)
-
-        self.ctrl_cam_pitch = LabeledSliderSpinBox("Rig Neigung nach unten (Pitch):", -45.0, 0.0, -15.0, 0.2, "°")
-        self.ctrl_cam_pitch.valueChanged.connect(self.on_rig_param_changed)
-        layout_rig.addWidget(self.ctrl_cam_pitch)
-
-        self.ctrl_left_roll = LabeledSliderSpinBox("Roll Feinjustage Links:", -15.0, 15.0, 0.0, 0.1, "°")
-        self.ctrl_left_roll.valueChanged.connect(self.on_rig_param_changed)
-        layout_rig.addWidget(self.ctrl_left_roll)
-
-        self.ctrl_right_roll = LabeledSliderSpinBox("Roll Feinjustage Rechts:", -15.0, 15.0, 0.0, 0.1, "°")
-        self.ctrl_right_roll.valueChanged.connect(self.on_rig_param_changed)
-        layout_rig.addWidget(self.ctrl_right_roll)
-
-        scroll_layout.addWidget(grp_rig)
-
-        # 4. 32:9 Panorama Zentrierung & Bildausschnitt Card
-        grp_pitch_align = QGroupBox("🏟️ Panorama-Zentrierung & Bildausschnitt")
-        layout_pitch = QVBoxLayout(grp_pitch_align)
-        layout_pitch.setSpacing(8)
-
-        self.btn_pick_center_calib = QPushButton("🎯 Mittellinie im Bild anklicken (Sofort-Zentrierung)")
-        self.btn_pick_center_calib.setCheckable(True)
-        self.btn_pick_center_calib.setStyleSheet("background-color: #1e1e2d; border: 1px solid #3b82f6; font-weight: 600; padding: 7px; color: #60a5fa; border-radius: 8px;")
-        self.btn_pick_center_calib.setToolTip("Klicken Sie direkt im Panorama-Bild auf den Anstoßpunkt oder die Mittellinie, um das Bild sofort perfekt zu zentrieren.")
-        self.btn_pick_center_calib.toggled.connect(self.on_pick_center_toggled)
-        layout_pitch.addWidget(self.btn_pick_center_calib)
-
-        self.ctrl_h_offset = LabeledSliderSpinBox("Spielfeld-Mitte Versatz (Links ↔ Rechts Pan):", -60.0, 60.0, 0.0, 0.1, "°", decimals=1)
-        self.ctrl_h_offset.valueChanged.connect(self.on_rig_param_changed)
-        layout_pitch.addWidget(self.ctrl_h_offset)
-
-        pan_btn_row = QHBoxLayout()
-        pan_btn_row.setSpacing(4)
-        for d_pan, txt in [(-5.0, "⏪ -5°"), (-1.0, "◀ -1°"), (0.0, "🎯 0°"), (1.0, "▶ +1°"), (5.0, "⏩ +5°")]:
-            btn_pan = QPushButton(txt)
-            btn_pan.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 4px; font-size: 11px; font-weight: 600; color: #cbd5e1;")
-            if d_pan == 0.0:
-                btn_pan.clicked.connect(lambda chk=False: self.ctrl_h_offset.setValue(0.0))
-            else:
-                btn_pan.clicked.connect(lambda chk=False, d=d_pan: self.pan_offset_by(d))
-            pan_btn_row.addWidget(btn_pan)
-        layout_pitch.addLayout(pan_btn_row)
-
-        self.ctrl_v_offset = LabeledSliderSpinBox("Vertikaler Bildausschnitt (Shift):", -2.0, 2.0, 0.12, 0.02, "", decimals=2)
-        self.ctrl_v_offset.valueChanged.connect(self.on_rig_param_changed)
-        layout_pitch.addWidget(self.ctrl_v_offset)
-
-        grp_dpad = QGroupBox("🎮 2D Bildausschnitt Feinjustage")
-        layout_dpad = QGridLayout(grp_dpad)
-        layout_dpad.setSpacing(4)
-        btn_dpad_up = QPushButton("⬆️ Oben")
-        btn_dpad_up.clicked.connect(lambda: self.shift_framing(0.0, -0.05))
-        layout_dpad.addWidget(btn_dpad_up, 0, 1)
-        btn_dpad_left = QPushButton("⬅️ Links")
-        btn_dpad_left.clicked.connect(lambda: self.shift_framing(-1.5, 0.0))
-        layout_dpad.addWidget(btn_dpad_left, 1, 0)
-        btn_dpad_center = QPushButton("🎯 Reset")
-        btn_dpad_center.clicked.connect(self.reset_framing)
-        layout_dpad.addWidget(btn_dpad_center, 1, 1)
-        btn_dpad_right = QPushButton("➡️ Rechts")
-        btn_dpad_right.clicked.connect(lambda: self.shift_framing(1.5, 0.0))
-        layout_dpad.addWidget(btn_dpad_right, 1, 2)
-        btn_dpad_down = QPushButton("⬇️ Unten")
-        btn_dpad_down.clicked.connect(lambda: self.shift_framing(0.0, 0.05))
-        layout_dpad.addWidget(btn_dpad_down, 2, 1)
-        layout_pitch.addWidget(grp_dpad)
-
-        self.ctrl_pano_hfov = LabeledSliderSpinBox("32:9 Panorama Weitwinkel (HFOV):", 90.0, 180.0, 145.0, 0.5, "°")
-        self.ctrl_pano_hfov.valueChanged.connect(self.on_rig_param_changed)
-        layout_pitch.addWidget(self.ctrl_pano_hfov)
-
-        self.ctrl_squeeze = LabeledSliderSpinBox("Gleichmäßige Breiten-Stauchung:", 0.50, 3.00, 1.0, 0.01, "x", decimals=2)
-        self.ctrl_squeeze.valueChanged.connect(self.on_rig_param_changed)
-        layout_pitch.addWidget(self.ctrl_squeeze)
-
-        row_pitch_presets = QHBoxLayout()
-        btn_full_pitch = QPushButton("🏟️ 16:9 Spielfeld (145° Preset)")
-        btn_full_pitch.setStyleSheet("background-color: #1e1e2d; border: 1px solid #10b981; font-weight: bold; padding: 7px; color: #34d399; border-radius: 8px;")
-        btn_full_pitch.clicked.connect(self.apply_full_pitch_preset)
-        row_pitch_presets.addWidget(btn_full_pitch)
-
-        btn_pitch_4x3 = QPushButton("📹 1080p 4:3 RockSteady")
-        btn_pitch_4x3.setStyleSheet("background-color: #1e1e2d; border: 1px solid #38bdf8; font-weight: bold; padding: 7px; color: #38bdf8; border-radius: 8px;")
-        btn_pitch_4x3.setToolTip("Richtet Rig und Blickfeld passend für 4:3 Dewarp mit RockSteady ein")
-        btn_pitch_4x3.clicked.connect(self.apply_action4_4x3_rocksteady_preset)
-        row_pitch_presets.addWidget(btn_pitch_4x3)
-        layout_pitch.addLayout(row_pitch_presets)
-
-        scroll_layout.addWidget(grp_pitch_align)
-
-        # 5. Ecken-Verzerrung (Corner Pinning) Card
-        grp_corner_pin = QGroupBox("📐 Ecken-Verzerrung (Corner Pinning)")
-        layout_cp = QVBoxLayout(grp_corner_pin)
-        layout_cp.setSpacing(8)
-
-        self.btn_corner_pins_side = QPushButton("✨ Ecken interaktiv im Bild verzerren (Drag & Drop)")
-        self.btn_corner_pins_side.setCheckable(True)
-        self.btn_corner_pins_side.setStyleSheet("background-color: #2563eb; font-weight: bold; padding: 8px; color: white; border-radius: 8px;")
-        self.btn_corner_pins_side.setToolTip("Aktivieren Sie diesen Modus, um die 4 Kamera-Ecken direkt im Panorama per Maus zu ziehen.")
-        self.btn_corner_pins_side.toggled.connect(self.on_corner_pins_toggled)
-        layout_cp.addWidget(self.btn_corner_pins_side)
-
-        row_cam_sel = QHBoxLayout()
-        row_cam_sel.addWidget(QLabel("Anzeige:"))
-        self.combo_corner_cam = QComboBox()
-        self.combo_corner_cam.addItem("🌟 Beide Kameras (Cyan = Links, Gold = Rechts)", "both")
-        self.combo_corner_cam.addItem("🟦 Nur Kamera Links (Cyan)", "left")
-        self.combo_corner_cam.addItem("🟧 Nur Kamera Rechts (Gold)", "right")
-        self.combo_corner_cam.currentIndexChanged.connect(self.on_corner_cam_changed)
-        row_cam_sel.addWidget(self.combo_corner_cam, 1)
-        layout_cp.addLayout(row_cam_sel)
-
-        self.ctrl_frame_opacity = LabeledSliderSpinBox("32:9 Rahmen Deckkraft (Abdunklung):", 0.0, 100.0, 50.0, 5.0, "%", decimals=0)
-        self.ctrl_frame_opacity.valueChanged.connect(self.on_frame_opacity_changed)
-        layout_cp.addWidget(self.ctrl_frame_opacity)
-
-        self.tab_corners = QTabWidget()
-        self.tab_corners.setStyleSheet("QTabWidget::pane { border: 1px solid #232332; background: #12121a; border-radius: 8px; } QTabBar::tab { font-size: 11px; padding: 5px 8px; }")
-
-        # TAB LEFT CAMERA
-        tab_c_left = QWidget()
-        layout_cl = QVBoxLayout(tab_c_left)
-        layout_cl.setContentsMargins(6, 6, 6, 6)
-        layout_cl.setSpacing(4)
-
-        self.spin_corners_l = []
-        labels_l = [
-            ("Oben-Links (TL):", 0.0, 0.0),
-            ("Oben-Rechts (TR - Nahtstelle):", 100.0, 0.0),
-            ("Unten-Rechts (BR - Nahtstelle):", 100.0, 100.0),
-            ("Unten-Links (BL):", 0.0, 100.0)
-        ]
-        for idx, (lbl_txt, def_x, def_y) in enumerate(labels_l):
-            row_box = QHBoxLayout()
-            lbl = QLabel(lbl_txt)
-            lbl.setStyleSheet("font-size: 11px; color: #60a5fa; font-weight: 600; min-width: 130px;")
-            
-            spin_x = NoWheelDoubleSpinBox()
-            spin_x.setRange(-80.0, 180.0)
-            spin_x.setValue(def_x)
-            spin_x.setSingleStep(0.2)
-            spin_x.setDecimals(1)
-            spin_x.setPrefix("X: ")
-            spin_x.setSuffix("%")
-            spin_x.valueChanged.connect(lambda val, s='left', i=idx: self.on_corner_spin_changed(s, i))
-
-            spin_y = NoWheelDoubleSpinBox()
-            spin_y.setRange(-80.0, 180.0)
-            spin_y.setValue(def_y)
-            spin_y.setSingleStep(0.2)
-            spin_y.setDecimals(1)
-            spin_y.setPrefix("Y: ")
-            spin_y.setSuffix("%")
-            spin_y.valueChanged.connect(lambda val, s='left', i=idx: self.on_corner_spin_changed(s, i))
-
-            btn_res_c = QToolButton()
-            btn_res_c.setText("↺")
-            btn_res_c.setToolTip(f"Diese Ecke auf Standard ({def_x:.0f}%, {def_y:.0f}%) zurücksetzen")
-            btn_res_c.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 4px; color: #94a3b8; padding: 2px 6px;")
-            btn_res_c.clicked.connect(lambda checked=False, s='left', i=idx, dx=def_x, dy=def_y: self.reset_single_corner(s, i, dx, dy))
-
-            row_box.addWidget(lbl)
-            row_box.addWidget(spin_x, 1)
-            row_box.addWidget(spin_y, 1)
-            row_box.addWidget(btn_res_c)
-            layout_cl.addLayout(row_box)
-            self.spin_corners_l.append((spin_x, spin_y))
-
-        btn_res_left_all = QPushButton("↺ Kamera Links Ecken zurücksetzen")
-        btn_res_left_all.setStyleSheet("padding: 5px; font-size: 11px; background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; color: #94a3b8;")
-        btn_res_left_all.clicked.connect(lambda: self.reset_camera_corners('left'))
-        layout_cl.addWidget(btn_res_left_all)
-
-        self.tab_corners.addTab(tab_c_left, "🟦 Kamera Links (Cyan)")
-
-        # TAB RIGHT CAMERA
-        tab_c_right = QWidget()
-        layout_cr = QVBoxLayout(tab_c_right)
-        layout_cr.setContentsMargins(6, 6, 6, 6)
-        layout_cr.setSpacing(4)
-
-        self.spin_corners_r = []
-        labels_r = [
-            ("Oben-Links (TL - Nahtstelle):", 0.0, 0.0),
-            ("Oben-Rechts (TR):", 100.0, 0.0),
-            ("Unten-Rechts (BR):", 100.0, 100.0),
-            ("Unten-Links (BL - Nahtstelle):", 0.0, 100.0)
-        ]
-        for idx, (lbl_txt, def_x, def_y) in enumerate(labels_r):
-            row_box = QHBoxLayout()
-            lbl = QLabel(lbl_txt)
-            lbl.setStyleSheet("font-size: 11px; color: #fbbf24; font-weight: 600; min-width: 130px;")
-            
-            spin_x = NoWheelDoubleSpinBox()
-            spin_x.setRange(-80.0, 180.0)
-            spin_x.setValue(def_x)
-            spin_x.setSingleStep(0.2)
-            spin_x.setDecimals(1)
-            spin_x.setPrefix("X: ")
-            spin_x.setSuffix("%")
-            spin_x.valueChanged.connect(lambda val, s='right', i=idx: self.on_corner_spin_changed(s, i))
-
-            spin_y = NoWheelDoubleSpinBox()
-            spin_y.setRange(-80.0, 180.0)
-            spin_y.setValue(def_y)
-            spin_y.setSingleStep(0.2)
-            spin_y.setDecimals(1)
-            spin_y.setPrefix("Y: ")
-            spin_y.setSuffix("%")
-            spin_y.valueChanged.connect(lambda val, s='right', i=idx: self.on_corner_spin_changed(s, i))
-
-            btn_res_c = QToolButton()
-            btn_res_c.setText("↺")
-            btn_res_c.setToolTip(f"Diese Ecke auf Standard ({def_x:.0f}%, {def_y:.0f}%) zurücksetzen")
-            btn_res_c.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 4px; color: #94a3b8; padding: 2px 6px;")
-            btn_res_c.clicked.connect(lambda checked=False, s='right', i=idx, dx=def_x, dy=def_y: self.reset_single_corner(s, i, dx, dy))
-
-            row_box.addWidget(lbl)
-            row_box.addWidget(spin_x, 1)
-            row_box.addWidget(spin_y, 1)
-            row_box.addWidget(btn_res_c)
-            layout_cr.addLayout(row_box)
-            self.spin_corners_r.append((spin_x, spin_y))
-
-        btn_res_right_all = QPushButton("↺ Kamera Rechts Ecken zurücksetzen")
-        btn_res_right_all.setStyleSheet("padding: 5px; font-size: 11px; background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; color: #94a3b8;")
-        btn_res_right_all.clicked.connect(lambda: self.reset_camera_corners('right'))
-        layout_cr.addWidget(btn_res_right_all)
-
-        self.tab_corners.addTab(tab_c_right, "🟧 Kamera Rechts (Gold)")
-        layout_cp.addWidget(self.tab_corners)
-
-        btn_res_all_corners = QPushButton("↺ Alle 8 Ecken auf Standard zurücksetzen")
-        btn_res_all_corners.setStyleSheet("padding: 6px; font-weight: 600; background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; color: #cbd5e1;")
-        btn_res_all_corners.clicked.connect(self.reset_all_corners)
-        layout_cp.addWidget(btn_res_all_corners)
-
-        scroll_layout.addWidget(grp_corner_pin)
-
-        # 6. Profile & Standard-Einstellungen Card
-        grp_profiles = QGroupBox("💾 Profile & Standard-Einstellungen")
-        layout_prof = QVBoxLayout(grp_profiles)
-        layout_prof.setSpacing(6)
-
-        row_prof_btns = QHBoxLayout()
-        btn_save_full = QPushButton("💾 Profil speichern...")
-        btn_save_full.setStyleSheet("background-color: #1e1e2d; border: 1px solid #2d2d42; font-weight: 600; padding: 6px; color: #f4f4f6; border-radius: 8px;")
-        btn_save_full.clicked.connect(self.save_full_profile_as)
-
-        btn_load_full = QPushButton("📁 Profil laden...")
-        btn_load_full.setStyleSheet("background-color: #1e1e2d; border: 1px solid #2d2d42; font-weight: 600; padding: 6px; color: #f4f4f6; border-radius: 8px;")
-        btn_load_full.clicked.connect(self.load_full_profile_from)
-
-        row_prof_btns.addWidget(btn_save_full)
-        row_prof_btns.addWidget(btn_load_full)
-        layout_prof.addLayout(row_prof_btns)
-
-        btn_set_default = QPushButton("⭐ Als Start-Standard festlegen")
-        btn_set_default.setStyleSheet("background-color: #2563eb; font-weight: bold; padding: 7px; color: white; font-size: 11px; border-radius: 8px;")
-        btn_set_default.clicked.connect(self.save_as_default_settings)
-        layout_prof.addWidget(btn_set_default)
-
-        btn_reset_defaults = QPushButton("↺ Auf Werkseinstellungen zurücksetzen")
-        btn_reset_defaults.setStyleSheet("background-color: #161622; border: 1px solid #262638; padding: 5px; font-size: 11px; color: #8e8e9c; border-radius: 8px;")
-        btn_reset_defaults.clicked.connect(self.restore_factory_defaults)
-        layout_prof.addWidget(btn_reset_defaults)
-
-        scroll_layout.addWidget(grp_profiles)
-
-        scroll_layout.addStretch()
-        scroll_area.setWidget(scroll_widget)
-        self.stitch_sub_stack.addWidget(scroll_area)
-
-        layout_tab_stitch.addWidget(self.stitch_sub_stack, 1)
-        self.tab_calib = scroll_area
-        self.set_stitching_subpage(0)
-
+        self._init_stitching_tab()
         self.right_pane.addTab(self.tab_stitching, "🧵 1. Stitching")
 
         # -------------------------------------------------------------------------
@@ -4060,390 +575,12 @@ class MainWindow(QMainWindow):
         self._init_wide_angle_tab()
         self.right_pane.addTab(self.tab_wide_angle, "📐 2. Weitwinkel")
 
-        # -------------------------------------------------------------------------
-        # TAB 3: 🎯 KI-Broadcast & Follow-Cam (Samsung One UI Style)
-        # -------------------------------------------------------------------------
-        self.tab_autocam = QWidget()
-        autocam_layout = QVBoxLayout(self.tab_autocam)
-        autocam_layout.setContentsMargins(4, 4, 4, 4)
-        scroll_area_ac = QScrollArea()
-        scroll_area_ac.setWidgetResizable(True)
-        scroll_widget_ac = QWidget()
-        scroll_layout_ac = QVBoxLayout(scroll_widget_ac)
-        scroll_layout_ac.setSpacing(12)
-
-        # 16:9 Tactical Mesh Warp Group (6 Points)
-        grp_pitch_roi = QGroupBox("📐 16:9 Taktik-Warp (6-Punkte Video-Entzerrung)")
-        layout_pitch_roi = QVBoxLayout(grp_pitch_roi)
-        layout_pitch_roi.setSpacing(8)
-
-        # Quick View-Switcher buttons
-        row_view_quick = QHBoxLayout()
-        self.btn_view_pano = QPushButton("🌟 32:9 Panorama")
-        self.btn_view_pano.setToolTip("Zeigt das vollständige 32:9 bzw. 8:3 Stadion-Panorama")
-        self.btn_view_pano.clicked.connect(lambda: self.set_view_mode_by_id("8:3" if self.is_4_3_mode() else "32:9"))
-        btn_view_tactical = QPushButton("📐 16:9 Taktik-Warp")
-        btn_view_tactical.setToolTip("Zeigt das entzerrte 16:9 Spielfeld")
-        btn_view_tactical.clicked.connect(lambda: self.set_view_mode_by_id("16:9_tactical"))
-        row_view_quick.addWidget(self.btn_view_pano)
-        row_view_quick.addWidget(btn_view_tactical)
-        layout_pitch_roi.addLayout(row_view_quick)
-
-        lbl_roi_desc = QLabel("Verzerren und passen Sie das Panorama-Video an den 6 Außenpunkten frei an das 16:9 Frame an. Die Mittellinien-Punkte (Wölbung Oben/Unten) begradigen gebogene Seitenlinien.")
-        lbl_roi_desc.setStyleSheet("color: #8e8e9c; font-size: 11px;")
-        lbl_roi_desc.setWordWrap(True)
-        layout_pitch_roi.addWidget(lbl_roi_desc)
-
-        self.btn_pitch_roi_side = QPushButton("📐 6 Punkte im Bild frei verziehen (Drag & Drop)")
-        self.btn_pitch_roi_side.setCheckable(True)
-        self.btn_pitch_roi_side.setStyleSheet("background-color: #2563eb; font-weight: bold; padding: 8px; color: white; border-radius: 8px;")
-        self.btn_pitch_roi_side.setToolTip("Aktivieren Sie diesen Modus, um die 6 Punkte direkt im Vorschaubild per Maus zu ziehen.")
-        self.btn_pitch_roi_side.toggled.connect(self.on_pitch_roi_toggled)
-        layout_pitch_roi.addWidget(self.btn_pitch_roi_side)
-
-        self.spin_pitch_corners = []
-        labels_pitch = [
-            ("🚩 Video Oben-Links (TL):", 0.0, 0.0, "#60a5fa"),
-            ("📍 ↕ Wölbung Oben (TC):", 50.0, 0.0, "#38bdf8"),
-            ("🚩 Video Oben-Rechts (TR):", 100.0, 0.0, "#60a5fa"),
-            ("🚩 Video Unten-Rechts (BR):", 100.0, 100.0, "#60a5fa"),
-            ("📍 ↕ Wölbung Unten (BC):", 50.0, 100.0, "#38bdf8"),
-            ("🚩 Video Unten-Links (BL):", 0.0, 100.0, "#60a5fa")
-        ]
-
-        for idx, (lbl_txt, def_x, def_y, col) in enumerate(labels_pitch):
-            row_box = QHBoxLayout()
-            lbl = QLabel(lbl_txt)
-            lbl.setStyleSheet(f"font-size: 11px; color: {col}; font-weight: 600; min-width: 150px;")
-
-            spin_x = NoWheelDoubleSpinBox()
-            spin_x.setRange(-20.0, 120.0)
-            spin_x.setValue(def_x)
-            spin_x.setSingleStep(0.5)
-            spin_x.setDecimals(1)
-            spin_x.setPrefix("X: ")
-            spin_x.setSuffix("%")
-            spin_x.valueChanged.connect(lambda val, i=idx: self.on_pitch_corner_spin_changed(i))
-
-            spin_y = NoWheelDoubleSpinBox()
-            spin_y.setRange(-20.0, 120.0)
-            spin_y.setValue(def_y)
-            spin_y.setSingleStep(0.5)
-            spin_y.setDecimals(1)
-            spin_y.setPrefix("Y: ")
-            spin_y.setSuffix("%")
-            spin_y.valueChanged.connect(lambda val, i=idx: self.on_pitch_corner_spin_changed(i))
-
-            btn_res_c = QToolButton()
-            btn_res_c.setText("↺")
-            btn_res_c.setToolTip(f"Diesen Punkt auf Standard ({def_x:.0f}%, {def_y:.0f}%) zurücksetzen")
-            btn_res_c.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 4px; color: #94a3b8; padding: 2px 6px;")
-            btn_res_c.clicked.connect(lambda checked=False, i=idx, dx=def_x, dy=def_y: self.reset_single_pitch_corner(i, dx, dy))
-
-            row_box.addWidget(lbl)
-            row_box.addWidget(spin_x, 1)
-            row_box.addWidget(spin_y, 1)
-            row_box.addWidget(btn_res_c)
-            layout_pitch_roi.addLayout(row_box)
-            self.spin_pitch_corners.append((spin_x, spin_y))
-
-        row_pitch_btns = QHBoxLayout()
-        btn_preset_curve = QPushButton("🏟️ Krümmung ausgleichen")
-        btn_preset_curve.setStyleSheet("background-color: #1e1e2d; border: 1px solid #2563eb; font-weight: 600; padding: 6px; color: #60a5fa; border-radius: 8px;")
-        btn_preset_curve.setToolTip("Setzt typische Entzerrungswerte für Mittellinien-Wölbung, um gebogene Seitenlinien zu begradigen")
-        btn_preset_curve.clicked.connect(self.apply_preset_curve_warp)
-
-        btn_preset_youth = QPushButton("⚽ Querfeld / Jugendspiel")
-        btn_preset_youth.setStyleSheet("background-color: #1e293b; border: 1px solid #10b981; font-weight: 600; padding: 6px; color: #34d399; border-radius: 8px;")
-        btn_preset_youth.setToolTip("Setzt das 6-Punkte-Polygon sofort passend für Jugendspiele auf dem Querfeld (untere Seitenlinie bei ~55%, Trainer & Bänke werden ignoriert)")
-        btn_preset_youth.clicked.connect(self.apply_preset_youth_crossfield)
-
-        btn_reset_pitch = QPushButton("↺ 100% Vollbild")
-        btn_reset_pitch.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; padding: 6px; font-size: 11px; color: #cbd5e1; border-radius: 8px;")
-        btn_reset_pitch.clicked.connect(self.apply_preset_fullscreen_warp)
-
-        row_pitch_btns.addWidget(btn_preset_curve)
-        row_pitch_btns.addWidget(btn_preset_youth)
-        row_pitch_btns.addWidget(btn_reset_pitch)
-        layout_pitch_roi.addLayout(row_pitch_btns)
-
-        self.ctrl_tactical_margin = LabeledSliderSpinBox("16:9 Taktik-Spielfeldrand (Puffer):", 0.0, 10.0, 0.0, 0.5, "%", decimals=1)
-        self.ctrl_tactical_margin.setToolTip("Fügt einen Sicherheitsabstand um das entzerrte 16:9 Spielfeld hinzu, um Auslinien nicht am Bildschirmrand abzuschneiden.")
-        self.ctrl_tactical_margin.valueChanged.connect(self.on_autocam_param_changed)
-        layout_pitch_roi.addWidget(self.ctrl_tactical_margin)
-
-        scroll_layout_ac.addWidget(grp_pitch_roi)
-
-        # 16:9 AutoCam Follow Cam Group
-        grp_ac_follow = QGroupBox("🎥 16:9 AutoCam (Automatische TV-Kameraführung)")
-        layout_ac_follow = QVBoxLayout(grp_ac_follow)
-        layout_ac_follow.setSpacing(8)
-
-        self.chk_ai_yolo = QCheckBox("🤖 Deep Learning Soccer-KI (Spieler-Dichte & Ball)")
-        self.chk_ai_yolo.setChecked(True)
-        self.chk_ai_yolo.setStyleSheet("font-weight: 600; color: #10b981; margin-bottom: 4px;")
-        self.chk_ai_yolo.toggled.connect(self.on_ai_yolo_toggled)
-        layout_ac_follow.addWidget(self.chk_ai_yolo)
-
-        lbl_track_mode = QLabel("Kameraführungs-Strategie:")
-        lbl_track_mode.setStyleSheet("font-weight: 600; color: #f4f4f6; font-size: 11px;")
-        layout_ac_follow.addWidget(lbl_track_mode)
-
-        self.combo_ai_model = QComboBox()
-        self.combo_ai_model.addItem("🏆 Soccer-Tracker Fusion (Spieler-Dichte + Ball - Empfohlen)", "hybrid_fusion")
-        self.combo_ai_model.addItem("👥 Reine Spielerdichte (100% Team-Cluster, absolut stabil)", "player_density")
-        self.combo_ai_model.addItem("⚽ Ball-Zentriert (100% Ball im 16:9 Bildzentrum)", "ball_centric")
-        self.combo_ai_model.addItem("🎯 Weite Taktik-Kamera (Ruhige Feldübersicht)", "smooth_tactic")
-        self.combo_ai_model.currentIndexChanged.connect(self.on_autocam_param_changed)
-        layout_ac_follow.addWidget(self.combo_ai_model)
-
-        # Action Fusion Weights (Ball vs Players)
-        self.ctrl_ball_weight = LabeledSliderSpinBox("⚽ Ball-Gewichtung (w_ball):", 0.0, 1.0, 0.70, 0.05, "", decimals=2)
-        self.ctrl_ball_weight.setToolTip("Bestimmt den Einfluss der Balltrajektorie auf die Kameraführung (0.70 = 70% Fokus auf den Ball)")
-        self.ctrl_ball_weight.valueChanged.connect(self.on_autocam_param_changed)
-        layout_ac_follow.addWidget(self.ctrl_ball_weight)
-
-        self.ctrl_players_weight = LabeledSliderSpinBox("👥 Spieler-Gewichtung (w_spieler):", 0.0, 1.0, 0.30, 0.05, "", decimals=2)
-        self.ctrl_players_weight.setToolTip("Bestimmt den Einfluss des Spielerschwerpunkts (Vorauseilen bei weiten Pässen)")
-        self.ctrl_players_weight.valueChanged.connect(self.on_autocam_param_changed)
-        layout_ac_follow.addWidget(self.ctrl_players_weight)
-
-        self.chk_strict_ball_center = QCheckBox("🎯 Ball exakt im 16:9 Zentrum halten (Zero-Lead)")
-        self.chk_strict_ball_center.setChecked(True)
-        self.chk_strict_ball_center.setStyleSheet("font-weight: 600; color: #f59e0b; margin-top: 4px; margin-bottom: 2px;")
-        self.chk_strict_ball_center.setToolTip("Hält den Ball bei Erkennung mathematisch exakt im Mittelpunkt des 16:9 Ausschnitts (horizontal und bei Zoom auch vertikal). Schaltet künstlichen Vorlauf-Versatz ab.")
-        self.chk_strict_ball_center.toggled.connect(self.on_autocam_param_changed)
-        layout_ac_follow.addWidget(self.chk_strict_ball_center)
-
-        # Smart Zoom Group
-        grp_zoom = QGroupBox("Kamera-Zoom")
-        layout_zoom = QVBoxLayout(grp_zoom)
-        layout_zoom.setSpacing(6)
-
-        self.chk_dynamic_zoom = QCheckBox("🔍 Dynamischen Zoom aktivieren (Bei Pässen & Torschüssen)")
-        self.chk_dynamic_zoom.setChecked(False)
-        self.chk_dynamic_zoom.setStyleSheet("font-weight: 600; color: #38bdf8; margin-bottom: 4px;")
-        self.chk_dynamic_zoom.toggled.connect(self.on_dynamic_zoom_toggled)
-        layout_zoom.addWidget(self.chk_dynamic_zoom)
-
-        self.ctrl_fixed_zoom = LabeledSliderSpinBox("Fester Zoom-Faktor (1.0x = Reiner Schwenk, kein Zoom):", 1.00, 2.00, 1.00, 0.05, "x", decimals=2)
-        self.ctrl_fixed_zoom.valueChanged.connect(self.on_autocam_param_changed)
-        layout_zoom.addWidget(self.ctrl_fixed_zoom)
-
-        self.ctrl_min_zoom = LabeledSliderSpinBox("Min-Zoom (Weitwinkel bei Pässen):", 1.0, 1.4, 1.00, 0.05, "x", decimals=2)
-        self.ctrl_min_zoom.valueChanged.connect(self.on_autocam_param_changed)
-        self.ctrl_min_zoom.setVisible(False)
-        layout_zoom.addWidget(self.ctrl_min_zoom)
-
-        self.ctrl_max_zoom = LabeledSliderSpinBox("Max-Zoom (Nahaufnahme):", 1.2, 2.2, 1.40, 0.05, "x", decimals=2)
-        self.ctrl_max_zoom.valueChanged.connect(self.on_autocam_param_changed)
-        self.ctrl_max_zoom.setVisible(False)
-        layout_zoom.addWidget(self.ctrl_max_zoom)
-
-        self.ctrl_zoom_speed = LabeledSliderSpinBox("Zoom-Geschwindigkeit:", 0.01, 0.15, 0.04, 0.01, "", decimals=2)
-        self.ctrl_zoom_speed.valueChanged.connect(self.on_autocam_param_changed)
-        self.ctrl_zoom_speed.setVisible(False)
-        layout_zoom.addWidget(self.ctrl_zoom_speed)
-
-        layout_ac_follow.addWidget(grp_zoom)
-
-        self.ctrl_ac_lead = LabeledSliderSpinBox("Spiel-Vorlauf / Antizipation (Blick in Spielrichtung):", 0.0, 0.40, 0.15, 0.05, "", decimals=2)
-        self.ctrl_ac_lead.valueChanged.connect(self.on_autocam_param_changed)
-        layout_ac_follow.addWidget(self.ctrl_ac_lead)
-
-        self.ctrl_ac_smooth = LabeledSliderSpinBox("Kamera-Dämpfung (Broadcast-Sanftheit):", 0.70, 0.99, 0.94, 0.01, "", decimals=2)
-        self.ctrl_ac_smooth.valueChanged.connect(self.on_autocam_param_changed)
-        layout_ac_follow.addWidget(self.ctrl_ac_smooth)
-
-        self.ctrl_ac_deadband = LabeledSliderSpinBox("Ruhezone / Ruckelfilter (Deadband):", 0.01, 0.25, 0.08, 0.01, "", decimals=2)
-        self.ctrl_ac_deadband.valueChanged.connect(self.on_autocam_param_changed)
-        layout_ac_follow.addWidget(self.ctrl_ac_deadband)
-
-        self.ctrl_ac_speed = LabeledSliderSpinBox("Max. Schwenkgeschwindigkeit:", 0.01, 0.15, 0.04, 0.005, "", decimals=3)
-        self.ctrl_ac_speed.valueChanged.connect(self.on_autocam_param_changed)
-        layout_ac_follow.addWidget(self.ctrl_ac_speed)
-
-        self.ctrl_ac_vpos = LabeledSliderSpinBox("Vertikale Ausrichtung (Spielfeld-Zentrum):", 0.35, 0.75, 0.50, 0.02, "", decimals=2)
-        self.ctrl_ac_vpos.valueChanged.connect(self.on_autocam_param_changed)
-        layout_ac_follow.addWidget(self.ctrl_ac_vpos)
-
-        # Dynamic Zone Damping (Strafraum-Dynamik)
-        self.chk_zone_damping = QCheckBox("🏟️ Zonen-Dämpfung (Höhere Agilität im Strafraum)")
-        self.chk_zone_damping.setChecked(True)
-        self.chk_zone_damping.setStyleSheet("font-weight: 600; color: #38bdf8; margin-top: 4px;")
-        self.chk_zone_damping.setToolTip("Erhöht die Kameraschnelligkeit bei Torschüssen und Strafraumszenen automatisch")
-        self.chk_zone_damping.toggled.connect(self.on_autocam_param_changed)
-        layout_ac_follow.addWidget(self.chk_zone_damping)
-
-        self.ctrl_zone_boost = LabeledSliderSpinBox("⚡ Strafraum-Schub (Agilitäts-Multiplikator):", 1.0, 3.0, 1.80, 0.1, "x", decimals=1)
-        self.ctrl_zone_boost.setToolTip("Beschleunigungsfaktor der Kamera in den beiden Strafräumen (1.8x = 80% agilere Reaktion bei Torgefahr)")
-        self.ctrl_zone_boost.valueChanged.connect(self.on_autocam_param_changed)
-        layout_ac_follow.addWidget(self.ctrl_zone_boost)
-
-        grp_scan_speed = QGroupBox("🤖 KI-Erkennungs-Modell & Performance")
-        layout_scan = QVBoxLayout(grp_scan_speed)
-        layout_scan.setSpacing(6)
-
-        lbl_engine = QLabel("KI-Tracking-Architektur:")
-        lbl_engine.setStyleSheet("font-weight: 600; color: #f4f4f6; font-size: 11px;")
-        layout_scan.addWidget(lbl_engine)
-
-        self.combo_ai_engine = QComboBox()
-        self.combo_ai_engine.addItem("🏆 YOLO11 Ultra-Fast (Standard / Spezialisiert)", "yolo11")
-        self.combo_ai_engine.addItem("🤖 RF-DETR Transformer (Apache 2.0 / Attention)", "rtdetr")
-        self.combo_ai_engine.addItem("🦴 YOLO-Pose Skelett (Extremitäten & VAR-Abseits)", "pose")
-        self.combo_ai_engine.currentIndexChanged.connect(self.on_ai_engine_changed)
-        layout_scan.addWidget(self.combo_ai_engine)
-
-        lbl_scan = QLabel("Berechnungsintervall:")
-        lbl_scan.setStyleSheet("font-weight: 600; color: #f4f4f6; font-size: 11px; margin-top: 4px;")
-        layout_scan.addWidget(lbl_scan)
-
-        self.combo_scan_speed = QComboBox()
-        self.combo_scan_speed.addItem("⚡ Ausgewogen (Jeder 5. Frame – Empfohlen)", 5)
-        self.combo_scan_speed.addItem("🚀 Turbo-Modus (Jeder 8. Frame – 5x schneller)", 8)
-        self.combo_scan_speed.addItem("🔥 Ultra-Speed (Jeder 12. Frame – 7x schneller)", 12)
-        self.combo_scan_speed.addItem("🎯 Maximale Präzision (Jeder 2. Frame)", 2)
-        self.combo_scan_speed.currentIndexChanged.connect(self.on_scan_speed_changed)
-        layout_scan.addWidget(self.combo_scan_speed)
-
-        self.chk_fp16 = QCheckBox("🚀 GPU FP16 Tensor-Cores (NVIDIA RTX)")
-        self.chk_fp16.setChecked(True)
-        self.chk_fp16.setStyleSheet("color: #10b981; font-weight: 600;")
-        self.chk_fp16.toggled.connect(self.on_scan_speed_changed)
-        layout_scan.addWidget(self.chk_fp16)
-        layout_ac_follow.addWidget(grp_scan_speed)
-
-        scroll_layout_ac.addWidget(grp_ac_follow)
-
-        # Ball Precision & Sideline False-Positive Filter Group
-        grp_precision = QGroupBox("🎯 Ball-Präzision & Spielfeld-Filter")
-        layout_precision = QVBoxLayout(grp_precision)
-        layout_precision.setSpacing(8)
-
-        self.chk_anti_jersey = QCheckBox("👕 Trikot-Fehlalarm-Filter (Anti-Weißes-Trikot)")
-        self.chk_anti_jersey.setChecked(True)
-        self.chk_anti_jersey.setStyleSheet("font-weight: 600; color: #10b981;")
-        self.chk_anti_jersey.setToolTip("Schließt Ball-Fehlalarme auf Spieleroberkörpern und weißen/hellen Trikots anatomisch aus.")
-        self.chk_anti_jersey.toggled.connect(self.on_autocam_param_changed)
-        layout_precision.addWidget(self.chk_anti_jersey)
-
-        self.chk_static_leaf = QCheckBox("🍂 Laub- & Bodenflecken-Unterdrückung")
-        self.chk_static_leaf.setChecked(True)
-        self.chk_static_leaf.setStyleSheet("font-weight: 600; color: #38bdf8;")
-        self.chk_static_leaf.setToolTip("Erkennt unbewegliche Flecken (Laubblätter, Rasenschäden) und sperrt diese temporär, wenn kein Spieler in Reichweite ist.")
-        self.chk_static_leaf.toggled.connect(self.on_autocam_param_changed)
-        layout_precision.addWidget(self.chk_static_leaf)
-
-        self.chk_sideline_filter = QCheckBox("🚶 Trainer- & Auslinien-Filter (Nur aktives Spielfeld)")
-        self.chk_sideline_filter.setChecked(True)
-        self.chk_sideline_filter.setStyleSheet("font-weight: 600; color: #f59e0b;")
-        self.chk_sideline_filter.setToolTip("Filtert Personen außerhalb des 6-Punkte-Polygons (Trainerzone, Auswechselspieler, Zuschauer) anhand präziser Bodenkontaktpunkte (Füße) aus.")
-        self.chk_sideline_filter.toggled.connect(self.toggle_sideline_filter)
-        layout_precision.addWidget(self.chk_sideline_filter)
-
-        self.ctrl_pitch_margin = LabeledSliderSpinBox("Auslinien-Toleranzpuffer:", 0.0, 5.0, 1.0, 0.5, "%", decimals=1)
-        self.ctrl_pitch_margin.setToolTip("Sicherheitsabstand nach innen/außen an der Auslinie (in % der Feldgröße).")
-        self.ctrl_pitch_margin.valueChanged.connect(self.on_autocam_param_changed)
-        layout_precision.addWidget(self.ctrl_pitch_margin)
-
-        scroll_layout_ac.addWidget(grp_precision)
-
-        # Tactical VAR & Pose Overlays Group
-        grp_var = QGroupBox("🚩 Taktik & FIFA-VAR-Entscheidungen")
-        layout_var = QVBoxLayout(grp_var)
-        layout_var.setSpacing(8)
-
-        self.chk_show_offside = QCheckBox("🚩 Virtuelle Abseitslinie (VAR-Linie)")
-        self.chk_show_offside.setChecked(True)
-        self.chk_show_offside.setStyleSheet("font-weight: 600; color: #f59e0b;")
-        self.chk_show_offside.setToolTip("Berechnet den vorletzten Verteidiger millimetergenau anhand von Fuß- und Körperachsen und projiziert die Abseitslinie auf Rasen und Radar.")
-        self.chk_show_offside.toggled.connect(self.toggle_offside_line)
-        layout_var.addWidget(self.chk_show_offside)
-
-        self.chk_show_skeletons = QCheckBox("🦴 Spieler-Skelette & Pose (17 Keypoints)")
-        self.chk_show_skeletons.setChecked(False)
-        self.chk_show_skeletons.setStyleSheet("font-weight: 600; color: #a855f7;")
-        self.chk_show_skeletons.setToolTip("Zeigt Gelenke, Extremitäten (Sprunggelenke, Knie, Schultern) und Blick-/Laufrichtung der Spieler.")
-        self.chk_show_skeletons.toggled.connect(self.toggle_skeletons)
-        layout_var.addWidget(self.chk_show_skeletons)
-
-        scroll_layout_ac.addWidget(grp_var)
-
-        # Scouting & Tactical Metrics Group (SkillCorner & TacticAI)
-        grp_scouting = QGroupBox("📊 Metrische Taktik-Analytik & Scouting")
-        layout_scouting = QVBoxLayout(grp_scouting)
-        layout_scouting.setSpacing(8)
-
-        self.chk_show_speed = QCheckBox("⚡ Live-Geschwindigkeit (km/h) an Spielern einblenden")
-        self.chk_show_speed.setChecked(False)
-        self.chk_show_speed.setStyleSheet("font-weight: 600; color: #38bdf8;")
-        self.chk_show_speed.setToolTip("Zeigt die metrische Momentangeschwindigkeit jedes Spielers und Balls in km/h sowie Sprint-Indikatoren (>25.2 km/h).")
-        self.chk_show_speed.toggled.connect(self.toggle_speed_badges)
-        layout_scouting.addWidget(self.chk_show_speed)
-
-        btn_open_tactics = QPushButton("📊 Taktik- & Scouting-Dashboard öffnen")
-        btn_open_tactics.setStyleSheet("""
-            QPushButton { background-color: #2563eb; color: #ffffff; font-weight: 700; padding: 10px 14px; border-radius: 8px; font-size: 12px; }
-            QPushButton:hover { background-color: #1d4ed8; }
-        """)
-        btn_open_tactics.setToolTip("Öffnet das interaktive Taktik-Dashboard mit 2D-Heatmaps, Pitch Control (Dominanz), Zonenverteilung und PDF/PNG-Export.")
-        btn_open_tactics.clicked.connect(self.open_tactics_dashboard)
-        layout_scouting.addWidget(btn_open_tactics)
-
-        scroll_layout_ac.addWidget(grp_scouting)
-
-        # 2D Tactical Radar Group (FIFA Pitch Mini-Map)
-        grp_radar = QGroupBox("🗺️ 2D Taktik-Radar (Mini-Map)")
-        layout_radar = QVBoxLayout(grp_radar)
-        layout_radar.setSpacing(8)
-
-        self.chk_show_radar = QCheckBox("🗺️ 2D Taktik-Radar im Bild einblenden")
-        self.chk_show_radar.setChecked(True)
-        self.chk_show_radar.setStyleSheet("font-weight: 600; color: #10b981;")
-        self.chk_show_radar.setToolTip("Zeigt eine 2D-Vogelperspektive des FIFA-Spielfelds (105x68m) mit Live-Spielern (Blau/Rot), Ball und 16:9 Kamerasichtfeld")
-        self.chk_show_radar.toggled.connect(self.on_radar_param_changed)
-        layout_radar.addWidget(self.chk_show_radar)
-
-        lbl_radar_pos = QLabel("Radar-Position im Bild:")
-        lbl_radar_pos.setStyleSheet("font-weight: 600; color: #f4f4f6; font-size: 11px;")
-        layout_radar.addWidget(lbl_radar_pos)
-
-        self.combo_radar_pos = QComboBox()
-        self.combo_radar_pos.addItem("↗️ Oben-Rechts (Standard)", "top_right")
-        self.combo_radar_pos.addItem("↘️ Unten-Rechts", "bottom_right")
-        self.combo_radar_pos.addItem("⬇️ Unten-Mitte (Klassisch)", "bottom_center")
-        self.combo_radar_pos.addItem("↖️ Oben-Links", "top_left")
-        self.combo_radar_pos.addItem("↙️ Unten-Links", "bottom_left")
-        self.combo_radar_pos.currentIndexChanged.connect(self.on_radar_param_changed)
-        layout_radar.addWidget(self.combo_radar_pos)
-
-        self.ctrl_radar_width = LabeledSliderSpinBox("Radar-Größe (Breite):", 200, 520, 320, 10, "px", decimals=0)
-        self.ctrl_radar_width.setToolTip("Breite der Mini-Map in Pixeln (Höhe passt sich automatisch dem FIFA 105x68m Seitenverhältnis an)")
-        self.ctrl_radar_width.valueChanged.connect(self.on_radar_param_changed)
-        layout_radar.addWidget(self.ctrl_radar_width)
-
-        self.ctrl_radar_opacity = LabeledSliderSpinBox("Radar-Deckkraft:", 0.30, 1.00, 0.85, 0.05, "", decimals=2)
-        self.ctrl_radar_opacity.setToolTip("Transparenz des Rasens und der Spielfeldmarkierungen im Videobild")
-        self.ctrl_radar_opacity.valueChanged.connect(self.on_radar_param_changed)
-        layout_radar.addWidget(self.ctrl_radar_opacity)
-
-        self.chk_burn_radar = QCheckBox("🎬 Radar fest in exportiertes Video einbrennen")
-        self.chk_burn_radar.setChecked(False)
-        self.chk_burn_radar.setStyleSheet("font-weight: 600; color: #38bdf8; margin-top: 4px;")
-        self.chk_burn_radar.setToolTip("Rendert die 2D-Minimap fest in das fertige Video beim 16:9- oder 32:9-Export.")
-        self.chk_burn_radar.toggled.connect(self.on_burn_radar_toggled)
-        layout_radar.addWidget(self.chk_burn_radar)
-
-        scroll_layout_ac.addWidget(grp_radar)
-
-        scroll_layout_ac.addStretch()
-        scroll_area_ac.setWidget(scroll_widget_ac)
-        autocam_layout.addWidget(scroll_area_ac)
-        self.right_pane.addTab(self.tab_autocam, "🎯 3. KI-Broadcast")
+        # TAB 3: 🎯 KI-Broadcast & Follow-Cam (Legacy-Modus - durch Autocam 5-Schritte ersetzt)
+        self._init_autocam_tab()
+        # Hinweis: self.tab_autocam wird nicht mehr zu right_pane hinzugefügt, da durch Autocam 5-Schritte Assistent ersetzt.
 
         # -------------------------------------------------------------------------
-        # TAB 4: 🚀 Export (Samsung One UI Style)
+        # TAB 3: 🚀 Export (Samsung One UI Style)
         # -------------------------------------------------------------------------
         self.tab_export = QWidget()
         layout_tab_exp = QVBoxLayout(self.tab_export)
@@ -4966,8 +1103,8 @@ class MainWindow(QMainWindow):
                 self.combo_exp_format.setItemText(idx_both, txt_b)
 
     # Video loading & seeking
-    def open_left_video(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Linkes Video öffnen (DJI Action 4)", "", "Video Files (*.mp4 *.mov *.mkv *.avi)")
+    def open_left_video(self, file_path_override: Optional[str] = None):
+        file_path = file_path_override or QFileDialog.getOpenFileName(self, "Linkes Video öffnen (DJI Action 4)", "", "Video Files (*.mp4 *.mov *.mkv *.avi)")[0]
         if file_path:
             self.video_path_l = file_path
             self.lbl_file_left.setText(os.path.basename(file_path))
@@ -4977,8 +1114,8 @@ class MainWindow(QMainWindow):
                 self.badge_left.setStyleSheet("background: #064e3b; color: #34d399; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600;")
             self._try_init_engine()
 
-    def open_right_video(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Rechtes Video öffnen (DJI Action 4)", "", "Video Files (*.mp4 *.mov *.mkv *.avi)")
+    def open_right_video(self, file_path_override: Optional[str] = None):
+        file_path = file_path_override or QFileDialog.getOpenFileName(self, "Rechtes Video öffnen (DJI Action 4)", "", "Video Files (*.mp4 *.mov *.mkv *.avi)")[0]
         if file_path:
             self.video_path_r = file_path
             self.lbl_file_right.setText(os.path.basename(file_path))
@@ -4988,8 +1125,8 @@ class MainWindow(QMainWindow):
                 self.badge_right.setStyleSheet("background: #064e3b; color: #34d399; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600;")
             self._try_init_engine()
 
-    def open_panorama_video(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "32:9 Panorama-Mastervideo öffnen", "", "Video Files (*.mp4 *.mov *.mkv *.avi)")
+    def open_panorama_video(self, file_path_override: Optional[str] = None):
+        file_path = file_path_override or QFileDialog.getOpenFileName(self, "32:9 Panorama-Mastervideo öffnen", "", "Video Files (*.mp4 *.mov *.mkv *.avi)")[0]
         if file_path:
             self.panorama_path = file_path
             self.lbl_file_left.setText(f"🎬 {os.path.basename(file_path)}")
@@ -5035,6 +1172,8 @@ class MainWindow(QMainWindow):
         self.lbl_total_time.setText(f"{h:02d}:{m:02d}:{s:02d}")
         
         self.update_in_out_display()
+        if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'update_video_info'):
+            self.tab_stepper.update_video_info(total_frames, fps)
         if self.engine.is_panorama_mode():
             if hasattr(self, 'lbl_video_status'):
                 status_txt = "🎬 8:3 Panorama geladen" if self.is_4_3_mode() else "🎬 32:9 Panorama geladen"
@@ -5194,7 +1333,17 @@ class MainWindow(QMainWindow):
             self.ctrl_left_roll.setValue(d["roll_left"])
             self.ctrl_right_roll.setValue(d["roll_right"])
 
+            if hasattr(self, 'ctrl_bottom_taper_x') and "bottom_taper_x" in d:
+                self.ctrl_bottom_taper_x.setValue(d["bottom_taper_x"])
+            if hasattr(self, 'ctrl_bottom_taper_y') and "bottom_taper_y" in d:
+                self.ctrl_bottom_taper_y.setValue(d["bottom_taper_y"])
+
             self.engine.invalidate_luts()
+            if self.rig.smart_seam_enabled:
+                curr_l = self.engine.video_left.get_frame(self.current_frame_idx) if self.engine.video_left else None
+                curr_r = self.engine.video_right.get_frame(max(0, self.current_frame_idx - self.engine.frame_offset_right)) if self.engine.video_right else None
+                if curr_l is not None and curr_r is not None:
+                    self.engine.luts.update_smart_seam(curr_l, curr_r, self.rig)
             self.render_high_res_preview()
 
             self.status_bar.showMessage(
@@ -5549,19 +1698,57 @@ class MainWindow(QMainWindow):
             self.status_bar.clearMessage()
 
     def set_stitching_subpage(self, index: int):
-        """Switches between Media/Sync and Calibration inside the combined Stitching tab."""
+        """Switches between Media/Sync, Calibration and Export inside the combined Stitching tab."""
         if hasattr(self, 'stitch_sub_stack'):
             self.stitch_sub_stack.setCurrentIndex(index)
-        if hasattr(self, 'btn_stitch_sub_media') and hasattr(self, 'btn_stitch_sub_calib'):
-            if index == 0:
-                self.btn_stitch_sub_media.setStyleSheet("background-color: #2563eb; color: #ffffff; font-weight: 700; font-size: 11px; padding: 6px 12px; border-radius: 6px; border: none;")
-                self.btn_stitch_sub_calib.setStyleSheet("background-color: transparent; color: #94a3b8; font-weight: 600; font-size: 11px; padding: 6px 12px; border-radius: 6px; border: none;")
-            else:
-                self.btn_stitch_sub_media.setStyleSheet("background-color: transparent; color: #94a3b8; font-weight: 600; font-size: 11px; padding: 6px 12px; border-radius: 6px; border: none;")
-                self.btn_stitch_sub_calib.setStyleSheet("background-color: #2563eb; color: #ffffff; font-weight: 700; font-size: 11px; padding: 6px 12px; border-radius: 6px; border: none;")
+        btns = [getattr(self, 'btn_stitch_sub_media', None),
+                getattr(self, 'btn_stitch_sub_calib', None),
+                getattr(self, 'btn_stitch_sub_export', None)]
+        for i, b in enumerate(btns):
+            if b:
+                if i == index:
+                    b.setStyleSheet("background-color: #2563eb; color: #ffffff; font-weight: 700; font-size: 11px; padding: 6px 12px; border-radius: 6px; border: none;")
+                else:
+                    b.setStyleSheet("background-color: transparent; color: #94a3b8; font-weight: 600; font-size: 11px; padding: 6px 12px; border-radius: 6px; border: none;")
 
-    def show_workspace(self, tab_idx: int = 0):
+    def set_wide_angle_subpage(self, index: int):
+        """Switches between Begradigung/Kalibrierung and Export inside the Weitwinkel tab."""
+        if hasattr(self, 'wa_sub_stack'):
+            self.wa_sub_stack.setCurrentIndex(index)
+        btns = [getattr(self, 'btn_wa_sub_calib', None),
+                getattr(self, 'btn_wa_sub_export', None)]
+        for i, b in enumerate(btns):
+            if b:
+                if i == index:
+                    b.setStyleSheet("background-color: #2563eb; color: #ffffff; font-weight: 700; font-size: 11px; padding: 6px 12px; border-radius: 6px; border: none;")
+                else:
+                    b.setStyleSheet("background-color: transparent; color: #94a3b8; font-weight: 600; font-size: 11px; padding: 6px 12px; border-radius: 6px; border: none;")
+
+    def set_autocam_subpage(self, index: int):
+        """Switches between Regie/KI-Tracking and Export inside the KI-Broadcast tab."""
+        if hasattr(self, 'ai_sub_stack'):
+            self.ai_sub_stack.setCurrentIndex(index)
+        btns = [getattr(self, 'btn_ai_sub_main', None),
+                getattr(self, 'btn_ai_sub_export', None)]
+        for i, b in enumerate(btns):
+            if b:
+                if i == index:
+                    b.setStyleSheet("background-color: #2563eb; color: #ffffff; font-weight: 700; font-size: 11px; padding: 6px 12px; border-radius: 6px; border: none;")
+                else:
+                    b.setStyleSheet("background-color: transparent; color: #94a3b8; font-weight: 600; font-size: 11px; padding: 6px 12px; border-radius: 6px; border: none;")
+
+    def show_workspace(self, tab_identifier: Any = 0):
         """Switches to the interactive workspace and activates designated workflow tab."""
+        tab_map = {
+            "wizard": 0, 0: 0,
+            "stitch": 1, 1: 1,
+            "wide": 2, 2: 2,
+            "ai": 0,      # Legacy 'ai' tab now maps directly to Autocam 5-Schritte Assistent (Tab 0)
+            "export": 3, 3: 3,
+            "live": 4, 4: 4,
+            "cloud": 5, 5: 5,
+        }
+        tab_idx = tab_map.get(tab_identifier, 0)
         if hasattr(self, 'main_stack'):
             self.main_stack.setCurrentIndex(1)
         if hasattr(self, 'right_pane') and 0 <= tab_idx < self.right_pane.count():
@@ -5575,16 +1762,19 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, index: int):
         """Handles sidebar tab switching and updates top step navigation pills."""
         tab_key_map = {
-            0: "stitch",
-            1: "wide",
-            2: "ai",
+            0: "wizard",
+            1: "stitch",
+            2: "wide",
             3: "export",
             4: "live",
             5: "cloud",
         }
-        self._update_nav_highlight(tab_key_map.get(index, "stitch"))
+        self._update_nav_highlight(tab_key_map.get(index, "wizard"))
 
-        if index == 1:  # Weitwinkel tab
+        if index == 0:  # Autocam Assistent
+            if hasattr(self, 'tab_stepper'):
+                self.tab_stepper.go_to_step(self.tab_stepper.current_step)
+        elif index == 2:  # Weitwinkel tab
             if hasattr(self, 'viewport'):
                 self.viewport.set_wide_angle_edit_mode(True)
             if hasattr(self, 'combo_view_mode'):
@@ -5598,7 +1788,7 @@ class MainWindow(QMainWindow):
                 if cur_vm not in ("wide_angle", "wide_angle_raw") and hasattr(self, 'viewport'):
                     self.viewport.set_wide_angle_edit_mode(False)
 
-        if index == 4:  # Live-Stream tab
+        if index == 4:  # Live-Stream tab (now at index 4)
             if hasattr(self, 'combo_view_mode') and self.combo_view_mode.findData("grid") >= 0:
                 self.set_view_mode_by_id("grid")
             if hasattr(self, 'live_capture_manager') and not self.live_capture_manager.is_running:
@@ -5610,10 +1800,10 @@ class MainWindow(QMainWindow):
     def _update_nav_highlight(self, active_key: str):
         """Updates highlight styling for top navigation pills."""
         pills = {
+            "wizard": getattr(self, "btn_nav_wizard", None),
             "home": getattr(self, "btn_nav_home", None),
             "stitch": getattr(self, "btn_nav_stitch", None),
             "wide": getattr(self, "btn_nav_wide", None),
-            "ai": getattr(self, "btn_nav_ai", None),
             "export": getattr(self, "btn_nav_export", None),
             "live": getattr(self, "btn_nav_live", None),
             "cloud": getattr(self, "btn_nav_cloud", None),
@@ -5622,10 +1812,16 @@ class MainWindow(QMainWindow):
             if btn is None:
                 continue
             if key == active_key:
-                btn.setStyleSheet(
-                    "background-color: #2563eb; border: none; border-radius: 6px; "
-                    "font-weight: 700; font-size: 11px; padding: 5px 12px; color: #ffffff;"
-                )
+                if key == "wizard":
+                    btn.setStyleSheet(
+                        "background-color: #10b981; color: #ffffff; border: none; border-radius: 6px; "
+                        "font-weight: 800; font-size: 11px; padding: 5px 12px;"
+                    )
+                else:
+                    btn.setStyleSheet(
+                        "background-color: #2563eb; border: none; border-radius: 6px; "
+                        "font-weight: 700; font-size: 11px; padding: 5px 12px; color: #ffffff;"
+                    )
             else:
                 btn.setStyleSheet(
                     "background-color: transparent; border: none; border-radius: 6px; "
@@ -5642,7 +1838,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'radio_src_16_9'):
                 self.radio_src_16_9.setChecked(True)
             self._on_source_format_radio_changed(True)
-        self.show_workspace(0)
+        self.show_workspace(1)
 
     def _on_source_format_radio_changed(self, checked: bool = True):
         """Applies presets according to selected camera source aspect ratio."""
@@ -5866,10 +2062,20 @@ class MainWindow(QMainWindow):
         self.trigger_smooth_preview()
 
     def on_rig_param_changed(self):
-        self.rig.left_pose.pitch = self.ctrl_cam_pitch.value()
-        self.rig.right_pose.pitch = self.ctrl_cam_pitch.value()
+        base_pitch = self.ctrl_cam_pitch.value()
+        pitch_diff = self.ctrl_pitch_diff.value() if hasattr(self, 'ctrl_pitch_diff') else 0.0
+        self.rig.left_pose.pitch = base_pitch
+        self.rig.right_pose.pitch = base_pitch + pitch_diff
         self.rig.left_pose.roll = self.ctrl_left_roll.value()
         self.rig.right_pose.roll = self.ctrl_right_roll.value()
+        if hasattr(self, 'ctrl_seam_pos'):
+            self.rig.seam_angle_offset = self.ctrl_seam_pos.value()
+        if hasattr(self, 'ctrl_bottom_taper_x'):
+            self.rig.bottom_seam_taper_x = self.ctrl_bottom_taper_x.value()
+        if hasattr(self, 'ctrl_bottom_taper_y'):
+            self.rig.bottom_seam_taper_y = self.ctrl_bottom_taper_y.value()
+        if hasattr(self, 'chk_smart_seam'):
+            self.rig.smart_seam_enabled = self.chk_smart_seam.isChecked()
 
         self.rig.global_pitch_correction = self.ctrl_global_pitch.value()
         self.rig.global_yaw_center = self.ctrl_h_offset.value()
@@ -5892,6 +2098,21 @@ class MainWindow(QMainWindow):
 
         self.engine.invalidate_luts()
         self.trigger_smooth_preview()
+
+    def on_smart_seam_toggled(self, checked: bool):
+        self.rig.smart_seam_enabled = checked
+        self.engine.invalidate_luts()
+        if checked and hasattr(self, 'current_frame_idx') and self.engine.video_left and self.engine.video_right:
+            idx_l = self.current_frame_idx
+            idx_r = self.current_frame_idx - self.engine.frame_offset_right
+            fl = self.engine.video_left.get_frame(idx_l)
+            fr = self.engine.video_right.get_frame(idx_r)
+            if fl is not None and fr is not None:
+                pw, ph = (1920, 720) if self.is_4_3_mode() else (2560, 720)
+                luts = self.engine.update_luts(pw, ph)
+                luts.update_smart_seam(fl, fr, self.rig)
+                self.viewport.luts_ref = luts
+        self.update_preview(self.current_frame_idx if hasattr(self, 'current_frame_idx') else 0)
 
     def on_pick_center_toggled(self, checked: bool):
         """Activates interactive click-to-center mode on the panorama preview."""
@@ -6003,6 +2224,10 @@ class MainWindow(QMainWindow):
         self.rig.projection_type = "cylindrical"
         self.rig.field_curvature_correction = 0.0
         self.rig.blend_width_deg = 4.0
+        self.rig.seam_angle_offset = 0.0
+        self.rig.bottom_seam_taper_x = 0.0
+        self.rig.bottom_seam_taper_y = 0.0
+        self.rig.smart_seam_enabled = False
         self.rig.auto_color_match = True
         self.rig.color_match_strength = 1.0
         self.rig.vertical_crop_offset = 0.0
@@ -6035,6 +2260,16 @@ class MainWindow(QMainWindow):
         self.ctrl_cam_fov.setValue(82.0)
         self.ctrl_safety_margin.setValue(0.5)
         self.chk_auto_crop.setChecked(True)
+        if hasattr(self, 'ctrl_pitch_diff'):
+            self.ctrl_pitch_diff.setValue(0.0)
+        if hasattr(self, 'ctrl_seam_pos'):
+            self.ctrl_seam_pos.setValue(0.0)
+        if hasattr(self, 'ctrl_bottom_taper_x'):
+            self.ctrl_bottom_taper_x.setValue(0.0)
+        if hasattr(self, 'ctrl_bottom_taper_y'):
+            self.ctrl_bottom_taper_y.setValue(0.0)
+        if hasattr(self, 'chk_smart_seam'):
+            self.chk_smart_seam.setChecked(False)
 
         for ctrl in [
             self.ctrl_left_yaw, self.ctrl_right_yaw, self.ctrl_master_yaw,
@@ -6311,12 +2546,49 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Spielfeld erkennen", "Konnte kein eindeutiges grünes Spielfeld im aktuellen Bild erkennen.")
 
     def on_ai_engine_changed(self):
-        """Switches the active detector backend (YOLO11, RT-DETR, YOLO-Pose)."""
+        """Switches the active detector backend (YOLO11, RT-DETR, YOLO-Pose, Autocam ONNX, or Custom)."""
         if hasattr(self, 'combo_ai_engine') and hasattr(self.engine, 'ai_broadcast'):
             backend_id = self.combo_ai_engine.currentData() or "yolo11"
+            if backend_id == "custom_browse":
+                file_path, _ = QFileDialog.getOpenFileName(
+                    self, "Eigenes KI-Modell wählen (.onnx oder .pt)", "",
+                    "KI-Modelle (*.onnx *.pt);;ONNX Modelle (*.onnx);;PyTorch Modelle (*.pt);;Alle Dateien (*.*)"
+                )
+                if file_path:
+                    fname = os.path.basename(file_path)
+                    custom_id = f"custom_{fname}"
+                    # Insert right before the last 'browse' entry
+                    idx = max(0, self.combo_ai_engine.count() - 1)
+                    self.combo_ai_engine.insertItem(idx, f"📁 {fname} (Benutzerdefiniert)", custom_id)
+                    self.combo_ai_engine.blockSignals(True)
+                    self.combo_ai_engine.setCurrentIndex(idx)
+                    self.combo_ai_engine.blockSignals(False)
+                    backend_id = custom_id
+                    if hasattr(self.engine.ai_broadcast, 'config'):
+                        self.engine.ai_broadcast.config.custom_model_path = file_path
+                else:
+                    # Cancelled -> revert to previous or default
+                    idx0 = self.combo_ai_engine.findData("yolo11")
+                    if idx0 >= 0:
+                        self.combo_ai_engine.blockSignals(True)
+                        self.combo_ai_engine.setCurrentIndex(idx0)
+                        self.combo_ai_engine.blockSignals(False)
+                    return
+
             self.engine.ai_broadcast.set_backend(backend_id)
             if hasattr(self, 'status_bar'):
-                self.status_bar.showMessage(f"🤖 KI-Modell gewechselt: {self.combo_ai_engine.currentText()}", 3500)
+                self.status_bar.showMessage(f"🤖 KI-Modell aktiv: {self.combo_ai_engine.currentText()}", 3500)
+
+            # Synchronize with Stepper Wizard if available
+            if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'combo_wizard_model'):
+                s_idx = self.tab_stepper.combo_wizard_model.findData(backend_id)
+                if s_idx >= 0 and self.tab_stepper.combo_wizard_model.currentIndex() != s_idx:
+                    self.tab_stepper.combo_wizard_model.blockSignals(True)
+                    self.tab_stepper.combo_wizard_model.setCurrentIndex(s_idx)
+                    self.tab_stepper.combo_wizard_model.blockSignals(False)
+                if hasattr(self.tab_stepper, 'update_summary'):
+                    self.tab_stepper.update_summary()
+
             self.refresh_preview()
 
     def on_scan_speed_changed(self):
@@ -6332,52 +2604,149 @@ class MainWindow(QMainWindow):
         self.update_resolution_dropdown()
 
     def update_resolution_dropdown(self):
-        self.combo_resolution.clear()
-        fmt = self.combo_exp_format.currentData()
+        targets = []
+        for attr in ('combo_resolution', 'combo_stitch_res'):
+            combo = getattr(self, attr, None)
+            if combo is not None and combo not in targets:
+                targets.append(combo)
+
+        sender = self.sender()
+        if sender and hasattr(sender, 'currentData') and sender.currentData():
+            fmt = sender.currentData()
+        elif hasattr(self, 'combo_stitch_format') and self.combo_stitch_format is not None and self.combo_stitch_format.currentData():
+            fmt = self.combo_stitch_format.currentData()
+        elif hasattr(self, 'combo_exp_format') and self.combo_exp_format is not None:
+            fmt = self.combo_exp_format.currentData()
+        else:
+            fmt = "32:9"
+
+        items = []
         if fmt in ("16:9_autocam", "16:9_tactical"):
-            self.combo_resolution.addItem("1920 x 1080 (Full HD 1080p - Standard 16:9)", (1920, 1080))
-            self.combo_resolution.addItem("1280 x 720 (HD 720p - Schnell / Kompakt)", (1280, 720))
-            self.combo_resolution.addItem("2560 x 1440 (2K QHD 1440p - Hohe Schärfe)", (2560, 1440))
-            self.combo_resolution.addItem("3840 x 2160 (4K UHD 2160p - Maximale Details)", (3840, 2160))
+            items.append(("1920 x 1080 (Full HD 1080p - Standard 16:9)", (1920, 1080)))
+            items.append(("1280 x 720 (HD 720p - Schnell / Kompakt)", (1280, 720)))
+            items.append(("2560 x 1440 (2K QHD 1440p - Hohe Schärfe)", (2560, 1440)))
+            items.append(("3840 x 2160 (4K UHD 2160p - Maximale Details)", (3840, 2160)))
         elif fmt == "21:10":
-            self.combo_resolution.addItem("3360 x 1600 (1600p 21:10 - Hohe Schärfe / Empfohlen)", (3360, 1600))
-            self.combo_resolution.addItem("2520 x 1200 (1200p 21:10 - Standard / Hohe FPS)", (2520, 1200))
-            self.combo_resolution.addItem("1512 x 720 (720p 21:10 - Schnell / Kompakt)", (1512, 720))
-            self.combo_resolution.addItem("4200 x 2000 (2K/4K 21:10 - Maximale Details)", (4200, 2000))
-            self.combo_resolution.addItem("2100 x 1000 (1000p 21:10 - Schnell)", (2100, 1000))
+            items.append(("3360 x 1600 (1600p 21:10 - Hohe Schärfe / Empfohlen)", (3360, 1600)))
+            items.append(("2520 x 1200 (1200p 21:10 - Standard / Hohe FPS)", (2520, 1200)))
+            items.append(("1512 x 720 (720p 21:10 - Schnell / Kompakt)", (1512, 720)))
+            items.append(("4200 x 2000 (2K/4K 21:10 - Maximale Details)", (4200, 2000)))
+            items.append(("2100 x 1000 (1000p 21:10 - Schnell)", (2100, 1000)))
         elif fmt == "wide_angle":
             w = self.wide_angle_config.target_width if hasattr(self, 'wide_angle_config') else 1920
             h = self.wide_angle_config.target_height if hasattr(self, 'wide_angle_config') else 1080
-            self.combo_resolution.addItem(f"{w} x {h} (Aktuelles Weitwinkel-Zielformat)", (w, h))
-            self.combo_resolution.addItem("1920 x 1080 (16:9 Full HD 1080p)", (1920, 1080))
-            self.combo_resolution.addItem("3840 x 2160 (16:9 4K UHD)", (3840, 2160))
-            self.combo_resolution.addItem("2560 x 1080 (21:9 UltraWide Cinema)", (2560, 1080))
-            self.combo_resolution.addItem("3440 x 1440 (21:9 UWQHD Cinema)", (3440, 1440))
-            self.combo_resolution.addItem("3840 x 1080 (32:9 SuperWide Panorama)", (3840, 1080))
-            self.combo_resolution.addItem("2880 x 2160 (4:3 Vollsensor)", (2880, 2160))
+            items.append((f"{w} x {h} (Aktuelles Weitwinkel-Zielformat)", (w, h)))
+            items.append(("1920 x 1080 (16:9 Full HD 1080p)", (1920, 1080)))
+            items.append(("3840 x 2160 (16:9 4K UHD)", (3840, 2160)))
+            items.append(("2560 x 1080 (21:9 UltraWide Cinema)", (2560, 1080)))
+            items.append(("3440 x 1440 (21:9 UWQHD Cinema)", (3440, 1440)))
+            items.append(("3840 x 1080 (32:9 SuperWide Panorama)", (3840, 1080)))
+            items.append(("2880 x 2160 (4:3 Vollsensor)", (2880, 2160)))
         elif fmt == "both":
             if self.is_4_3_mode():
-                self.combo_resolution.addItem("1920 x 1080 (1080p Broadcast + 2880x1080 8:3 Master)", (1920, 1080))
-                self.combo_resolution.addItem("1280 x 720 (720p Broadcast + 1920x720 8:3 Master - Schnell)", (1280, 720))
-                self.combo_resolution.addItem("2560 x 1440 (1440p Broadcast + 3840x1440 8:3 Master)", (2560, 1440))
-                self.combo_resolution.addItem("3840 x 2160 (4K Broadcast + 5760x2160 8:3 Master)", (3840, 2160))
+                items.append(("1920 x 1080 (1080p Broadcast + 2880x1080 8:3 Master)", (1920, 1080)))
+                items.append(("1280 x 720 (720p Broadcast + 1920x720 8:3 Master - Schnell)", (1280, 720)))
+                items.append(("2560 x 1440 (1440p Broadcast + 3840x1440 8:3 Master)", (2560, 1440)))
+                items.append(("3840 x 2160 (4K Broadcast + 5760x2160 8:3 Master)", (3840, 2160)))
             else:
-                self.combo_resolution.addItem("1920 x 1080 (1080p Broadcast + 3840x1080 Master)", (1920, 1080))
-                self.combo_resolution.addItem("1280 x 720 (720p Broadcast + 2560x720 Master - Schnell)", (1280, 720))
-                self.combo_resolution.addItem("2560 x 1440 (1440p Broadcast + 5120x1440 Master)", (2560, 1440))
-                self.combo_resolution.addItem("3840 x 2160 (4K Broadcast + 7680x2160 Master)", (3840, 2160))
+                items.append(("1920 x 1080 (1080p Broadcast + 3840x1080 Master)", (1920, 1080)))
+                items.append(("1280 x 720 (720p Broadcast + 2560x720 Master - Schnell)", (1280, 720)))
+                items.append(("2560 x 1440 (1440p Broadcast + 5120x1440 Master)", (2560, 1440)))
+                items.append(("3840 x 2160 (4K Broadcast + 7680x2160 Master)", (3840, 2160)))
+        elif fmt == "custom_crop":
+            norm = getattr(self.viewport, 'crop_rect_norm', [0.0, 0.0, 1.0, 1.0]) if hasattr(self, 'viewport') else [0.0, 0.0, 1.0, 1.0]
+            cw = max(320, int(3840 * norm[2]))
+            ch = max(180, int(1080 * norm[3]))
+            cw = (cw // 2) * 2
+            ch = (ch // 2) * 2
+            items.append((f"✂️ {cw} x {ch} (Nativer Zuschnitt)", (cw, ch)))
+            items.append(("📺 1920 x 1080 (Skaliert Full HD)", (1920, 1080)))
+            items.append(("🌟 3840 x 2160 (Skaliert 4K)", (3840, 2160)))
         else: # Panorama (8:3 for 4:3 mode or 32:9 for 16:9 mode)
             if self.is_4_3_mode():
-                self.combo_resolution.addItem("2880 x 1080 (1080p 8:3 Panorama - Standard)", (2880, 1080))
-                self.combo_resolution.addItem("3840 x 1440 (1440p 8:3 Panorama - Empfohlen)", (3840, 1440))
-                self.combo_resolution.addItem("1920 x 720 (720p 8:3 Panorama - Schnell / Kompakt)", (1920, 720))
-                self.combo_resolution.addItem("5760 x 2160 (4K 8:3 Panorama - Maximale Qualität)", (5760, 2160))
-                self.combo_resolution.addItem("5376 x 2016 (2.7K 8:3 Panorama - Nativ Action 4)", (5376, 2016))
+                items.append(("2880 x 1080 (1080p 8:3 Panorama - Standard)", (2880, 1080)))
+                items.append(("3840 x 1440 (1440p 8:3 Panorama - Empfohlen)", (3840, 1440)))
+                items.append(("1920 x 720 (720p 8:3 Panorama - Schnell / Kompakt)", (1920, 720)))
+                items.append(("5760 x 2160 (4K 8:3 Panorama - Maximale Qualität)", (5760, 2160)))
+                items.append(("5376 x 2016 (2.7K 8:3 Panorama - Nativ Action 4)", (5376, 2016)))
             else:
-                self.combo_resolution.addItem("5120 x 1440 (1440p 32:9 Panorama - Empfohlen)", (5120, 1440))
-                self.combo_resolution.addItem("3840 x 1080 (1080p 32:9 Panorama - Standard)", (3840, 1080))
-                self.combo_resolution.addItem("2560 x 720 (720p 32:9 Panorama - Schnell / Kompakt)", (2560, 720))
-                self.combo_resolution.addItem("7680 x 2160 (4K 32:9 Panorama - Maximale Qualität)", (7680, 2160))
+                items.append(("5120 x 1440 (1440p 32:9 Panorama - Empfohlen)", (5120, 1440)))
+                items.append(("3840 x 1080 (1080p 32:9 Panorama - Standard)", (3840, 1080)))
+                items.append(("2560 x 720 (720p 32:9 Panorama - Schnell / Kompakt)", (2560, 720)))
+                items.append(("7680 x 2160 (4K 32:9 Panorama - Maximale Qualität)", (7680, 2160)))
+
+        for target in targets:
+            curr_data = target.currentData()
+            target.clear()
+            for label, data in items:
+                target.addItem(label, data)
+            if curr_data is not None:
+                idx = target.findData(curr_data)
+                if idx >= 0:
+                    target.setCurrentIndex(idx)
+
+    def on_crop_mode_toggled(self, checked: bool):
+        self.crop_mode = checked
+        if hasattr(self, 'viewport'):
+            self.viewport.set_crop_mode(checked)
+            if checked:
+                self.status_bar.showMessage("✂️ Photoshop Zuschnitt aktiv: Ziehe an den 8 Anfassern oder verschiebe das Rechteck.")
+            else:
+                self.status_bar.showMessage("Photoshop Zuschnitt deaktiviert.")
+
+    def on_crop_ratio_changed(self, idx: int):
+        if hasattr(self, 'combo_crop_ratio') and hasattr(self, 'viewport'):
+            ratio = self.combo_crop_ratio.itemData(idx)
+            self.viewport.set_crop_aspect_ratio(ratio)
+
+    def on_crop_spin_changed(self):
+        if not hasattr(self, 'spin_crop_x') or not hasattr(self, 'viewport'):
+            return
+        x = self.spin_crop_x.value() / 100.0
+        y = self.spin_crop_y.value() / 100.0
+        w = self.spin_crop_w.value() / 100.0
+        h = self.spin_crop_h.value() / 100.0
+        self.viewport.set_crop_rect(x, y, w, h)
+
+    def on_crop_rect_from_viewport(self, x: float, y: float, w: float, h: float):
+        for sp in [getattr(self, 'spin_crop_x', None), getattr(self, 'spin_crop_y', None),
+                   getattr(self, 'spin_crop_w', None), getattr(self, 'spin_crop_h', None)]:
+            if sp: sp.blockSignals(True)
+        if hasattr(self, 'spin_crop_x'): self.spin_crop_x.setValue(x * 100.0)
+        if hasattr(self, 'spin_crop_y'): self.spin_crop_y.setValue(y * 100.0)
+        if hasattr(self, 'spin_crop_w'): self.spin_crop_w.setValue(w * 100.0)
+        if hasattr(self, 'spin_crop_h'): self.spin_crop_h.setValue(h * 100.0)
+        for sp in [getattr(self, 'spin_crop_x', None), getattr(self, 'spin_crop_y', None),
+                   getattr(self, 'spin_crop_w', None), getattr(self, 'spin_crop_h', None)]:
+            if sp: sp.blockSignals(False)
+
+    def on_transform_stretch_changed(self):
+        sx = self.ctrl_stretch_x.value() if hasattr(self, 'ctrl_stretch_x') else 1.0
+        sy = self.ctrl_stretch_y.value() if hasattr(self, 'ctrl_stretch_y') else 1.0
+        self.transform_stretch_x = sx
+        self.transform_stretch_y = sy
+        if hasattr(self, 'viewport'):
+            self.viewport.set_transform_stretch(sx, sy)
+
+    def reset_crop_and_transform(self):
+        self.transform_stretch_x = 1.0
+        self.transform_stretch_y = 1.0
+        if hasattr(self, 'ctrl_stretch_x'):
+            self.ctrl_stretch_x.setValue(1.0)
+        if hasattr(self, 'ctrl_stretch_y'):
+            self.ctrl_stretch_y.setValue(1.0)
+        if hasattr(self, 'combo_crop_ratio'):
+            self.combo_crop_ratio.setCurrentIndex(0)
+        if hasattr(self, 'viewport'):
+            self.viewport.set_transform_stretch(1.0, 1.0)
+            self.viewport.set_crop_rect(0.0, 0.0, 1.0, 1.0)
+            self.viewport.set_crop_aspect_ratio(None)
+        if hasattr(self, 'spin_crop_x'): self.spin_crop_x.setValue(0.0)
+        if hasattr(self, 'spin_crop_y'): self.spin_crop_y.setValue(0.0)
+        if hasattr(self, 'spin_crop_w'): self.spin_crop_w.setValue(100.0)
+        if hasattr(self, 'spin_crop_h'): self.spin_crop_h.setValue(100.0)
+        if hasattr(self, 'btn_crop_mode'):
+            self.btn_crop_mode.setChecked(False)
 
     def trigger_smooth_preview(self):
         """Instant draft update during dragging (<2ms) + debounced high-res render."""
@@ -6660,6 +3029,21 @@ class MainWindow(QMainWindow):
                 if hasattr(self, 'engine'):
                     self.engine.color_matcher.set_strength(val_cms)
                 self.ctrl_color_match_strength.blockSignals(False)
+
+            if hasattr(self, 'ctrl_bottom_taper_x'):
+                self.ctrl_bottom_taper_x.blockSignals(True)
+                self.ctrl_bottom_taper_x.setValue(getattr(self.rig, 'bottom_seam_taper_x', 0.0))
+                self.ctrl_bottom_taper_x.blockSignals(False)
+
+            if hasattr(self, 'ctrl_bottom_taper_y'):
+                self.ctrl_bottom_taper_y.blockSignals(True)
+                self.ctrl_bottom_taper_y.setValue(getattr(self.rig, 'bottom_seam_taper_y', 0.0))
+                self.ctrl_bottom_taper_y.blockSignals(False)
+
+            if hasattr(self, 'chk_smart_seam'):
+                self.chk_smart_seam.blockSignals(True)
+                self.chk_smart_seam.setChecked(getattr(self.rig, 'smart_seam_enabled', False))
+                self.chk_smart_seam.blockSignals(False)
 
             for ctrl in [
                 self.ctrl_left_yaw, self.ctrl_right_yaw, self.ctrl_master_yaw,
@@ -7099,7 +3483,7 @@ class MainWindow(QMainWindow):
                 "rig": default_rig.to_dict(),
                 "sync": {"frame_offset_right": 0},
                 "autocam": {
-                    "ai_tracking": True,
+                    "ai_tracking": False,
                     "tracking_mode": "hybrid_fusion",
                     "enable_dynamic_zoom": True,
                     "fixed_zoom_factor": 1.0,
@@ -7339,12 +3723,18 @@ class MainWindow(QMainWindow):
                     sx.blockSignals(False)
                     sy.blockSignals(False)
 
-    def start_video_export(self):
+    def start_video_export(self, custom_out_path: Optional[str] = None, 
+                           custom_w: Optional[int] = None, 
+                           custom_h: Optional[int] = None, 
+                           mode: Optional[str] = None,
+                           custom_start_frame: Optional[int] = None,
+                           custom_end_frame: Optional[int] = None,
+                           use_lookahead: Optional[bool] = None):
         if not self.has_active_video():
             QMessageBox.warning(self, "Export", "Bitte zuerst Videos laden (2 Kameras oder 32:9 Panorama)!")
             return
 
-        fmt = self.combo_exp_format.currentData()
+        fmt = mode if mode is not None else (self.combo_exp_format.currentData() if hasattr(self, 'combo_exp_format') else "16:9_autocam")
         if not self.engine.is_panorama_mode() and (not self.engine.video_left or not self.engine.video_right):
             if fmt == "wide_angle" and (self.engine.video_left or self.engine.video_right):
                 pass
@@ -7352,35 +3742,49 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Export", "Bitte zuerst beide Kameras öffnen oder ein 32:9 Panorama laden!")
                 return
 
-        if fmt == "wide_angle":
-            default_name = "weitwinkel_begradigt.mp4"
-        elif fmt == "32:9":
-            default_name = "fussball_panorama_8x3.mp4" if self.is_4_3_mode() else "fussball_panorama_32x9.mp4"
-        elif fmt == "21:10":
-            default_name = "fussball_panorama_21x10.mp4"
-        elif fmt == "both":
-            default_name = "fussball_broadcast_16x9.mp4"
+        if custom_out_path:
+            out_path = custom_out_path
         else:
-            default_name = "fussball_broadcast_16x9.mp4"
+            if fmt == "wide_angle":
+                default_name = "weitwinkel_begradigt.mp4"
+            elif fmt == "32:9":
+                default_name = "fussball_panorama_8x3.mp4" if self.is_4_3_mode() else "fussball_panorama_32x9.mp4"
+            elif fmt == "21:10":
+                default_name = "fussball_panorama_21x10.mp4"
+            elif fmt == "both":
+                default_name = "fussball_broadcast_16x9.mp4"
+            else:
+                default_name = "fussball_broadcast_16x9.mp4"
 
-        out_path, _ = QFileDialog.getSaveFileName(self, "Video speichern", default_name, "MP4 Video (*.mp4)")
-        if not out_path:
-            return
+            out_path, _ = QFileDialog.getSaveFileName(self, "Video speichern", default_name, "MP4 Video (*.mp4)")
+            if not out_path:
+                return
 
-        w, h = self.combo_resolution.currentData()
-        codec = self.combo_codec.currentData()
-        bitrate = int(self.ctrl_bitrate.value())
+        if custom_w is not None and custom_h is not None:
+            w, h = custom_w, custom_h
+        else:
+            res_val = self.combo_resolution.currentData() if hasattr(self, 'combo_resolution') else (1920, 1080)
+            w, h = res_val if isinstance(res_val, (tuple, list)) else (1920, 1080)
+
+        codec = self.combo_codec.currentData() if hasattr(self, 'combo_codec') else "hevc_nvenc"
+        bitrate = int(self.ctrl_bitrate.value()) if hasattr(self, 'ctrl_bitrate') else 16
         audio_src = self.combo_audio_source.currentData() if hasattr(self, 'combo_audio_source') else "left"
-        use_lookahead = self.chk_lookahead.isChecked() if hasattr(self, 'chk_lookahead') else True
+        if use_lookahead is None:
+            use_lookahead = self.chk_lookahead.isChecked() if hasattr(self, 'chk_lookahead') else True
 
         total_avail = self.engine.get_max_duration_frames()
-        if self.chk_export_trim_only.isChecked():
-            start_frame = self.in_point_frame
-            # End frame is exclusive in range(), so we pass out_point_frame + 1
-            end_frame = min(self.out_point_frame + 1, total_avail)
+        if custom_start_frame is not None and custom_end_frame is not None:
+            start_frame = max(0, custom_start_frame)
+            end_frame = min(custom_end_frame, total_avail) if total_avail > 0 else custom_end_frame
         else:
-            start_frame = 0
-            end_frame = total_avail
+            chk_trim = getattr(self, 'chk_export_trim_only', None)
+            if chk_trim and chk_trim.isChecked():
+                start_frame = self.in_point_frame
+                # End frame is exclusive in range(), so we pass out_point_frame + 1
+                end_frame = min(self.out_point_frame + 1, total_avail)
+            else:
+                start_frame = 0
+                end_frame = total_avail
 
         self.btn_start_render.setEnabled(False)
         self.btn_cancel_render.setEnabled(True)
@@ -7403,6 +3807,10 @@ class MainWindow(QMainWindow):
         )
         self.render_worker.progress_signal.connect(self.on_render_progress)
         self.render_worker.finished_signal.connect(self.on_render_finished)
+        if hasattr(self, 'tab_stepper'):
+            self.render_worker.progress_signal.connect(self.tab_stepper.on_export_progress)
+            self.render_worker.finished_signal.connect(self.tab_stepper.on_export_finished)
+            self.render_worker.preview_signal.connect(self.tab_stepper.on_export_preview_frame)
         self.render_worker.start()
 
     def on_render_progress(self, processed, total, fps, eta, stage_text=""):
@@ -7455,2488 +3863,70 @@ class MainWindow(QMainWindow):
             logger.info("Benutzer hat Export-Abbruch angefordert.")
             self.engine.cancel_render()
             self.lbl_render_stats.setText("Abbruch wird ausgeführt...")
+            if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'on_export_cancelled'):
+                self.tab_stepper.on_export_cancelled()
 
     # =========================================================================
     # MatchTrack Online Cloud Upload Integration
     # =========================================================================
 
-    def restore_cloud_session_on_startup(self):
-        """Silently restores DPAPI-encrypted session if present."""
-        try:
-            profile = self.cloud_client.restore_saved_session()
-            if profile:
-                self._update_cloud_ui_connected(profile)
-                self.refresh_cloud_teams_and_matches()
-        except Exception as e:
-            logger.debug(f"Cloud-Auto-Restore übersprungen: {e}")
+    def _init_stitching_tab(self):
+        """Initializes Tab 1: Stitching, Video Inputs, Audio Sync, Naht & Blending."""
+        build_stitching_tab(self)
 
-    def _update_cloud_ui_connected(self, profile: Dict[str, Any]):
-        username = profile.get("username") or self.cloud_client.username
-        role = profile.get("role", "TRAINER")
-        host = self.cloud_client.server_url.replace("https://", "").replace("http://", "")
-        is_ak = bool(self.cloud_client.access_token and self.cloud_client.access_token.startswith("mto_ak_"))
-        auth_tag = " [API-Key]" if is_ak else ""
-        self.lbl_cloud_status.setText(f"🟢 {username} ({role}){auth_tag} @ {host}")
-        self.lbl_cloud_status.setStyleSheet(
-            "background-color: #0d2818; color: #34d399; border: 1px solid #059669; "
-            "border-radius: 8px; padding: 5px 10px; font-size: 11px; font-weight: 700;"
-        )
-        self.btn_cloud_login.setText("🔑 Konto")
-        self.btn_cloud_refresh.setEnabled(True)
-        self.btn_cloud_logout.setVisible(True)
-        self.saved_cloud_server_url = self.cloud_client.server_url
+    def _create_codec_combobox(self):
+        return create_codec_combobox()
 
-    def _update_cloud_ui_disconnected(self):
-        self.lbl_cloud_status.setText("🔴 Nicht verbunden")
-        self.lbl_cloud_status.setStyleSheet(
-            "background-color: #1a1520; color: #f87171; border: 1px solid #3f202b; "
-            "border-radius: 8px; padding: 5px 10px; font-size: 11px; font-weight: 600;"
-        )
-        self.btn_cloud_login.setText("🔑 Verbinden")
-        self.btn_cloud_refresh.setEnabled(False)
-        self.btn_cloud_logout.setVisible(False)
-        self.combo_cloud_team.clear()
-        self.combo_cloud_team.addItem("— Bitte erst verbinden —", "")
-        self.combo_cloud_existing_match.clear()
+    def _create_audio_combobox(self, include_mix: bool = True):
+        return create_audio_combobox(include_mix=include_mix)
 
-    def open_cloud_login_dialog(self):
-        dlg = CloudLoginDialog(
-            self.cloud_client,
-            initial_url=self.cloud_client.server_url or self.saved_cloud_server_url,
-            parent=self
-        )
-        if dlg.exec() == QDialog.Accepted and self.cloud_client.is_authenticated:
-            self._update_cloud_ui_connected(self.cloud_client.user_info)
-            self.refresh_cloud_teams_and_matches()
-            self.status_bar.showMessage(f"☁️ Verbunden mit MatchTrack Online ({self.cloud_client.server_url})")
-
-    def logout_cloud_session(self):
-        self.cloud_client.logout()
-        self._update_cloud_ui_disconnected()
-        self.status_bar.showMessage("☁️ Von MatchTrack Online abgemeldet.")
-
-    def refresh_cloud_teams_and_matches(self):
-        if not self.cloud_client.is_authenticated:
-            return
-        try:
-            teams = self.cloud_client.fetch_teams()
-            prev_tid = self.combo_cloud_team.currentData() or self.saved_cloud_team_id
-            self.combo_cloud_team.blockSignals(True)
-            self.combo_cloud_team.clear()
-            self.combo_cloud_team.addItem("— Keine Mannschaft / Allgemein —", "")
-            restored_idx = 0
-            for idx, t in enumerate(teams, start=1):
-                t_id = t.get("id", "")
-                t_name = t.get("name", "Mannschaft")
-                age = t.get("age_group")
-                label = f"{t_name} ({age})" if age else t_name
-                self.combo_cloud_team.addItem(label, t_id)
-                if prev_tid and t_id == prev_tid:
-                    restored_idx = idx
-            if restored_idx == 0 and len(teams) == 1:
-                restored_idx = 1
-            self.combo_cloud_team.setCurrentIndex(restored_idx)
-            self.combo_cloud_team.blockSignals(False)
-
-            matches = self.cloud_client.fetch_recent_matches(limit=30)
-            self.combo_cloud_existing_match.blockSignals(True)
-            self.combo_cloud_existing_match.clear()
-            for m in matches:
-                m_id = m.get("id", "")
-                m_name = m.get("name", m_id)
-                m_team = m.get("team_name") or ""
-                v_type = m.get("video_type") or ""
-                badge = f" [{v_type}]" if v_type else ""
-                team_str = f" ({m_team})" if m_team else ""
-                self.combo_cloud_existing_match.addItem(f"{m_name}{team_str}{badge}", m)
-            self.combo_cloud_existing_match.blockSignals(False)
-        except Exception as e:
-            logger.warning(f"Fehler beim Aktualisieren der Cloud-Daten: {e}")
-
-    def on_cloud_target_mode_changed(self):
-        is_existing = (self.combo_cloud_target_mode.currentData() == "existing")
-        self.lbl_cloud_existing.setVisible(is_existing)
-        self.combo_cloud_existing_match.setVisible(is_existing)
-        if is_existing:
-            self.on_cloud_existing_match_selected()
-
-    def on_cloud_existing_match_selected(self):
-        if self.combo_cloud_target_mode.currentData() != "existing":
-            return
-        m_data = self.combo_cloud_existing_match.currentData()
-        if isinstance(m_data, dict):
-            if m_data.get("name"):
-                self.txt_cloud_match_name.setText(str(m_data["name"]))
-            if m_data.get("team_id"):
-                idx = self.combo_cloud_team.findData(m_data["team_id"])
-                if idx >= 0:
-                    self.combo_cloud_team.setCurrentIndex(idx)
-            if m_data.get("category"):
-                idx = self.combo_cloud_category.findData(m_data["category"])
-                if idx >= 0:
-                    self.combo_cloud_category.setCurrentIndex(idx)
-
-    def _suggest_default_match_name(self, sample_filepath: Optional[str] = None) -> str:
-        current = self.txt_cloud_match_name.text().strip()
-        if current:
-            return current
-        if sample_filepath:
-            folder_name = os.path.basename(os.path.dirname(os.path.abspath(sample_filepath)))
-            base_name = os.path.splitext(os.path.basename(sample_filepath))[0]
-            if folder_name and folder_name.lower() not in ("videos", "export", "output", "desktop", "downloads"):
-                return folder_name
-            return base_name
-        return f"Spiel vom {self.date_cloud_recording.date().toString('dd.MM.yyyy')}"
-
-    def pick_cloud_16x9_video(self):
-        """Selects a finished 16:9 Broadcast MP4 video for uploading to MatchTrack Online."""
-        fp, _ = QFileDialog.getOpenFileName(
-            self,
-            "Fertiges 16:9 Broadcast-Video auswählen",
-            "",
-            "MP4 Video (*.mp4 *.m4v *.mov)"
-        )
-        if fp:
-            self.txt_cloud_video_16x9.setText(fp)
-            if not self.txt_cloud_match_name.text().strip():
-                self.txt_cloud_match_name.setText(self._suggest_default_match_name(fp))
-
-    def pick_cloud_pano_video(self):
-        """Selects a finished Panorama (32:9 / 8:3 / 21:10) MP4 video for uploading to MatchTrack Online."""
-        fp, _ = QFileDialog.getOpenFileName(
-            self,
-            "Fertiges Panorama-Video (32:9 / 8:3 / 21:10) auswählen",
-            "",
-            "MP4 Video (*.mp4 *.m4v *.mov)"
-        )
-        if fp:
-            self.txt_cloud_video_pano.setText(fp)
-            if not self.txt_cloud_match_name.text().strip():
-                self.txt_cloud_match_name.setText(self._suggest_default_match_name(fp))
-
-    def start_manual_cloud_upload_dialog(self):
-        """Uploads the selected Broadcast (16:9) and/or Panorama video(s), or prompts to pick them if empty."""
-        if not self.cloud_client.is_authenticated:
-            self.open_cloud_login_dialog()
-            if not self.cloud_client.is_authenticated:
-                return
-
-        video_16x9 = self.txt_cloud_video_16x9.text().strip() if hasattr(self, 'txt_cloud_video_16x9') else ""
-        video_32x9 = self.txt_cloud_video_pano.text().strip() if hasattr(self, 'txt_cloud_video_pano') else ""
-
-        video_16x9 = video_16x9 if (video_16x9 and os.path.isfile(video_16x9)) else None
-        video_32x9 = video_32x9 if (video_32x9 and os.path.isfile(video_32x9)) else None
-
-        if not video_16x9 and not video_32x9:
-            files, _ = QFileDialog.getOpenFileNames(
-                self,
-                "Fertige Videodatei(en) für MatchTrack Online auswählen (16:9 Broadcast und/oder Panorama)",
-                "",
-                "MP4 Video (*.mp4 *.m4v *.mov)"
-            )
-            if not files:
-                return
-
-            for fp in files:
-                low = os.path.basename(fp).lower()
-                is_pano_file = any(t in low for t in ("32x9", "8x3", "21x10", "pano", "master"))
-                if not is_pano_file:
-                    try:
-                        cap = cv2.VideoCapture(fp)
-                        if cap.isOpened():
-                            vw = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-                            vh = max(1.0, cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                            if (vw / vh) >= 2.0:
-                                is_pano_file = True
-                        cap.release()
-                    except Exception:
-                        pass
-
-                if is_pano_file and not video_32x9:
-                    video_32x9 = fp
-                elif not is_pano_file and not video_16x9:
-                    video_16x9 = fp
-                elif not video_32x9:
-                    video_32x9 = fp
-                elif not video_16x9:
-                    video_16x9 = fp
-
-            if video_16x9 and hasattr(self, 'txt_cloud_video_16x9'):
-                self.txt_cloud_video_16x9.setText(video_16x9)
-            if video_32x9 and hasattr(self, 'txt_cloud_video_pano'):
-                self.txt_cloud_video_pano.setText(video_32x9)
-
-        sample_fp = video_16x9 or video_32x9
-        if sample_fp and not self.txt_cloud_match_name.text().strip():
-            self.txt_cloud_match_name.setText(self._suggest_default_match_name(sample_fp))
-
-        self._start_cloud_upload(video_16x9_path=video_16x9, video_32x9_path=video_32x9)
-
-    def _start_cloud_upload(self, video_16x9_path: Optional[str] = None, video_32x9_path: Optional[str] = None):
-        if self.cloud_upload_worker and self.cloud_upload_worker.isRunning():
-            QMessageBox.information(self, "Cloud-Upload", "Ein Cloud-Upload läuft bereits im Hintergrund.")
-            return
-
-        if not self.cloud_client.is_authenticated:
-            self.open_cloud_login_dialog()
-            if not self.cloud_client.is_authenticated:
-                return
-
-        sample_file = video_16x9_path or video_32x9_path
-        match_name = self._suggest_default_match_name(sample_file)
-        self.txt_cloud_match_name.setText(match_name)
-
-        team_id = self.combo_cloud_team.currentData() or None
-        user_role = str(self.cloud_client.user_info.get("role", "")).upper()
-        if user_role != "ADMIN" and not team_id:
-            QMessageBox.warning(
-                self,
-                "Mannschaft erforderlich",
-                "Bitte wähle im Dropdown 'Mannschaft' eine dir zugewiesene Mannschaft für den Upload aus."
-            )
-            return
-
-        target_match_id = None
-        if self.combo_cloud_target_mode.currentData() == "existing":
-            m_data = self.combo_cloud_existing_match.currentData()
-            if isinstance(m_data, dict) and m_data.get("id"):
-                target_match_id = m_data["id"]
-
-        res_data = self.combo_resolution.currentData()
-        h_px = res_data[1] if isinstance(res_data, (tuple, list)) and len(res_data) == 2 else 1080
-        video_quality = f"{h_px}p"
-
-        rec_date_str = self.date_cloud_recording.date().toString("yyyy-MM-dd")
-        is_pw = self.chk_cloud_password.isChecked() and bool(self.txt_cloud_password.text().strip())
-        pw_val = self.txt_cloud_password.text().strip() if is_pw else None
-
-        concurrency_val = self.combo_cloud_concurrency.currentData() if hasattr(self, 'combo_cloud_concurrency') else 3
-
-        upload_kwargs = {
-            "name": match_name,
-            "team_id": team_id,
-            "category": self.combo_cloud_category.currentData() or "Punktspiel",
-            "recording_date": rec_date_str,
-            "video_quality": video_quality,
-            "match_id": target_match_id,
-            "video_16x9_path": video_16x9_path,
-            "video_32x9_path": video_32x9_path,
-            "is_password_protected": is_pw,
-            "password": pw_val,
-            "skip_conversion": self.chk_cloud_fast_hls.isChecked(),
-            "notify_team_members": self.chk_cloud_notify.isChecked(),
-            "concurrency": concurrency_val or 3
-        }
-
-        self.btn_cloud_upload_now.setEnabled(False)
-        self.btn_cloud_cancel.setEnabled(True)
-        self.btn_cloud_open_browser.setEnabled(False)
-        self.cloud_progress_bar.setValue(0)
-        self.lbl_cloud_upload_stats.setText("☁️ Verbinde mit MatchTrack Online & starte Upload...")
-
-        self.cloud_upload_worker = CloudUploadWorker(self.cloud_client, upload_kwargs)
-        self.cloud_upload_worker.progress_signal.connect(self.on_cloud_upload_progress)
-        self.cloud_upload_worker.finished_signal.connect(self.on_cloud_upload_finished)
-        self.cloud_upload_worker.start()
-
-    def on_cloud_upload_progress(self, sent_bytes: int, total_bytes: int, speed_mb_s: float, eta_sec: float, status_text: str):
-        pct = int((sent_bytes / max(total_bytes, 1)) * 100)
-        self.cloud_progress_bar.setValue(pct)
-        if speed_mb_s > 0.01:
-            m, s = divmod(int(eta_sec), 60)
-            self.lbl_cloud_upload_stats.setText(f"{status_text} | {speed_mb_s:.1f} MB/s | Restzeit: {m:02d}:{s:02d}")
-        else:
-            self.lbl_cloud_upload_stats.setText(status_text)
-
-    def on_cloud_upload_finished(self, success: bool, message: str, result: dict):
-        self.btn_cloud_upload_now.setEnabled(True)
-        self.btn_cloud_cancel.setEnabled(False)
-        if success:
-            self.cloud_progress_bar.setValue(100)
-            match_url = result.get("match_url", "")
-            self.last_uploaded_match_url = match_url
-            self.btn_cloud_open_browser.setEnabled(bool(match_url))
-            self.lbl_cloud_upload_stats.setText(f"✅ Upload abgeschlossen: {message}")
-            self.status_bar.showMessage("☁️ Spiel erfolgreich auf MatchTrack Online veröffentlicht!")
-            self.refresh_cloud_teams_and_matches()
-
-            msg_box = QMessageBox(self)
-            msg_box.setIcon(QMessageBox.Information)
-            msg_box.setWindowTitle("☁️ MatchTrack Online Upload erfolgreich")
-            msg_box.setText(
-                f"🎉 Das Spiel wurde erfolgreich zu MatchTrack Online hochgeladen und angelegt!\n\n"
-                f"Spiel: {result.get('match_name', self.txt_cloud_match_name.text())}\n"
-                f"URL: {match_url}"
-            )
-            btn_open = msg_box.addButton("🌐 Jetzt im Browser öffnen", QMessageBox.AcceptRole)
-            msg_box.addButton("Schließen", QMessageBox.RejectRole)
-            msg_box.exec()
-            if msg_box.clickedButton() == btn_open and match_url:
-                QDesktopServices.openUrl(QUrl(match_url))
-        else:
-            self.lbl_cloud_upload_stats.setText(f"❌ Upload fehlgeschlagen: {message}")
-            QMessageBox.warning(self, "Cloud-Upload fehlgeschlagen", f"Der Upload zu MatchTrack Online konnte nicht abgeschlossen werden:\n\n{message}")
-
-    def cancel_cloud_upload(self):
-        if self.cloud_upload_worker and self.cloud_upload_worker.isRunning():
-            logger.info("Benutzer hat Abbruch des Cloud-Uploads angefordert.")
-            self.cloud_upload_worker.cancel()
-            self.lbl_cloud_upload_stats.setText("Upload-Abbruch wird ausgeführt...")
-
-    def open_last_uploaded_match_in_browser(self):
-        if self.last_uploaded_match_url:
-            QDesktopServices.openUrl(QUrl(self.last_uploaded_match_url))
-
-    # =========================================================================
-    # TAB 2: 📐 WEITWINKEL-STUDIO & 4-PUNKT SPIELFELD-TRAPEZ
-    # =========================================================================
+    def _create_export_upload_subpage(self, domain: str):
+        return create_export_upload_subpage(self, domain)
 
     def _init_wide_angle_tab(self):
-        """Initializes Tab 2: Wide-Angle Optical Dewarping and 4-Point Pitch Trapezoid Calibration."""
-        self.tab_wide_angle = QWidget()
-        layout_tab_wa = QVBoxLayout(self.tab_wide_angle)
-        layout_tab_wa.setContentsMargins(4, 4, 4, 4)
+        build_wide_angle_tab(self)
 
-        scroll_wa = QScrollArea()
-        scroll_wa.setWidgetResizable(True)
-        widget_wa = QWidget()
-        wa_layout = QVBoxLayout(widget_wa)
-        wa_layout.setSpacing(10)
-        wa_layout.setContentsMargins(8, 8, 8, 8)
-
-        # 1. Header Card
-        grp_hdr = QGroupBox("📐 WEITWINKEL & SPIELFELD-TRAPEZ")
-        grp_hdr.setStyleSheet("QGroupBox { font-weight: bold; color: #38bdf8; border: 1px solid #1e293b; border-radius: 8px; margin-top: 6px; padding-top: 10px; background-color: #0f172a; }")
-        hdr_layout = QVBoxLayout(grp_hdr)
-        hdr_layout.setSpacing(6)
-
-        lbl_hdr_desc = QLabel(
-            "Optische Begradigung extremer Weitwinkel-Objektive (155° Fisheye der DJI Osmo Action 4) "
-            "und Entzerrung der Spielfeldlinien zu einem mathematisch perfekten Trapez aus 4m Kamerahöhe."
-        )
-        lbl_hdr_desc.setStyleSheet("color: #94a3b8; font-size: 11px;")
-        lbl_hdr_desc.setWordWrap(True)
-        hdr_layout.addWidget(lbl_hdr_desc)
-        wa_layout.addWidget(grp_hdr)
-
-        # 2. Source Video & Camera Profile
-        grp_source = QGroupBox("📹 Quellvideo & Kamera-Profil")
-        source_layout = QVBoxLayout(grp_source)
-        source_layout.setSpacing(8)
-
-        self.btn_wa_open_video = QPushButton("📁 155° Ultra-Weitwinkel Video öffnen")
-        self.btn_wa_open_video.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; padding: 9px; font-size: 12px; border-radius: 8px;")
-        self.btn_wa_open_video.clicked.connect(lambda: self.open_wide_angle_video())
-        source_layout.addWidget(self.btn_wa_open_video)
-
-        self.lbl_wa_video_info = QLabel("Kein Weitwinkel-Video geladen.")
-        self.lbl_wa_video_info.setStyleSheet("color: #94a3b8; font-size: 11px; font-style: italic;")
-        self.lbl_wa_video_info.setWordWrap(True)
-        source_layout.addWidget(self.lbl_wa_video_info)
-
-        source_layout.addWidget(QLabel("Kamera-Profil & Optik-Voreinstellung:"))
-        self.combo_wa_preset = QComboBox()
-        self.combo_wa_preset.addItem("DJI Osmo Action 4 (155° Ultrawide - 4m Stativ)", "action4_155")
-        self.combo_wa_preset.addItem("DJI Osmo Action 3 / 5 Pro (155° Ultrawide)", "action35_155")
-        self.combo_wa_preset.addItem("GoPro Hero 11/12 (HyperView / SuperView)", "gopro_hyper")
-        self.combo_wa_preset.addItem("Generisches Fisheye (150°-170°)", "generic_fisheye")
-        self.combo_wa_preset.addItem("Benutzerdefiniert (Manuelle Parameter)", "custom")
-        self.combo_wa_preset.currentIndexChanged.connect(self._on_wa_preset_changed)
-        source_layout.addWidget(self.combo_wa_preset)
-
-        wa_layout.addWidget(grp_source)
-
-        # 3. Optical Dewarping Group
-        grp_optics = QGroupBox("🔍 1. Optische Begradigung (Fisheye-Entzerrung)")
-        optics_layout = QVBoxLayout(grp_optics)
-        optics_layout.setSpacing(6)
-
-        self.ctrl_wa_strength = LabeledSliderSpinBox("Fisheye-Begradigung:", 0.0, 1.20, 0.85, 0.01, "", decimals=2)
-        self.ctrl_wa_strength.setToolTip("Stärke der optischen Fisheye-Korrektur (0.0 = Aus/Fisheye, 0.85 = DJI Action 4 Ideal)")
-        self.ctrl_wa_strength.valueChanged.connect(self._on_wa_param_changed)
-        optics_layout.addWidget(self.ctrl_wa_strength)
-
-        self.ctrl_wa_hfov = LabeledSliderSpinBox("Horizontales FOV:", 90.0, 170.0, 138.0, 1.0, "°", decimals=1)
-        self.ctrl_wa_hfov.setToolTip("Sichtfeld der Kamera in Grad (DJI Action 4 Ultrawide ca. 138°-145°)")
-        self.ctrl_wa_hfov.valueChanged.connect(self._on_wa_param_changed)
-        optics_layout.addWidget(self.ctrl_wa_hfov)
-
-        self.ctrl_wa_zoom = LabeledSliderSpinBox("Brennweite / Zoom:", 0.70, 2.00, 1.05, 0.01, "x", decimals=2)
-        self.ctrl_wa_zoom.setToolTip("Skaliert das Bild zur Vermeidung schwarzer Ecken nach der Begradigung")
-        self.ctrl_wa_zoom.valueChanged.connect(self._on_wa_param_changed)
-        optics_layout.addWidget(self.ctrl_wa_zoom)
-
-        self.ctrl_wa_tilt = LabeledSliderSpinBox("Kamera-Neigung (Tilt):", -25.0, 25.0, 0.0, 0.5, "°", decimals=1)
-        self.ctrl_wa_tilt.setToolTip("Kompensiert den Neigungswinkel des Stativs nach unten/oben")
-        self.ctrl_wa_tilt.valueChanged.connect(self._on_wa_param_changed)
-        optics_layout.addWidget(self.ctrl_wa_tilt)
-
-        self.ctrl_wa_roll = LabeledSliderSpinBox("Horizont-Neigung (Roll):", -10.0, 10.0, 0.0, 0.1, "°", decimals=1)
-        self.ctrl_wa_roll.setToolTip("Dreht das Bild feinfühlig, um schiefe Stative waagerecht zu stellen")
-        self.ctrl_wa_roll.valueChanged.connect(self._on_wa_param_changed)
-        optics_layout.addWidget(self.ctrl_wa_roll)
-
-        self.ctrl_wa_v_offset = LabeledSliderSpinBox("Vertikaler Bildversatz:", -0.30, 0.30, 0.0, 0.01, "", decimals=2)
-        self.ctrl_wa_v_offset.setToolTip("Verschiebt den Bildmittelpunkt nach oben oder unten")
-        self.ctrl_wa_v_offset.valueChanged.connect(self._on_wa_param_changed)
-        optics_layout.addWidget(self.ctrl_wa_v_offset)
-
-        wa_layout.addWidget(grp_optics)
-
-        # 4. 4-Point Pitch Trapezoid Calibration Group
-        grp_calib = QGroupBox("⚽ 2. 4-Punkt Spielfeld-Kalibrierung (Trapez)")
-        calib_layout = QVBoxLayout(grp_calib)
-        calib_layout.setSpacing(8)
-
-        row_status = QHBoxLayout()
-        self.lbl_wa_calib_status = QLabel("● 4/4 Ecken aktiv")
-        self.lbl_wa_calib_status.setStyleSheet("background-color: #064e3b; color: #34d399; font-weight: 700; font-size: 11px; padding: 4px 8px; border-radius: 6px;")
-        row_status.addWidget(self.lbl_wa_calib_status)
-        row_status.addStretch()
-        calib_layout.addLayout(row_status)
-
-        self.btn_wa_mark_corners = QPushButton("🎯 4 Ecken nacheinander anklicken (1-4)")
-        self.btn_wa_mark_corners.setStyleSheet("background-color: #f59e0b; color: #1e1e2d; font-weight: 800; padding: 8px; font-size: 11px; border-radius: 8px;")
-        self.btn_wa_mark_corners.setToolTip("Klicken Sie nacheinander auf: 1. Eckfahne TL (Gelb) -> 2. TR (Blau) -> 3. BR (Rot) -> 4. BL (Grün)")
-        self.btn_wa_mark_corners.clicked.connect(self._on_wa_start_marking)
-        calib_layout.addWidget(self.btn_wa_mark_corners)
-
-        row_calib_actions = QHBoxLayout()
-        self.btn_wa_reset_corners = QPushButton("↺ Ecken zurücksetzen")
-        self.btn_wa_reset_corners.setStyleSheet("background-color: #1a1a28; border: 1px solid #2a2a3e; padding: 6px; font-size: 11px; border-radius: 6px; color: #cbd5e1;")
-        self.btn_wa_reset_corners.clicked.connect(self._on_wa_reset_corners)
-        row_calib_actions.addWidget(self.btn_wa_reset_corners)
-
-        self.chk_wa_edit_mode = QCheckBox("✏️ Ecken-Ziehen im Bild aktiv")
-        self.chk_wa_edit_mode.setChecked(True)
-        self.chk_wa_edit_mode.setStyleSheet("font-weight: 600; color: #38bdf8;")
-        self.chk_wa_edit_mode.toggled.connect(self._on_wa_edit_toggled)
-        row_calib_actions.addWidget(self.chk_wa_edit_mode)
-        calib_layout.addLayout(row_calib_actions)
-
-        # Geometry mode
-        calib_layout.addWidget(QLabel("Geometrie-Modus der Linien-Entzerrung:"))
-        self.radio_geom_trapezoid = QRadioButton("📐 Symmetrisches Trapez (Perspektive aus 4m Stativ)")
-        self.radio_geom_trapezoid.setChecked(True)
-        self.radio_geom_trapezoid.setStyleSheet("color: #f8fafc; font-weight: 600;")
-        self.radio_geom_trapezoid.toggled.connect(self._on_wa_geom_mode_toggled)
-        calib_layout.addWidget(self.radio_geom_trapezoid)
-
-        self.radio_geom_planar = QRadioButton("⚽ Planare Aufsicht (FIFA 105 × 68 m Rechteck)")
-        self.radio_geom_planar.setStyleSheet("color: #cbd5e1;")
-        self.radio_geom_planar.toggled.connect(self._on_wa_geom_mode_toggled)
-        calib_layout.addWidget(self.radio_geom_planar)
-
-        self.ctrl_wa_top_ratio = LabeledSliderSpinBox("Trapez-Breite Oben:", 0.40, 1.00, 0.72, 0.01, "", decimals=2)
-        self.ctrl_wa_top_ratio.setToolTip("Fluchtverhältnis der hinteren Auslinie gegenüber der vorderen Auslinie (typisch 0.65 - 0.75 bei 4m Höhe)")
-        self.ctrl_wa_top_ratio.valueChanged.connect(self._on_wa_param_changed)
-        calib_layout.addWidget(self.ctrl_wa_top_ratio)
-
-        self.ctrl_wa_margin = LabeledSliderSpinBox("Spielfeld-Randabstand:", 0.0, 0.30, 0.08, 0.01, "", decimals=2)
-        self.ctrl_wa_margin.setToolTip("Sicherheitsabstand um das Feld, damit Trainerbänke und Eckfahnen sichtbar bleiben")
-        self.ctrl_wa_margin.valueChanged.connect(self._on_wa_param_changed)
-        calib_layout.addWidget(self.ctrl_wa_margin)
-
-        wa_layout.addWidget(grp_calib)
-
-        # 5. Target Aspect Ratio & Framing Group
-        grp_target = QGroupBox("📺 3. Zielformat & Framing")
-        target_layout = QVBoxLayout(grp_target)
-        target_layout.setSpacing(6)
-
-        target_layout.addWidget(QLabel("Ziel-Seitenverhältnis & Bildformat:"))
-        self.combo_wa_target_format = QComboBox()
-        self.combo_wa_target_format.addItem("📺 16:9 Broadcast Full HD (1920x1080)", (1920, 1080))
-        self.combo_wa_target_format.addItem("📺 16:9 Broadcast 4K UHD (3840x2160)", (3840, 2160))
-        self.combo_wa_target_format.addItem("🎞️ 21:9 UltraWide Cinema (2560x1080)", (2560, 1080))
-        self.combo_wa_target_format.addItem("🎞️ 21:9 UWQHD Cinema (3440x1440)", (3440, 1440))
-        self.combo_wa_target_format.addItem("🏟️ 32:9 SuperWide Panorama (3840x1080)", (3840, 1080))
-        self.combo_wa_target_format.addItem("📷 4:3 Classic (Vollsensor 2880x2160)", (2880, 2160))
-        self.combo_wa_target_format.addItem("⚙️ Benutzerdefiniert (Breite x Höhe)", "custom")
-        self.combo_wa_target_format.currentIndexChanged.connect(self._on_wa_target_format_changed)
-        target_layout.addWidget(self.combo_wa_target_format)
-
-        self.widget_wa_custom_res = QWidget()
-        row_custom_res = QHBoxLayout(self.widget_wa_custom_res)
-        row_custom_res.setContentsMargins(0, 0, 0, 0)
-        self.spin_wa_custom_w = NoWheelSpinBox()
-        self.spin_wa_custom_w.setRange(640, 7680)
-        self.spin_wa_custom_w.setValue(1920)
-        self.spin_wa_custom_w.setSuffix(" px")
-        self.spin_wa_custom_w.valueChanged.connect(self._on_wa_custom_res_changed)
-        self.spin_wa_custom_h = NoWheelSpinBox()
-        self.spin_wa_custom_h.setRange(360, 4320)
-        self.spin_wa_custom_h.setValue(1080)
-        self.spin_wa_custom_h.setSuffix(" px")
-        self.spin_wa_custom_h.valueChanged.connect(self._on_wa_custom_res_changed)
-        row_custom_res.addWidget(QLabel("Breite:"))
-        row_custom_res.addWidget(self.spin_wa_custom_w)
-        row_custom_res.addWidget(QLabel("Höhe:"))
-        row_custom_res.addWidget(self.spin_wa_custom_h)
-        self.widget_wa_custom_res.setVisible(False)
-        target_layout.addWidget(self.widget_wa_custom_res)
-
-        wa_layout.addWidget(grp_target)
-
-        # 6. Action Buttons
-        grp_actions = QGroupBox("🚀 Aktionen & Export")
-        actions_layout = QVBoxLayout(grp_actions)
-        actions_layout.setSpacing(8)
-
-        self.btn_wa_save_preset = QPushButton("💾 Kalibrierung als Standard sichern")
-        self.btn_wa_save_preset.setStyleSheet("background-color: #1e1e2d; border: 1px solid #3b3b54; padding: 8px; font-size: 11px; border-radius: 8px; color: #cbd5e1; font-weight: 600;")
-        self.btn_wa_save_preset.clicked.connect(self.save_as_default_settings)
-        actions_layout.addWidget(self.btn_wa_save_preset)
-
-        self.btn_wa_export = QPushButton("🚀 Begradigtes Video exportieren")
-        self.btn_wa_export.setStyleSheet("background-color: #2563eb; color: white; font-weight: 800; padding: 10px; font-size: 12px; border-radius: 8px;")
-        self.btn_wa_export.clicked.connect(self._on_wa_export_clicked)
-        actions_layout.addWidget(self.btn_wa_export)
-
-        wa_layout.addWidget(grp_actions)
-
-        wa_layout.addStretch()
-        scroll_wa.setWidget(widget_wa)
-        layout_tab_wa.addWidget(scroll_wa)
-
-    def _on_wa_start_marking(self):
-        """Starts 4-point sequential corner placement in the viewport."""
-        self.set_view_mode_by_id("wide_angle_raw")
-        self.viewport.start_wide_angle_marking()
-        self.status_bar.showMessage("🎯 Klicken Sie nacheinander auf die 4 Eckfahnen: TL (Gelb) -> TR (Blau) -> BR (Rot) -> BL (Grün)")
-
-    def _on_wa_reset_corners(self):
-        """Resets the 4 pitch corners to standard default positions."""
-        default_corners = [[0.15, 0.25], [0.85, 0.25], [0.95, 0.90], [0.05, 0.90]]
-        self.wide_angle_config.corners = default_corners
-        self.viewport.set_wide_angle_corners(default_corners)
-        self.wide_angle_rectifier.config = self.wide_angle_config
-        self.wide_angle_rectifier.update_maps()
-        if hasattr(self, 'lbl_wa_calib_status'):
-            self.lbl_wa_calib_status.setText("● 4/4 Ecken aktiv (Standard)")
-            self.lbl_wa_calib_status.setStyleSheet("background-color: #064e3b; color: #34d399; font-weight: 700; font-size: 11px; padding: 4px 8px; border-radius: 6px;")
-        self.refresh_preview()
-
-    def _on_wa_edit_toggled(self, checked: bool):
-        """Toggles direct mouse drag editing of corners in viewport."""
-        self.viewport.set_wide_angle_edit_mode(checked)
-
-    def _on_viewport_wa_corners_changed(self, corners: list):
-        """Handles corner repositioning from viewport drag or click."""
-        if hasattr(self, 'wide_angle_config'):
-            self.wide_angle_config.corners = [[float(c[0]), float(c[1])] for c in corners]
-            self.wide_angle_rectifier.config = self.wide_angle_config
-            self.wide_angle_rectifier.update_maps()
-            self.refresh_preview()
-            if hasattr(self, 'lbl_wa_calib_status'):
-                self.lbl_wa_calib_status.setText("● 4/4 Ecken aktiv")
-                self.lbl_wa_calib_status.setStyleSheet("background-color: #064e3b; color: #34d399; font-weight: 700; font-size: 11px; padding: 4px 8px; border-radius: 6px;")
-
-    def _on_viewport_wa_step_changed(self, step: int):
-        """Updates UI status during sequential 4-point placement."""
-        if not hasattr(self, 'lbl_wa_calib_status'):
-            return
-        step_names = [
-            "1/4: Eckfahne OBEN LINKS (TL)",
-            "2/4: Eckfahne OBEN RECHTS (TR)",
-            "3/4: Eckfahne UNTEN RECHTS (BR)",
-            "4/4: Eckfahne UNTEN LINKS (BL)"
-        ]
-        if 0 <= step < 4:
-            self.lbl_wa_calib_status.setText(f"⏳ Schritt {step_names[step]}")
-            self.lbl_wa_calib_status.setStyleSheet("background-color: #78350f; color: #fbbf24; font-weight: 700; font-size: 11px; padding: 4px 8px; border-radius: 6px;")
-            if hasattr(self, 'combo_view_mode') and self.combo_view_mode.currentData() != "wide_angle_raw":
-                self.set_view_mode_by_id("wide_angle_raw")
-        else:
-            self.lbl_wa_calib_status.setText("● 4/4 Ecken aktiv (Trapez kalibriert)")
-            self.lbl_wa_calib_status.setStyleSheet("background-color: #064e3b; color: #34d399; font-weight: 700; font-size: 11px; padding: 4px 8px; border-radius: 6px;")
-            if hasattr(self, 'combo_view_mode') and self.combo_view_mode.currentData() != "wide_angle":
-                self.set_view_mode_by_id("wide_angle")
-            self.refresh_preview()
-
-    def _on_wa_preset_changed(self, index: int):
-        """Applies lens and geometry presets."""
-        preset_data = self.combo_wa_preset.currentData()
-        if preset_data == "action4_155":
-            self.wide_angle_config.hfov_deg = 138.0
-            self.wide_angle_config.fisheye_k1 = 0.85
-            self.wide_angle_config.zoom = 1.05
-            self.wide_angle_config.top_width_ratio = 0.72
-        elif preset_data == "action35_155":
-            self.wide_angle_config.hfov_deg = 136.0
-            self.wide_angle_config.fisheye_k1 = 0.82
-            self.wide_angle_config.zoom = 1.05
-            self.wide_angle_config.top_width_ratio = 0.72
-        elif preset_data == "gopro_hyper":
-            self.wide_angle_config.hfov_deg = 130.0
-            self.wide_angle_config.fisheye_k1 = 0.78
-            self.wide_angle_config.zoom = 1.08
-            self.wide_angle_config.top_width_ratio = 0.70
-        elif preset_data == "generic_fisheye":
-            self.wide_angle_config.hfov_deg = 140.0
-            self.wide_angle_config.fisheye_k1 = 0.90
-            self.wide_angle_config.zoom = 1.00
-            self.wide_angle_config.top_width_ratio = 0.72
-
-        self._sync_wide_angle_ui_from_config()
-        self.wide_angle_rectifier.config = self.wide_angle_config
-        self.wide_angle_rectifier.update_maps()
-        self.refresh_preview()
-
-    def _on_wa_param_changed(self, *args):
-        """Updates WideAngleConfig and remap LUTs when sliders change."""
-        if not hasattr(self, 'ctrl_wa_strength'):
-            return
-        self.wide_angle_config.fisheye_k1 = float(self.ctrl_wa_strength.value())
-        self.wide_angle_config.hfov_deg = float(self.ctrl_wa_hfov.value())
-        self.wide_angle_config.zoom = float(self.ctrl_wa_zoom.value())
-        self.wide_angle_config.tilt_deg = float(self.ctrl_wa_tilt.value())
-        self.wide_angle_config.roll_deg = float(self.ctrl_wa_roll.value())
-        self.wide_angle_config.v_offset = float(self.ctrl_wa_v_offset.value())
-        self.wide_angle_config.top_width_ratio = float(self.ctrl_wa_top_ratio.value())
-        self.wide_angle_config.pitch_margin = float(self.ctrl_wa_margin.value())
-
-        self.wide_angle_rectifier.config = self.wide_angle_config
-        self.wide_angle_rectifier.update_maps()
-        self.refresh_preview()
-
-    def _on_wa_geom_mode_toggled(self, checked: bool):
-        """Toggles between trapezoid perspective and FIFA planar rectangle."""
-        if self.radio_geom_planar.isChecked():
-            self.wide_angle_config.trapezoid_mode = False
-            if hasattr(self, 'ctrl_wa_top_ratio'):
-                self.ctrl_wa_top_ratio.setEnabled(False)
-        else:
-            self.wide_angle_config.trapezoid_mode = True
-            if hasattr(self, 'ctrl_wa_top_ratio'):
-                self.ctrl_wa_top_ratio.setEnabled(True)
-        self.wide_angle_rectifier.config = self.wide_angle_config
-        self.wide_angle_rectifier.update_maps()
-        self.refresh_preview()
-
-    def _on_wa_target_format_changed(self, index: int):
-        """Updates target aspect ratio and resolution."""
-        data = self.combo_wa_target_format.currentData()
-        if data == "custom":
-            if hasattr(self, 'widget_wa_custom_res'):
-                self.widget_wa_custom_res.setVisible(True)
-            w = self.spin_wa_custom_w.value()
-            h = self.spin_wa_custom_h.value()
-            self.wide_angle_config.target_width = w
-            self.wide_angle_config.target_height = h
-            self.wide_angle_config.aspect_ratio = w / max(1, h)
-        else:
-            if hasattr(self, 'widget_wa_custom_res'):
-                self.widget_wa_custom_res.setVisible(False)
-            if isinstance(data, (tuple, list)) and len(data) == 2:
-                w, h = data
-                self.wide_angle_config.target_width = w
-                self.wide_angle_config.target_height = h
-                self.wide_angle_config.aspect_ratio = w / max(1, h)
-
-        self.wide_angle_rectifier.config = self.wide_angle_config
-        self.wide_angle_rectifier.update_maps()
-        self.update_resolution_dropdown()
-        self.refresh_preview()
-
-    def _on_wa_custom_res_changed(self, val: int):
-        """Handles custom resolution spinbox changes."""
-        w = self.spin_wa_custom_w.value()
-        h = self.spin_wa_custom_h.value()
-        self.wide_angle_config.target_width = w
-        self.wide_angle_config.target_height = h
-        self.wide_angle_config.aspect_ratio = w / max(1, h)
-        self.wide_angle_rectifier.config = self.wide_angle_config
-        self.wide_angle_rectifier.update_maps()
-        self.update_resolution_dropdown()
-        self.refresh_preview()
-
-    def _on_wa_export_clicked(self):
-        """Switches to export tab pre-configured for Wide-Angle export."""
-        self.show_workspace(3) # Export Tab
-        idx = self.combo_exp_format.findData("wide_angle")
-        if idx >= 0:
-            self.combo_exp_format.setCurrentIndex(idx)
-
-    def _sync_wide_angle_ui_from_config(self):
-        """Synchronizes GUI sliders and selectors with self.wide_angle_config."""
-        cfg = self.wide_angle_config
-        widgets = [
-            (getattr(self, 'ctrl_wa_strength', None), cfg.fisheye_k1),
-            (getattr(self, 'ctrl_wa_hfov', None), cfg.hfov_deg),
-            (getattr(self, 'ctrl_wa_zoom', None), cfg.zoom),
-            (getattr(self, 'ctrl_wa_tilt', None), cfg.tilt_deg),
-            (getattr(self, 'ctrl_wa_roll', None), cfg.roll_deg),
-            (getattr(self, 'ctrl_wa_v_offset', None), cfg.v_offset),
-            (getattr(self, 'ctrl_wa_top_ratio', None), cfg.top_width_ratio),
-            (getattr(self, 'ctrl_wa_margin', None), cfg.pitch_margin),
-        ]
-        for ctrl, val in widgets:
-            if ctrl is not None:
-                ctrl.blockSignals(True)
-                ctrl.setValue(val)
-                ctrl.blockSignals(False)
-
-        if hasattr(self, 'radio_geom_trapezoid') and hasattr(self, 'radio_geom_planar'):
-            self.radio_geom_trapezoid.blockSignals(True)
-            self.radio_geom_planar.blockSignals(True)
-            self.radio_geom_trapezoid.setChecked(cfg.trapezoid_mode)
-            self.radio_geom_planar.setChecked(not cfg.trapezoid_mode)
-            self.radio_geom_trapezoid.blockSignals(False)
-            self.radio_geom_planar.blockSignals(False)
-            if hasattr(self, 'ctrl_wa_top_ratio'):
-                self.ctrl_wa_top_ratio.setEnabled(cfg.trapezoid_mode)
-
-    def open_wide_angle_video(self, file_path: Optional[str] = None):
-        """Opens a single ultra-wide angle video file for dewarping and pitch calibration."""
-        if not file_path:
-            file_path, _ = QFileDialog.getOpenFileName(
-                self, "155° Weitwinkel-Video öffnen", "",
-                "Video Files (*.mp4 *.mov *.mkv *.avi *.ts);;All Files (*.*)"
-            )
-        if not file_path or not os.path.exists(file_path):
-            return
-
-        try:
-            self.video_path_l = file_path
-            self.video_path_r = None
-            self.panorama_path = None
-            self.engine.load_videos(file_path, None)
-            self._after_videos_loaded()
-
-            fn = os.path.basename(file_path)
-            w = self.engine.video_left.width if self.engine.video_left else 0
-            h = self.engine.video_left.height if self.engine.video_left else 0
-            fps = self.engine.get_fps()
-            if hasattr(self, 'lbl_wa_video_info'):
-                self.lbl_wa_video_info.setText(f"📹 {fn} ({w}x{h} @ {fps:.1f} fps)")
-                self.lbl_wa_video_info.setStyleSheet("color: #10b981; font-weight: 700; font-size: 11px;")
-            if hasattr(self, 'lbl_video_status'):
-                self.lbl_video_status.setText(f"📐 Weitwinkel: {fn}")
-                self.lbl_video_status.setStyleSheet("color: #38bdf8; font-weight: 600;")
-
-            self.set_view_mode_by_id("wide_angle")
-            self.show_workspace(1)
-            self.seek_frame(0)
-            self.status_bar.showMessage(f"📐 Weitwinkel-Video geladen: {fn}")
-        except Exception as e:
-            QMessageBox.critical(self, "Fehler beim Laden", f"Video konnte nicht geöffnet werden: {e}")
-
-    # =========================================================================
-    # TAB 5: OBS-STYLE RTMP LIVE-STREAMING & CAMERA DIRECT CONNECT
-    # =========================================================================
+    def _init_autocam_tab(self):
+        build_autocam_tab(self)
 
     def _init_livestream_tab(self):
-        """Initializes Tab 5: OBS-Style RTMP Live-Streaming and DJI Action Direct Connect."""
-        self.tab_livestream = QWidget()
-        layout_tab_live = QVBoxLayout(self.tab_livestream)
-        layout_tab_live.setContentsMargins(4, 4, 4, 4)
-
-        scroll_live = QScrollArea()
-        scroll_live.setWidgetResizable(True)
-        widget_live = QWidget()
-        live_layout = QVBoxLayout(widget_live)
-        live_layout.setSpacing(10)
-        live_layout.setContentsMargins(8, 8, 8, 8)
-
-        # ---------------------------------------------------------------------
-        # 1. Master Telemetry Header Card
-        # ---------------------------------------------------------------------
-        grp_tally = QGroupBox("🔴 LIVE-BROADCAST MONITOR")
-        grp_tally.setStyleSheet("QGroupBox { font-weight: bold; color: #ef4444; border: 1px solid #3b2828; border-radius: 8px; margin-top: 6px; padding-top: 10px; background-color: #140d0d; }")
-        tally_layout = QVBoxLayout(grp_tally)
-        tally_layout.setSpacing(6)
-
-        row_tally_hdr = QHBoxLayout()
-        self.lbl_stream_tally = QLabel("⚪ BEREIT")
-        self.lbl_stream_tally.setStyleSheet(
-            "background-color: #27273a; color: #a1a1aa; font-weight: 900; font-size: 13px; padding: 6px 14px; border-radius: 8px;"
-        )
-        self.lbl_stream_tally.setAlignment(Qt.AlignCenter)
-
-        self.lbl_stream_telemetry = QLabel("Bitrate: 0 kbps | FPS: 0.0 | Uptime: 00:00:00 | Drops: 0")
-        self.lbl_stream_telemetry.setStyleSheet("color: #e4e4e7; font-size: 11px; font-weight: 600;")
-        self.lbl_stream_telemetry.setWordWrap(True)
-
-        row_tally_hdr.addWidget(self.lbl_stream_tally)
-        row_tally_hdr.addWidget(self.lbl_stream_telemetry, 1)
-        tally_layout.addLayout(row_tally_hdr)
-        live_layout.addWidget(grp_tally)
-
-        # ---------------------------------------------------------------------
-        # 1b. Multiview & Preview Monitor Switcher
-        # ---------------------------------------------------------------------
-        grp_monitor = QGroupBox("📺 Multiview-Monitor & Vorschau-Auswahl")
-        grp_monitor.setStyleSheet("QGroupBox { font-weight: bold; color: #38bdf8; border: 1px solid #282839; border-radius: 8px; margin-top: 4px; padding-top: 8px; }")
-        layout_mon = QVBoxLayout(grp_monitor)
-        layout_mon.setSpacing(6)
-
-        row_mv_btns = QHBoxLayout()
-        row_mv_btns.setSpacing(6)
-
-        self.btn_mv_grid = QPushButton("🔲 4er-Grid (1, 2, 3, 4)")
-        self.btn_mv_grid.setToolTip("Zeigt alle 4 Live-Streams gleichzeitig in einem 2x2 Regie-Grid (wie im Monitor gezeichnet)")
-        self.btn_mv_grid.setStyleSheet("background-color: #2563eb; color: white; font-weight: 700; border-radius: 6px; padding: 6px 10px; font-size: 11px;")
-        self.btn_mv_grid.clicked.connect(lambda: self.set_view_mode_by_id("grid"))
-
-        self.btn_mv_bcast = QPushButton("🎯 16:9 Regie")
-        self.btn_mv_bcast.setToolTip("Zeigt den virtuellen 16:9 TV-Broadcast mit Ball-Tracking im Vollbild")
-        self.btn_mv_bcast.setStyleSheet("background-color: #1a1a26; border: 1px solid #2a2a3e; color: #cbd5e1; border-radius: 6px; padding: 6px 10px; font-size: 11px;")
-        self.btn_mv_bcast.clicked.connect(lambda: self.set_view_mode_by_id("16:9"))
-
-        self.btn_mv_pano = QPushButton("🏟️ Panorama")
-        self.btn_mv_pano.setToolTip("Zeigt das vollständige gestitchte Stadion-Panorama")
-        self.btn_mv_pano.setStyleSheet("background-color: #1a1a26; border: 1px solid #2a2a3e; color: #cbd5e1; border-radius: 6px; padding: 6px 10px; font-size: 11px;")
-        self.btn_mv_pano.clicked.connect(lambda: self.set_view_mode_by_id("8:3" if self.is_4_3_mode() else "32:9"))
-
-        self.btn_mv_cam1 = QPushButton("📹 Cam 1")
-        self.btn_mv_cam1.setToolTip("Zeigt das Rohbild von Kamera Links")
-        self.btn_mv_cam1.setStyleSheet("background-color: #1a1a26; border: 1px solid #2a2a3e; color: #cbd5e1; border-radius: 6px; padding: 6px 10px; font-size: 11px;")
-        self.btn_mv_cam1.clicked.connect(lambda: self.set_view_mode_by_id("cam1"))
-
-        self.btn_mv_cam2 = QPushButton("📹 Cam 2")
-        self.btn_mv_cam2.setToolTip("Zeigt das Rohbild von Kamera Rechts")
-        self.btn_mv_cam2.setStyleSheet("background-color: #1a1a26; border: 1px solid #2a2a3e; color: #cbd5e1; border-radius: 6px; padding: 6px 10px; font-size: 11px;")
-        self.btn_mv_cam2.clicked.connect(lambda: self.set_view_mode_by_id("cam2"))
-
-        row_mv_btns.addWidget(self.btn_mv_grid, 2)
-        row_mv_btns.addWidget(self.btn_mv_bcast, 1)
-        row_mv_btns.addWidget(self.btn_mv_pano, 1)
-        row_mv_btns.addWidget(self.btn_mv_cam1, 1)
-        row_mv_btns.addWidget(self.btn_mv_cam2, 1)
-        layout_mon.addLayout(row_mv_btns)
-        live_layout.addWidget(grp_monitor)
-
-        # ---------------------------------------------------------------------
-        # 2. Camera Input Source Group (USB Webcams / UVC vs. Wireless BLE)
-        # ---------------------------------------------------------------------
-        grp_input = QGroupBox("📹 Kamera-Eingangsquellen & Verarbeitungs-Modus")
-        grp_input.setStyleSheet("QGroupBox { font-weight: bold; color: #38bdf8; border: 1px solid #282839; border-radius: 8px; margin-top: 6px; padding-top: 10px; }")
-        input_layout = QVBoxLayout(grp_input)
-        input_layout.setSpacing(8)
-
-        # Live Processing Mode: Stitching vs. Single-Camera vs. Dual Single-Stream
-        row_proc = QHBoxLayout()
-        row_proc.addWidget(QLabel("Live-Modus:"))
-        self.combo_live_proc_mode = QComboBox()
-        self.combo_live_proc_mode.addItem("🧵 Dual-Kamera Panorama-Stitching & KI-Regie (Stitching + Ball-Follow 16:9)", "stitching_dual")
-        self.combo_live_proc_mode.addItem("📹 Einzelkamera: Nur Cam 1 (Links - Direkt ohne Stitching / 0% Last)", "single_cam1")
-        self.combo_live_proc_mode.addItem("📹 Einzelkamera: Nur Cam 2 (Rechts - Direkt ohne Stitching / 0% Last)", "single_cam2")
-        self.combo_live_proc_mode.addItem("📹 Dual Direkt-Streams (Cam 1 & Cam 2 getrennt ohne Stitching)", "dual_cams_nostitch")
-        self.combo_live_proc_mode.currentIndexChanged.connect(self._on_live_proc_mode_changed)
-        self.combo_live_proc_mode.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6; font-weight: 700;")
-        row_proc.addWidget(self.combo_live_proc_mode, 1)
-        input_layout.addLayout(row_proc)
-
-        row_mode = QHBoxLayout()
-        row_mode.addWidget(QLabel("Eingangs-Weg:"))
-        self.combo_live_input_mode = QComboBox()
-        self.combo_live_input_mode.addItem("🔌 USB-Kabel (Standard-Webcams, USB-C, DJI Action - 0ms Latenz)", "uvc")
-        self.combo_live_input_mode.addItem("📡 Kabellose BLE-Fernsteuerung (Nur DJI Action 4/5 - Mimo Bypass)", "ble")
-        self.combo_live_input_mode.currentIndexChanged.connect(self._on_live_input_mode_changed)
-        self.combo_live_input_mode.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6;")
-        row_mode.addWidget(self.combo_live_input_mode, 1)
-        input_layout.addLayout(row_mode)
-
-        # Container A: USB Webcams & UVC Direct Controls
-        self.panel_uvc = QFrame()
-        self.panel_uvc.setStyleSheet("QFrame { background-color: #0b0b12; border: 1px solid #1e1e2d; border-radius: 6px; padding: 6px; }")
-        uvc_layout = QVBoxLayout(self.panel_uvc)
-        uvc_layout.setSpacing(6)
-
-        row_uvc_sel = QGridLayout()
-        row_uvc_sel.addWidget(QLabel("Cam Links / Einzelkamera:"), 0, 0)
-        self.combo_uvc_left = QComboBox()
-        self.combo_uvc_left.setStyleSheet("background-color: #12121a; border: 1px solid #27273a; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
-        row_uvc_sel.addWidget(self.combo_uvc_left, 0, 1)
-
-        row_uvc_sel.addWidget(QLabel("Cam Rechts (für Dual-Stitching):"), 1, 0)
-        self.combo_uvc_right = QComboBox()
-        self.combo_uvc_right.setStyleSheet("background-color: #12121a; border: 1px solid #27273a; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
-        row_uvc_sel.addWidget(self.combo_uvc_right, 1, 1)
-        uvc_layout.addLayout(row_uvc_sel)
-
-        row_uvc_btns = QHBoxLayout()
-        self.btn_refresh_uvc = QPushButton("🔄 Geräte suchen")
-        self.btn_refresh_uvc.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 4px 8px; color: #94a3b8; font-size: 11px;")
-        self.btn_refresh_uvc.clicked.connect(self._refresh_uvc_devices)
-
-        self.btn_toggle_uvc = QPushButton("▶️ Live-Kameras aktivieren")
-        self.btn_toggle_uvc.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; border-radius: 6px; padding: 5px 12px; font-size: 11px;")
-        self.btn_toggle_uvc.clicked.connect(self._toggle_uvc_live_capture)
-
-        row_uvc_btns.addWidget(self.btn_refresh_uvc)
-        row_uvc_btns.addWidget(self.btn_toggle_uvc, 1)
-        uvc_layout.addLayout(row_uvc_btns)
-
-        self.lbl_uvc_status = QLabel("UVC-Kameras nicht gestartet.")
-        self.lbl_uvc_status.setStyleSheet("color: #8e8e9c; font-size: 10px;")
-        uvc_layout.addWidget(self.lbl_uvc_status)
-        input_layout.addWidget(self.panel_uvc)
-
-        # Container B: Wireless BLE Controls (DJI Mimo Bypass)
-        self.panel_ble = QFrame()
-        self.panel_ble.setVisible(False)
-        self.panel_ble.setStyleSheet("QFrame { background-color: #0b0b12; border: 1px solid #1e1e2d; border-radius: 6px; padding: 6px; }")
-        ble_layout = QVBoxLayout(self.panel_ble)
-        ble_layout.setSpacing(6)
-
-        row_wifi = QGridLayout()
-        row_wifi.addWidget(QLabel("WLAN SSID:"), 0, 0)
-        self.txt_dji_wifi_ssid = QLineEdit()
-        self.txt_dji_wifi_ssid.setPlaceholderText("WLAN-Name am Platz...")
-        self.txt_dji_wifi_ssid.setStyleSheet("background-color: #12121a; border: 1px solid #27273a; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
-        row_wifi.addWidget(self.txt_dji_wifi_ssid, 0, 1)
-
-        row_wifi.addWidget(QLabel("WLAN Pass:"), 1, 0)
-        self.txt_dji_wifi_pass = QLineEdit()
-        self.txt_dji_wifi_pass.setEchoMode(QLineEdit.Password)
-        self.txt_dji_wifi_pass.setPlaceholderText("WLAN-Passwort...")
-        self.txt_dji_wifi_pass.setStyleSheet("background-color: #12121a; border: 1px solid #27273a; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
-        row_wifi.addWidget(self.txt_dji_wifi_pass, 1, 1)
-        ble_layout.addLayout(row_wifi)
-
-        row_ble_actions = QHBoxLayout()
-        self.btn_ble_scan = QPushButton("📡 DJI Kameras suchen (BLE)")
-        self.btn_ble_scan.setStyleSheet("background-color: #1e293b; border: 1px solid #3b82f6; color: #60a5fa; border-radius: 6px; padding: 5px 10px; font-weight: 600; font-size: 11px;")
-        self.btn_ble_scan.clicked.connect(self._on_ble_scan_clicked)
-
-        self.btn_dji_qr = QPushButton("📱 Live QR-Code")
-        self.btn_dji_qr.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 5px 10px; color: #94a3b8; font-size: 11px;")
-        self.btn_dji_qr.clicked.connect(self._on_show_dji_qr_dialog)
-
-        row_ble_actions.addWidget(self.btn_ble_scan, 1)
-        row_ble_actions.addWidget(self.btn_dji_qr)
-        ble_layout.addLayout(row_ble_actions)
-
-        row_ble_cams = QGridLayout()
-        row_ble_cams.addWidget(QLabel("DJI Links:"), 0, 0)
-        self.combo_dji_cam_left = QComboBox()
-        self.combo_dji_cam_left.setStyleSheet("background-color: #12121a; border: 1px solid #27273a; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
-        self.btn_dji_conn_left = QPushButton("Koppeln")
-        self.btn_dji_conn_left.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 3px 8px; font-size: 11px;")
-        self.btn_dji_conn_left.clicked.connect(self._on_dji_connect_left_clicked)
-        row_ble_cams.addWidget(self.combo_dji_cam_left, 0, 1)
-        row_ble_cams.addWidget(self.btn_dji_conn_left, 0, 2)
-
-        row_ble_cams.addWidget(QLabel("DJI Rechts:"), 1, 0)
-        self.combo_dji_cam_right = QComboBox()
-        self.combo_dji_cam_right.setStyleSheet("background-color: #12121a; border: 1px solid #27273a; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
-        self.btn_dji_conn_right = QPushButton("Koppeln")
-        self.btn_dji_conn_right.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 3px 8px; font-size: 11px;")
-        self.btn_dji_conn_right.clicked.connect(self._on_dji_connect_right_clicked)
-        row_ble_cams.addWidget(self.combo_dji_cam_right, 1, 1)
-        row_ble_cams.addWidget(self.btn_dji_conn_right, 1, 2)
-        ble_layout.addLayout(row_ble_cams)
-
-        self.btn_dji_start_rtmp = QPushButton("🚀 RTMP-Streams auf Kameras starten (Mimo Bypass)")
-        self.btn_dji_start_rtmp.setStyleSheet("background-color: #059669; color: white; font-weight: bold; border-radius: 6px; padding: 6px 12px; font-size: 11px;")
-        self.btn_dji_start_rtmp.clicked.connect(self._on_dji_start_rtmp_clicked)
-        ble_layout.addWidget(self.btn_dji_start_rtmp)
-
-        self.lbl_ble_status = QLabel("Bluetooth bereit.")
-        self.lbl_ble_status.setStyleSheet("color: #8e8e9c; font-size: 10px;")
-        ble_layout.addWidget(self.lbl_ble_status)
-        input_layout.addWidget(self.panel_ble)
-
-        live_layout.addWidget(grp_input)
-
-        # ---------------------------------------------------------------------
-        # 3. Multi-Destination RTMP Targets Group & Channel Mapping
-        # ---------------------------------------------------------------------
-        grp_targets = QGroupBox("🌐 Live-Stream Kanäle & Kamera-Zuordnung (Multi-Stream)")
-        grp_targets.setStyleSheet("QGroupBox { font-weight: bold; color: #a78bfa; border: 1px solid #282839; border-radius: 8px; margin-top: 6px; padding-top: 10px; }")
-        targets_layout = QVBoxLayout(grp_targets)
-        targets_layout.setSpacing(6)
-
-        row_preset = QHBoxLayout()
-        row_preset.addWidget(QLabel("Server-Preset:"))
-        self.combo_rtmp_preset = QComboBox()
-        self.combo_rtmp_preset.addItem("MatchTrack Online (rtmp://matchtrack.de:1935/live)", "rtmp://matchtrack.de:1935/live")
-        self.combo_rtmp_preset.addItem("YouTube Live (rtmp://a.rtmp.youtube.com/live2)", "rtmp://a.rtmp.youtube.com/live2")
-        self.combo_rtmp_preset.addItem("Twitch (rtmp://live.twitch.tv/app)", "rtmp://live.twitch.tv/app")
-        self.combo_rtmp_preset.addItem("Benutzerdefiniert (Custom RTMP)", "custom")
-        self.combo_rtmp_preset.currentIndexChanged.connect(self._on_rtmp_preset_changed)
-        self.combo_rtmp_preset.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6;")
-        row_preset.addWidget(self.combo_rtmp_preset, 1)
-        targets_layout.addLayout(row_preset)
-
-        row_server_url = QHBoxLayout()
-        row_server_url.addWidget(QLabel("Server URL:"))
-        self.txt_rtmp_server_url = QLineEdit("rtmp://matchtrack.de:1935/live")
-        self.txt_rtmp_server_url.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6; font-size: 11px;")
-        row_server_url.addWidget(self.txt_rtmp_server_url, 1)
-        targets_layout.addLayout(row_server_url)
-
-        def make_feed_combo(default_idx: int):
-            cb = QComboBox()
-            cb.addItem("🎯 16:9 Regie (Ball-Follow KI)", "broadcast_16x9")
-            cb.addItem("🏟️ 8:3 / 32:9 Taktik-Panorama", "panorama_8x3")
-            cb.addItem("📹 Cam 1 (Links / Einzelkamera)", "cam1")
-            cb.addItem("📹 Cam 2 (Rechts)", "cam2")
-            cb.setCurrentIndex(default_idx)
-            cb.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6; font-size: 11px;")
-            return cb
-
-        # Channel 1
-        row_c1 = QHBoxLayout()
-        self.chk_chan_1 = QCheckBox("Kanal 1:")
-        self.chk_chan_1.setChecked(True)
-        self.chk_chan_1.setStyleSheet("color: #38bdf8; font-weight: 700; font-size: 11px;")
-        self.combo_feed_c1 = make_feed_combo(0)  # broadcast_16x9
-        self.txt_stream_key_c1 = QLineEdit("broadcast_1")
-        self.txt_stream_key_c1.setPlaceholderText("Stream-Key...")
-        self.txt_stream_key_c1.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6; font-size: 11px;")
-        row_c1.addWidget(self.chk_chan_1, 2)
-        row_c1.addWidget(self.combo_feed_c1, 3)
-        row_c1.addWidget(self.txt_stream_key_c1, 2)
-        targets_layout.addLayout(row_c1)
-
-        # Channel 2
-        row_c2 = QHBoxLayout()
-        self.chk_chan_2 = QCheckBox("Kanal 2:")
-        self.chk_chan_2.setChecked(True)
-        self.chk_chan_2.setStyleSheet("color: #a78bfa; font-weight: 700; font-size: 11px;")
-        self.combo_feed_c2 = make_feed_combo(1)  # panorama_8x3
-        self.txt_stream_key_c2 = QLineEdit("panorama_1")
-        self.txt_stream_key_c2.setPlaceholderText("Stream-Key...")
-        self.txt_stream_key_c2.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6; font-size: 11px;")
-        row_c2.addWidget(self.chk_chan_2, 2)
-        row_c2.addWidget(self.combo_feed_c2, 3)
-        row_c2.addWidget(self.txt_stream_key_c2, 2)
-        targets_layout.addLayout(row_c2)
-
-        # Channel 3
-        row_c3 = QHBoxLayout()
-        self.chk_chan_3 = QCheckBox("Kanal 3:")
-        self.chk_chan_3.setChecked(False)
-        self.chk_chan_3.setStyleSheet("color: #cbd5e1; font-weight: 600; font-size: 11px;")
-        self.combo_feed_c3 = make_feed_combo(2)  # cam1
-        self.txt_stream_key_c3 = QLineEdit("cam1")
-        self.txt_stream_key_c3.setPlaceholderText("Stream-Key...")
-        self.txt_stream_key_c3.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6; font-size: 11px;")
-        row_c3.addWidget(self.chk_chan_3, 2)
-        row_c3.addWidget(self.combo_feed_c3, 3)
-        row_c3.addWidget(self.txt_stream_key_c3, 2)
-        targets_layout.addLayout(row_c3)
-
-        # Channel 4
-        row_c4 = QHBoxLayout()
-        self.chk_chan_4 = QCheckBox("Kanal 4:")
-        self.chk_chan_4.setChecked(False)
-        self.chk_chan_4.setStyleSheet("color: #cbd5e1; font-weight: 600; font-size: 11px;")
-        self.combo_feed_c4 = make_feed_combo(3)  # cam2
-        self.txt_stream_key_c4 = QLineEdit("cam2")
-        self.txt_stream_key_c4.setPlaceholderText("Stream-Key...")
-        self.txt_stream_key_c4.setStyleSheet("background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 3px 6px; color: #f4f4f6; font-size: 11px;")
-        row_c4.addWidget(self.chk_chan_4, 2)
-        row_c4.addWidget(self.combo_feed_c4, 3)
-        row_c4.addWidget(self.txt_stream_key_c4, 2)
-        targets_layout.addLayout(row_c4)
-
-        # Backwards compatibility aliases
-        self.chk_chan_bcast = self.chk_chan_1
-        self.chk_chan_pano = self.chk_chan_2
-        self.chk_chan_cam1 = self.chk_chan_3
-        self.chk_chan_cam2 = self.chk_chan_4
-        self.txt_stream_key_bcast = self.txt_stream_key_c1
-        self.txt_stream_key_pano = self.txt_stream_key_c2
-        self.txt_stream_key_cam1 = self.txt_stream_key_c3
-        self.txt_stream_key_cam2 = self.txt_stream_key_c4
-
-        live_layout.addWidget(grp_targets)
-
-        # ---------------------------------------------------------------------
-        # 4. OBS Studio Stream- & Kodierer-Einstellungen (1:1 OBS Engine)
-        # ---------------------------------------------------------------------
-        self.obs_settings_widget = OBSOutputSettingsWidget()
-        live_layout.addWidget(self.obs_settings_widget)
-
-        # Aliases for seamless integration with existing MainWindow methods
-        self.combo_stream_encoder = self.obs_settings_widget.combo_video_encoder
-        self.combo_stream_resolution = self.obs_settings_widget.combo_rescale_res
-        self.combo_stream_fps = self.obs_settings_widget.combo_fps
-        self.combo_stream_resolution.currentIndexChanged.connect(self._on_stream_resolution_changed)
-
-        # Legacy proxy for bitrate queries
-        class _BitrateProxy:
-            def __init__(self, spn): self._spn = spn
-            def currentData(self): return self._spn.value()
-            def findData(self, val): return 0
-            def setCurrentIndex(self, idx): pass
-            def value(self): return self._spn.value()
-            def setValue(self, v): self._spn.setValue(int(v))
-        self.combo_stream_bitrate = _BitrateProxy(self.obs_settings_widget.spn_bitrate)
-
-        # ---------------------------------------------------------------------
-        # 5. Master Broadcast Action Buttons
-        # ---------------------------------------------------------------------
-        self.btn_master_stream_toggle = QPushButton("🔴 LIVE-STREAM STARTEN (OBS-Engine)")
-        self.btn_master_stream_toggle.setStyleSheet(
-            "background-color: #dc2626; color: white; font-weight: 800; font-size: 13px; padding: 12px; border-radius: 10px;"
-        )
-        self.btn_master_stream_toggle.clicked.connect(self._toggle_master_live_stream)
-        live_layout.addWidget(self.btn_master_stream_toggle)
-
-        live_layout.addStretch()
-        scroll_live.setWidget(widget_live)
-        layout_tab_live.addWidget(scroll_live)
-
-        # Initial device enumeration
-        self._refresh_uvc_devices()
-
-    # =========================================================================
-    # TAB 6: MATCHTRACK ONLINE CLOUD-UPLOAD & MATCH-ZUWEISUNG
-    # =========================================================================
+        build_livestream_tab(self)
 
     def _init_cloud_tab(self):
-        """Initializes dedicated Tab 6: MatchTrack Online Cloud-Upload & Match-Zuweisung."""
-        self.tab_cloud = QWidget()
-        layout_tab_cloud = QVBoxLayout(self.tab_cloud)
-        layout_tab_cloud.setContentsMargins(4, 4, 4, 4)
-
-        scroll_cloud = QScrollArea()
-        scroll_cloud.setWidgetResizable(True)
-        widget_cloud = QWidget()
-        cloud_tab_layout = QVBoxLayout(widget_cloud)
-        cloud_tab_layout.setSpacing(12)
-
-        grp_cloud = QGroupBox("☁️ MatchTrack Online – Direkt-Upload & Match-Zuweisung")
-        cloud_box = QVBoxLayout(grp_cloud)
-        cloud_box.setSpacing(8)
-
-        # Connection Status Row
-        conn_row = QHBoxLayout()
-        self.lbl_cloud_status = QLabel("🔴 Nicht verbunden")
-        self.lbl_cloud_status.setStyleSheet(
-            "background-color: #1a1520; color: #f87171; border: 1px solid #3f202b; "
-            "border-radius: 8px; padding: 5px 10px; font-size: 11px; font-weight: 600;"
-        )
-        self.btn_cloud_login = QPushButton("🔑 Verbinden")
-        self.btn_cloud_login.setStyleSheet(
-            "background-color: #1e293b; border: 1px solid #3b82f6; color: #60a5fa; "
-            "font-weight: bold; padding: 5px 10px; border-radius: 8px; font-size: 11px;"
-        )
-        self.btn_cloud_login.clicked.connect(self.open_cloud_login_dialog)
-
-        self.btn_cloud_refresh = QToolButton()
-        self.btn_cloud_refresh.setText("🔄")
-        self.btn_cloud_refresh.setToolTip("Mannschaften & Spieleliste vom Server neu laden")
-        self.btn_cloud_refresh.setStyleSheet(
-            "background-color: #1a1a26; border: 1px solid #28283a; border-radius: 8px; padding: 5px 8px;"
-        )
-        self.btn_cloud_refresh.setEnabled(False)
-        self.btn_cloud_refresh.clicked.connect(self.refresh_cloud_teams_and_matches)
-
-        self.btn_cloud_logout = QPushButton("Abmelden")
-        self.btn_cloud_logout.setStyleSheet(
-            "background-color: #1a1a26; border: 1px solid #28283a; color: #94a3b8; "
-            "padding: 5px 8px; border-radius: 8px; font-size: 11px;"
-        )
-        self.btn_cloud_logout.setVisible(False)
-        self.btn_cloud_logout.clicked.connect(self.logout_cloud_session)
-
-        conn_row.addWidget(self.lbl_cloud_status, 1)
-        conn_row.addWidget(self.btn_cloud_login)
-        conn_row.addWidget(self.btn_cloud_refresh)
-        conn_row.addWidget(self.btn_cloud_logout)
-        cloud_box.addLayout(conn_row)
-
-        # Target Mode: New Match vs Existing Match
-        cloud_box.addWidget(QLabel("Ziel auf Plattform:"))
-        self.combo_cloud_target_mode = NoWheelComboBox()
-        self.combo_cloud_target_mode.addItem("✨ Neues Spiel auf MatchTrack Online anlegen", "new")
-        self.combo_cloud_target_mode.addItem("➕ Zu bestehendem Spiel hinzufügen / Perspektive ergänzen", "existing")
-        self.combo_cloud_target_mode.currentIndexChanged.connect(self.on_cloud_target_mode_changed)
-        cloud_box.addWidget(self.combo_cloud_target_mode)
-
-        self.lbl_cloud_existing = QLabel("Bestehendes Spiel auswählen:")
-        self.lbl_cloud_existing.setVisible(False)
-        cloud_box.addWidget(self.lbl_cloud_existing)
-
-        self.combo_cloud_existing_match = NoWheelComboBox()
-        self.combo_cloud_existing_match.setVisible(False)
-        self.combo_cloud_existing_match.currentIndexChanged.connect(self.on_cloud_existing_match_selected)
-        cloud_box.addWidget(self.combo_cloud_existing_match)
-
-        # Match Title
-        cloud_box.addWidget(QLabel("Spielname / Begegnung:"))
-        self.txt_cloud_match_name = QLineEdit()
-        self.txt_cloud_match_name.setPlaceholderText("z.B. SG Musterstadt vs. FC Beispiel")
-        self.txt_cloud_match_name.setStyleSheet(
-            "background-color: #111118; border: 1px solid #282839; border-radius: 8px; padding: 6px 10px; color: #f4f4f6;"
-        )
-        cloud_box.addWidget(self.txt_cloud_match_name)
-
-        # Team & Category Row
-        row_team_cat = QHBoxLayout()
-        col_team = QVBoxLayout()
-        col_team.addWidget(QLabel("Mannschaft:"))
-        self.combo_cloud_team = NoWheelComboBox()
-        self.combo_cloud_team.addItem("— Bitte erst verbinden —", "")
-        col_team.addWidget(self.combo_cloud_team)
-
-        col_cat = QVBoxLayout()
-        col_cat.addWidget(QLabel("Kategorie:"))
-        self.combo_cloud_category = NoWheelComboBox()
-        for cat_name in ["Punktspiel", "Testspiel", "Pokalspiel", "Turnier", "Training", "Trainingslager"]:
-            self.combo_cloud_category.addItem(cat_name, cat_name)
-        col_cat.addWidget(self.combo_cloud_category)
-
-        row_team_cat.addLayout(col_team, 3)
-        row_team_cat.addLayout(col_cat, 2)
-        cloud_box.addLayout(row_team_cat)
-
-        # Recording Date Row
-        row_rec_date = QHBoxLayout()
-        row_rec_date.addWidget(QLabel("Spieltag / Aufnahmedatum:"))
-        self.date_cloud_recording = QDateEdit()
-        self.date_cloud_recording.setCalendarPopup(True)
-        self.date_cloud_recording.setDisplayFormat("dd.MM.yyyy")
-        self.date_cloud_recording.setDate(QDate.currentDate())
-        self.date_cloud_recording.setStyleSheet(
-            "background-color: #111118; border: 1px solid #282839; border-radius: 8px; padding: 5px 8px; color: #f4f4f6;"
-        )
-        row_rec_date.addWidget(self.date_cloud_recording, 1)
-        cloud_box.addLayout(row_rec_date)
-
-        # Upload Options Checkboxes
-        self.chk_cloud_auto_upload = QCheckBox("🚀 Nach dem Rendern automatisch zu MatchTrack Online hochladen")
-        self.chk_cloud_auto_upload.setChecked(False)
-        self.chk_cloud_auto_upload.setStyleSheet("font-weight: 700; color: #10b981; margin-top: 4px;")
-        cloud_box.addWidget(self.chk_cloud_auto_upload)
-
-        self.chk_cloud_notify = QCheckBox("🔔 Mannschaftsmitglieder nach Upload benachrichtigen")
-        self.chk_cloud_notify.setChecked(True)
-        self.chk_cloud_notify.setStyleSheet("color: #cbd5e1;")
-        cloud_box.addWidget(self.chk_cloud_notify)
-
-        self.chk_cloud_fast_hls = QCheckBox("⚡ Schnelle Web-Bereitstellung (Direktes HLS ohne Re-Encode falls H.264)")
-        self.chk_cloud_fast_hls.setChecked(False)
-        self.chk_cloud_fast_hls.setStyleSheet("color: #38bdf8;")
-        self.chk_cloud_fast_hls.setToolTip(
-            "Wenn aktiviert, überspringt der Server die erneute H.264-Umkodierung vor der HLS-Segmentierung."
-        )
-        cloud_box.addWidget(self.chk_cloud_fast_hls)
-
-        # Password protection option
-        pw_prot_row = QHBoxLayout()
-        self.chk_cloud_password = QCheckBox("🔒 Spiel mit Passwort schützen:")
-        self.chk_cloud_password.setStyleSheet("color: #f59e0b; font-weight: 600;")
-        self.txt_cloud_password = QLineEdit()
-        self.txt_cloud_password.setPlaceholderText("Spiel-Passwort...")
-        self.txt_cloud_password.setVisible(False)
-        self.txt_cloud_password.setStyleSheet(
-            "background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6;"
-        )
-        self.chk_cloud_password.toggled.connect(self.txt_cloud_password.setVisible)
-        pw_prot_row.addWidget(self.chk_cloud_password)
-        pw_prot_row.addWidget(self.txt_cloud_password, 1)
-        cloud_box.addLayout(pw_prot_row)
-
-        # Multi-Stream Concurrency (Upload-Geschwindigkeit)
-        row_concurrency = QHBoxLayout()
-        lbl_concurrency = QLabel("⚡ Upload-Streams:")
-        lbl_concurrency.setStyleSheet("color: #38bdf8; font-weight: 600; font-size: 11px;")
-        self.combo_cloud_concurrency = QComboBox()
-        self.combo_cloud_concurrency.addItem("⚡ 3 Streams (Empfohlen - bis 50 Mbit/s)", 3)
-        self.combo_cloud_concurrency.addItem("🚀 4 Streams (High-Speed - 100+ Mbit/s)", 4)
-        self.combo_cloud_concurrency.addItem("⚡ 2 Streams (Ausgewogen)", 2)
-        self.combo_cloud_concurrency.addItem("🐢 1 Stream (Schonend)", 1)
-        self.combo_cloud_concurrency.setStyleSheet(
-            "background-color: #111118; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #f4f4f6;"
-        )
-        self.combo_cloud_concurrency.setToolTip(
-            "Parallele Upload-Streams nutzen deine Internetleitung voll aus und verhindern Bandbreiten-Drosselungen einzelner TCP-Verbindungen."
-        )
-        row_concurrency.addWidget(lbl_concurrency)
-        row_concurrency.addWidget(self.combo_cloud_concurrency, 1)
-        cloud_box.addLayout(row_concurrency)
-
-        # Dedicated file pickers for finished Broadcast (16:9) & Panorama (32:9 / 8:3) videos
-        files_frame = QFrame()
-        files_frame.setStyleSheet(
-            "QFrame { background-color: #101018; border: 1px solid #242436; border-radius: 8px; padding: 6px; }"
-        )
-        files_layout = QVBoxLayout(files_frame)
-        files_layout.setContentsMargins(6, 6, 6, 6)
-        files_layout.setSpacing(6)
-
-        lbl_files_hdr = QLabel("🎬 Fertige Videos für Upload (einzeln oder beide zusammen):")
-        lbl_files_hdr.setStyleSheet("color: #93c5fd; font-weight: 700; font-size: 11px; border: none; padding: 0;")
-        files_layout.addWidget(lbl_files_hdr)
-
-        # Row 1: 16:9 Broadcast Video
-        row_f16 = QHBoxLayout()
-        row_f16.setSpacing(4)
-        lbl_f16 = QLabel("🎥 Broadcast (16:9):")
-        lbl_f16.setFixedWidth(122)
-        lbl_f16.setStyleSheet("color: #cbd5e1; font-size: 11px; border: none;")
-        self.txt_cloud_video_16x9 = QLineEdit()
-        self.txt_cloud_video_16x9.setPlaceholderText("Optional: Fertiges 16:9 Broadcast-Video (.mp4)...")
-        self.txt_cloud_video_16x9.setStyleSheet(
-            "background-color: #0b0b10; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #e2e8f0; font-size: 11px;"
-        )
-        btn_pick_16x9 = QPushButton("📂 Wählen…")
-        btn_pick_16x9.setStyleSheet(
-            "background-color: #1e293b; border: 1px solid #3b82f6; color: #93c5fd; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;"
-        )
-        btn_pick_16x9.clicked.connect(self.pick_cloud_16x9_video)
-        btn_clr_16x9 = QToolButton()
-        btn_clr_16x9.setText("✕")
-        btn_clr_16x9.setToolTip("Auswahl für 16:9 Broadcast-Video leeren")
-        btn_clr_16x9.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 3px 6px; color: #94a3b8;")
-        btn_clr_16x9.clicked.connect(lambda: self.txt_cloud_video_16x9.clear())
-        row_f16.addWidget(lbl_f16)
-        row_f16.addWidget(self.txt_cloud_video_16x9, 1)
-        row_f16.addWidget(btn_pick_16x9)
-        row_f16.addWidget(btn_clr_16x9)
-        files_layout.addLayout(row_f16)
-
-        # Row 2: Panorama Video (32:9 / 8:3 / 21:10)
-        row_fpano = QHBoxLayout()
-        row_fpano.setSpacing(4)
-        lbl_fpano = QLabel("🌟 Panorama (32:9/8:3):")
-        lbl_fpano.setFixedWidth(122)
-        lbl_fpano.setStyleSheet("color: #cbd5e1; font-size: 11px; border: none;")
-        self.txt_cloud_video_pano = QLineEdit()
-        self.txt_cloud_video_pano.setPlaceholderText("Optional: Fertiges Panorama-Video (.mp4)...")
-        self.txt_cloud_video_pano.setStyleSheet(
-            "background-color: #0b0b10; border: 1px solid #282839; border-radius: 6px; padding: 4px 8px; color: #e2e8f0; font-size: 11px;"
-        )
-        btn_pick_pano = QPushButton("📂 Wählen…")
-        btn_pick_pano.setStyleSheet(
-            "background-color: #1e293b; border: 1px solid #3b82f6; color: #93c5fd; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;"
-        )
-        btn_pick_pano.clicked.connect(self.pick_cloud_pano_video)
-        btn_clr_pano = QToolButton()
-        btn_clr_pano.setText("✕")
-        btn_clr_pano.setToolTip("Auswahl für Panorama-Video leeren")
-        btn_clr_pano.setStyleSheet("background-color: #1a1a26; border: 1px solid #28283a; border-radius: 6px; padding: 3px 6px; color: #94a3b8;")
-        btn_clr_pano.clicked.connect(lambda: self.txt_cloud_video_pano.clear())
-        row_fpano.addWidget(lbl_fpano)
-        row_fpano.addWidget(self.txt_cloud_video_pano, 1)
-        row_fpano.addWidget(btn_pick_pano)
-        row_fpano.addWidget(btn_clr_pano)
-        files_layout.addLayout(row_fpano)
-
-        cloud_box.addWidget(files_frame)
-
-        # Manual Upload Action Button
-        self.btn_cloud_upload_now = QPushButton("☁️ Fertige Videos (Broadcast & Panorama) jetzt hochladen")
-        self.btn_cloud_upload_now.setStyleSheet(
-            "background-color: #059669; font-weight: bold; padding: 10px; font-size: 12px; color: white; border-radius: 10px;"
-        )
-        self.btn_cloud_upload_now.clicked.connect(self.start_manual_cloud_upload_dialog)
-        cloud_box.addWidget(self.btn_cloud_upload_now)
-
-        self.cloud_progress_bar = QProgressBar()
-        self.cloud_progress_bar.setValue(0)
-        cloud_box.addWidget(self.cloud_progress_bar)
-
-        self.lbl_cloud_upload_stats = QLabel("Bereit für Cloud-Upload.")
-        self.lbl_cloud_upload_stats.setStyleSheet("color: #8e8e9c; font-size: 11px;")
-        self.lbl_cloud_upload_stats.setWordWrap(True)
-        cloud_box.addWidget(self.lbl_cloud_upload_stats)
-
-        cloud_btn_bottom = QHBoxLayout()
-        self.btn_cloud_cancel = QPushButton("Upload abbrechen")
-        self.btn_cloud_cancel.setEnabled(False)
-        self.btn_cloud_cancel.setStyleSheet(
-            "background-color: #1a1a26; border: 1px solid #28283a; border-radius: 8px; padding: 6px; font-size: 11px; color: #94a3b8;"
-        )
-        self.btn_cloud_cancel.clicked.connect(self.cancel_cloud_upload)
-
-        self.btn_cloud_open_browser = QPushButton("🌐 Spiel im Browser öffnen")
-        self.btn_cloud_open_browser.setEnabled(False)
-        self.btn_cloud_open_browser.setStyleSheet(
-            "background-color: #1e293b; border: 1px solid #3b82f6; border-radius: 8px; padding: 6px; font-size: 11px; color: #60a5fa; font-weight: bold;"
-        )
-        self.btn_cloud_open_browser.clicked.connect(self.open_last_uploaded_match_in_browser)
-
-        cloud_btn_bottom.addWidget(self.btn_cloud_cancel)
-        cloud_btn_bottom.addWidget(self.btn_cloud_open_browser)
-        cloud_box.addLayout(cloud_btn_bottom)
-
-        cloud_tab_layout.addWidget(grp_cloud)
-        cloud_tab_layout.addStretch()
-
-        scroll_cloud.setWidget(widget_cloud)
-        layout_tab_cloud.addWidget(scroll_cloud)
-
-    # =========================================================================
-    # START-ZENTRALE / LANDINGPAGE WORKFLOW HUB
-    # =========================================================================
+        build_cloud_tab(self)
 
     def _init_landing_page(self):
-        """Initializes the modern Workflow Hub / Landing Page."""
-        self.landing_widget = QWidget()
-        layout_outer = QVBoxLayout(self.landing_widget)
-        layout_outer.setContentsMargins(0, 0, 0, 0)
-
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.NoFrame)
-        scroll_area.setStyleSheet("QScrollArea { background-color: #0b0b12; border: none; }")
-
-        content = QWidget()
-        content.setStyleSheet("QWidget { background-color: #0b0b12; }")
-        layout_main = QVBoxLayout(content)
-        layout_main.setContentsMargins(36, 24, 36, 24)
-        layout_main.setSpacing(20)
-
-        # -------------------------------------------------------------
-        # Action Cards (2x2 Grid)
-        # -------------------------------------------------------------
-        grid = QGridLayout()
-        grid.setSpacing(16)
-
-        card_style_base = """
-            QFrame {
-                background-color: #12121c;
-                border: 1px solid #202034;
-                border-radius: 14px;
-                padding: 16px;
-            }
-            QFrame:hover {
-                border-color: #3b82f6;
-                background-color: #151524;
-            }
-        """
-
-        # ------------------ CARD 1: Stitching & Panorama ------------------
-        card1 = QFrame()
-        card1.setStyleSheet(card_style_base)
-        card1_layout = QVBoxLayout(card1)
-        card1_layout.setSpacing(10)
-
-        # Top Header
-        c1_head = QHBoxLayout()
-        lbl_c1_icon = QLabel("🧵")
-        lbl_c1_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
-        c1_title_box = QVBoxLayout()
-        lbl_c1_title = QLabel("1. Video-Stitching & Panorama")
-        lbl_c1_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
-        lbl_c1_sub = QLabel("Dual-Cam Stitching • Horizont & Nahtkorrektur")
-        lbl_c1_sub.setStyleSheet("font-size: 11px; color: #38bdf8; font-weight: 600; border: none; background: transparent;")
-        c1_title_box.addWidget(lbl_c1_title)
-        c1_title_box.addWidget(lbl_c1_sub)
-        c1_head.addWidget(lbl_c1_icon)
-        c1_head.addLayout(c1_title_box, 1)
-        card1_layout.addLayout(c1_head)
-
-        lbl_c1_desc = QLabel(
-            "Fügt zwei Kameravideos nahtlos zu einem hochauflösenden Taktik-Panorama zusammen. "
-            "Wählen Sie das Quellformat Ihrer Kameras für automatische Voreinstellungen:"
-        )
-        lbl_c1_desc.setWordWrap(True)
-        lbl_c1_desc.setStyleSheet("font-size: 12px; color: #94a3b8; border: none; background: transparent;")
-        card1_layout.addWidget(lbl_c1_desc)
-
-        # Quick format launch buttons
-        lbl_fmt_pick = QLabel("📷 Quellformat wählen & direkt starten:")
-        lbl_fmt_pick.setStyleSheet("font-size: 11px; font-weight: 700; color: #cbd5e1; margin-top: 4px; border: none; background: transparent;")
-        card1_layout.addWidget(lbl_fmt_pick)
-
-        row_c1_btns = QHBoxLayout()
-        btn_start_4_3 = QPushButton("📹 4:3 DJI Action 4\n(8:3 Taktik-Panorama)")
-        btn_start_4_3.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #0284c7, stop:1 #0369a1);
-                color: #ffffff;
-                font-weight: 800;
-                font-size: 11px;
-                padding: 10px 8px;
-                border-radius: 9px;
-                border: none;
-                text-align: center;
-            }
-            QPushButton:hover { background: #0ea5e9; }
-        """)
-        btn_start_4_3.clicked.connect(lambda: self._launch_workflow_stitching("4:3"))
-
-        btn_start_16_9 = QPushButton("📷 16:9 Standard Cams\n(32:9 Ultra-Panorama)")
-        btn_start_16_9.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #059669, stop:1 #047857);
-                color: #ffffff;
-                font-weight: 800;
-                font-size: 11px;
-                padding: 10px 8px;
-                border-radius: 9px;
-                border: none;
-                text-align: center;
-            }
-            QPushButton:hover { background: #10b981; }
-        """)
-        btn_start_16_9.clicked.connect(lambda: self._launch_workflow_stitching("16:9"))
-
-        row_c1_btns.addWidget(btn_start_4_3)
-        row_c1_btns.addWidget(btn_start_16_9)
-        card1_layout.addLayout(row_c1_btns)
-
-        card1_layout.addStretch()
-        grid.addWidget(card1, 0, 0)
-
-        # ------------------ CARD 5: Weitwinkel & Einzelkamera-Entzerrung ------------------
-        card5 = QFrame()
-        card5.setStyleSheet(card_style_base)
-        card5_layout = QVBoxLayout(card5)
-        card5_layout.setSpacing(10)
-
-        c5_head = QHBoxLayout()
-        lbl_c5_icon = QLabel("📐")
-        lbl_c5_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
-        c5_title_box = QVBoxLayout()
-        lbl_c5_title = QLabel("2. Weitwinkel & Spielfeld-Trapez")
-        lbl_c5_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
-        lbl_c5_sub = QLabel("DJI Action 4 (155° Ultrawide) • Begradigung • 4-Punkt Kalibrierung")
-        lbl_c5_sub.setStyleSheet("font-size: 11px; color: #38bdf8; font-weight: 600; border: none; background: transparent;")
-        c5_title_box.addWidget(lbl_c5_title)
-        c5_title_box.addWidget(lbl_c5_sub)
-        c5_head.addWidget(lbl_c5_icon)
-        c5_head.addLayout(c5_title_box, 1)
-        card5_layout.addLayout(c5_head)
-
-        lbl_c5_desc = QLabel(
-            "Begradigt stark gekrümmte Ultra-Weitwinkel-Aufnahmen (155° Fisheye der DJI Action 4 auf einem 4m-Stativ) "
-            "und passt das Video per 4-Punkt Ecken-Markierung so an, dass die Spielfeldlinien ein exaktes Trapez oder Rechteck bilden."
-        )
-        lbl_c5_desc.setWordWrap(True)
-        lbl_c5_desc.setStyleSheet("font-size: 12px; color: #94a3b8; border: none; background: transparent;")
-        card5_layout.addWidget(lbl_c5_desc)
-
-        lbl_c5_pick = QLabel("🎥 Einzelkamera-Video wählen & direkt starten:")
-        lbl_c5_pick.setStyleSheet("font-size: 11px; font-weight: 700; color: #cbd5e1; margin-top: 4px; border: none; background: transparent;")
-        card5_layout.addWidget(lbl_c5_pick)
-
-        row_c5_btns = QHBoxLayout()
-        btn_open_wa = QPushButton("🎥 155° Video öffnen")
-        btn_open_wa.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #0284c7, stop:1 #0369a1);
-                color: #ffffff;
-                font-weight: 800;
-                font-size: 11px;
-                padding: 10px 8px;
-                border-radius: 9px;
-                border: none;
-                text-align: center;
-            }
-            QPushButton:hover { background: #0ea5e9; }
-        """)
-        btn_open_wa.clicked.connect(lambda: self.open_wide_angle_video())
-
-        btn_wa_action = QPushButton("📐 Weitwinkel-Studio ➔")
-        btn_wa_action.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #2563eb, stop:1 #1d4ed8);
-                color: #ffffff;
-                font-weight: 800;
-                font-size: 11px;
-                padding: 10px 8px;
-                border-radius: 9px;
-                border: none;
-                text-align: center;
-            }
-            QPushButton:hover { background: #3b82f6; }
-        """)
-        btn_wa_action.clicked.connect(lambda: self.show_workspace(1))
-
-        row_c5_btns.addWidget(btn_open_wa)
-        row_c5_btns.addWidget(btn_wa_action)
-        card5_layout.addLayout(row_c5_btns)
-
-        card5_layout.addStretch()
-        grid.addWidget(card5, 0, 1)
-
-        # ------------------ CARD 2: KI-Broadcast & Tracking ------------------
-        card2 = QFrame()
-        card2.setStyleSheet(card_style_base)
-        card2_layout = QVBoxLayout(card2)
-        card2_layout.setSpacing(10)
-
-        c2_head = QHBoxLayout()
-        lbl_c2_icon = QLabel("🎯")
-        lbl_c2_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
-        c2_title_box = QVBoxLayout()
-        lbl_c2_title = QLabel("3. KI-Broadcast & Follow-Cam")
-        lbl_c2_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
-        lbl_c2_sub = QLabel("Virtuelle 16:9 TV-Kamera • Ball- & Spielertracking")
-        lbl_c2_sub.setStyleSheet("font-size: 11px; color: #a78bfa; font-weight: 600; border: none; background: transparent;")
-        c2_title_box.addWidget(lbl_c2_title)
-        c2_title_box.addWidget(lbl_c2_sub)
-        c2_head.addWidget(lbl_c2_icon)
-        c2_head.addLayout(c2_title_box, 1)
-        card2_layout.addLayout(c2_head)
-
-        lbl_c2_desc = QLabel(
-            "Automatische Kameraführung im 16:9 TV-Format. KI-Fokus auf den Ball, dynamischer Zoom "
-            "bei Spielverlagerungen, 2D Radar-Minimap und kalibrierte Abseitslinie."
-        )
-        lbl_c2_desc.setWordWrap(True)
-        lbl_c2_desc.setStyleSheet("font-size: 12px; color: #94a3b8; border: none; background: transparent;")
-        card2_layout.addWidget(lbl_c2_desc)
-
-        # Badges row
-        badges_c2 = QHBoxLayout()
-        for b_text in ["YOLOv8 Ball-Fokus", "Dynamischer Zoom", "2D Minimap", "VAR-Linie"]:
-            b_lbl = QLabel(b_text)
-            b_lbl.setStyleSheet("background: #181829; border: 1px solid #282844; border-radius: 5px; color: #94a3b8; font-size: 10px; font-weight: 600; padding: 2px 6px;")
-            badges_c2.addWidget(b_lbl)
-        badges_c2.addStretch()
-        card2_layout.addLayout(badges_c2)
-
-        card2_layout.addStretch()
-
-        btn_c2_action = QPushButton("🎯 KI-Broadcast Konfigurieren ➔")
-        btn_c2_action.setStyleSheet("""
-            QPushButton {
-                background-color: #2563eb;
-                color: #ffffff;
-                font-weight: 800;
-                font-size: 12px;
-                padding: 10px;
-                border-radius: 9px;
-                border: none;
-            }
-            QPushButton:hover { background-color: #3b82f6; }
-        """)
-        btn_c2_action.clicked.connect(lambda: self.show_workspace(2))
-        card2_layout.addWidget(btn_c2_action)
-
-        grid.addWidget(card2, 1, 0)
-
-        # ------------------ CARD 3: Live-Streaming ------------------
-        card3 = QFrame()
-        card3.setStyleSheet(card_style_base)
-        card3_layout = QVBoxLayout(card3)
-        card3_layout.setSpacing(10)
-
-        c3_head = QHBoxLayout()
-        lbl_c3_icon = QLabel("🔴")
-        lbl_c3_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
-        c3_title_box = QVBoxLayout()
-        lbl_c3_title = QLabel("4. Live-Streaming Studio")
-        lbl_c3_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
-        lbl_c3_sub = QLabel("OBS-Style RTMP Multi-Stream • Ohne Mimo App")
-        lbl_c3_sub.setStyleSheet("font-size: 11px; color: #f43f5e; font-weight: 600; border: none; background: transparent;")
-        c3_title_box.addWidget(lbl_c3_title)
-        c3_title_box.addWidget(lbl_c3_sub)
-        c3_head.addWidget(lbl_c3_icon)
-        c3_head.addLayout(c3_title_box, 1)
-        card3_layout.addLayout(c3_head)
-
-        lbl_c3_desc = QLabel(
-            "Direktes Live-Streaming an MatchTrack Cloud, YouTube oder Twitch. Unterstützt DJI BLE-Kopplung, "
-            "normale USB-Webcams, LTE 720p/480p Presets und flexible Feed-Kanal-Zuweisung."
-        )
-        lbl_c3_desc.setWordWrap(True)
-        lbl_c3_desc.setStyleSheet("font-size: 12px; color: #94a3b8; border: none; background: transparent;")
-        card3_layout.addWidget(lbl_c3_desc)
-
-        badges_c3 = QHBoxLayout()
-        for b_text in ["Direkt-RTMP", "USB-Cams & DJI BLE", "LTE 720p/480p", "Multi-Kanal"]:
-            b_lbl = QLabel(b_text)
-            b_lbl.setStyleSheet("background: #181829; border: 1px solid #282844; border-radius: 5px; color: #94a3b8; font-size: 10px; font-weight: 600; padding: 2px 6px;")
-            badges_c3.addWidget(b_lbl)
-        badges_c3.addStretch()
-        card3_layout.addLayout(badges_c3)
-
-        card3_layout.addStretch()
-
-        btn_c3_action = QPushButton("🔴 Live-Streaming Einrichten ➔")
-        btn_c3_action.setStyleSheet("""
-            QPushButton {
-                background-color: #e11d48;
-                color: #ffffff;
-                font-weight: 800;
-                font-size: 12px;
-                padding: 10px;
-                border-radius: 9px;
-                border: none;
-            }
-            QPushButton:hover { background-color: #f43f5e; }
-        """)
-        btn_c3_action.clicked.connect(lambda: self.show_workspace(4))
-        card3_layout.addWidget(btn_c3_action)
-
-        grid.addWidget(card3, 1, 1)
-
-        # ------------------ CARD 4: Cloud-Upload ------------------
-        card4 = QFrame()
-        card4.setStyleSheet(card_style_base)
-        card4_layout = QVBoxLayout(card4)
-        card4_layout.setSpacing(10)
-
-        c4_head = QHBoxLayout()
-        lbl_c4_icon = QLabel("☁️")
-        lbl_c4_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
-        c4_title_box = QVBoxLayout()
-        lbl_c4_title = QLabel("5. MatchTrack Cloud-Upload")
-        lbl_c4_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
-        lbl_c4_sub = QLabel("Fertige Videos hochladen & Matches verwalten")
-        lbl_c4_sub.setStyleSheet("font-size: 11px; color: #34d399; font-weight: 600; border: none; background: transparent;")
-        c4_title_box.addWidget(lbl_c4_title)
-        c4_title_box.addWidget(lbl_c4_sub)
-        c4_head.addWidget(lbl_c4_icon)
-        c4_head.addLayout(c4_title_box, 1)
-        card4_layout.addLayout(c4_head)
-
-        lbl_c4_desc = QLabel(
-            "Laden Sie fertige Broadcast- und Panorama-Videos direkt auf die Vereins-Plattform hoch. "
-            "Automatische Spielanlage, Team-Zuweisung und Highspeed Multi-Stream Upload."
-        )
-        lbl_c4_desc.setWordWrap(True)
-        lbl_c4_desc.setStyleSheet("font-size: 12px; color: #94a3b8; border: none; background: transparent;")
-        card4_layout.addWidget(lbl_c4_desc)
-
-        badges_c4 = QHBoxLayout()
-        for b_text in ["Highspeed Multi-Stream", "Automatische Spielanlage", "Team-Zuordnung"]:
-            b_lbl = QLabel(b_text)
-            b_lbl.setStyleSheet("background: #181829; border: 1px solid #282844; border-radius: 5px; color: #94a3b8; font-size: 10px; font-weight: 600; padding: 2px 6px;")
-            badges_c4.addWidget(b_lbl)
-        badges_c4.addStretch()
-        card4_layout.addLayout(badges_c4)
-
-        card4_layout.addStretch()
-
-        btn_c4_action = QPushButton("☁️ Cloud-Upload Öffnen ➔")
-        btn_c4_action.setStyleSheet("""
-            QPushButton {
-                background-color: #059669;
-                color: #ffffff;
-                font-weight: 800;
-                font-size: 12px;
-                padding: 10px;
-                border-radius: 9px;
-                border: none;
-            }
-            QPushButton:hover { background-color: #10b981; }
-        """)
-        btn_c4_action.clicked.connect(lambda: self.show_workspace(5))
-        card4_layout.addWidget(btn_c4_action)
-
-        grid.addWidget(card4, 2, 0, 1, 2)
-
-        layout_main.addLayout(grid)
-
-        # -------------------------------------------------------------
-        # 3. Bottom Quick Navigation Bar
-        # -------------------------------------------------------------
-        bottom_frame = QFrame()
-        bottom_frame.setStyleSheet("""
-            QFrame {
-                background-color: #12121a;
-                border: 1px solid #1e1e2d;
-                border-radius: 12px;
-                padding: 12px 18px;
-            }
-        """)
-        bottom_layout = QHBoxLayout(bottom_frame)
-        bottom_layout.setSpacing(12)
-
-        lbl_quick = QLabel("⚡ Schnelleinstieg:")
-        lbl_quick.setStyleSheet("font-weight: 700; color: #cbd5e1; font-size: 11px; border: none; background: transparent;")
-        bottom_layout.addWidget(lbl_quick)
-
-        btn_quick_prof = QPushButton("📁 Profil / Projekt öffnen")
-        btn_quick_prof.setStyleSheet("background-color: #1c1c28; border: 1px solid #2a2a3e; font-size: 11px; padding: 7px 14px; border-radius: 8px; color: #cbd5e1; font-weight: 600;")
-        btn_quick_prof.clicked.connect(self.load_full_profile_from)
-        bottom_layout.addWidget(btn_quick_prof)
-
-        btn_quick_work = QPushButton("🖥️ Direkt zur Arbeitsfläche wechseln (Alle Werkzeuge)")
-        btn_quick_work.setStyleSheet("background-color: #1e293b; border: 1px solid #3b82f6; font-size: 11px; padding: 7px 14px; border-radius: 8px; color: #60a5fa; font-weight: 700;")
-        btn_quick_work.clicked.connect(lambda: self.show_workspace(0))
-        bottom_layout.addWidget(btn_quick_work)
-
-        bottom_layout.addStretch()
-
-        layout_main.addWidget(bottom_frame)
-        layout_main.addStretch()
-
-        scroll_area.setWidget(content)
-        layout_outer.addWidget(scroll_area)
-
-    def _on_stream_resolution_changed(self, idx: int):
-        res = self.combo_stream_resolution.currentData() if hasattr(self, 'combo_stream_resolution') else "1080p"
-        if hasattr(self, 'obs_settings_widget'):
-            if res == "720p":
-                self.obs_settings_widget.spn_bitrate.setValue(2500)
-                self.obs_settings_widget.spn_max_bitrate.setValue(4000)
-            elif res == "480p":
-                self.obs_settings_widget.spn_bitrate.setValue(1000)
-                self.obs_settings_widget.spn_max_bitrate.setValue(1800)
-            elif res == "1080p":
-                self.obs_settings_widget.spn_bitrate.setValue(3000)
-                self.obs_settings_widget.spn_max_bitrate.setValue(5000)
-
-    def _on_rtmp_preset_changed(self, idx: int):
-        data = self.combo_rtmp_preset.currentData()
-        if data != "custom":
-            self.txt_rtmp_server_url.setText(data)
-
-    def _on_grid_quadrant_clicked(self, quad: int):
-        """Switches full-screen viewport preview when a quadrant in the 2x2 grid is clicked."""
-        if quad == 0:
-            self.set_view_mode_by_id("grid")
-        elif quad == 1:
-            mode = self.combo_live_proc_mode.currentData() if hasattr(self, 'combo_live_proc_mode') else "stitching_dual"
-            if mode == "single_cam2":
-                self.set_view_mode_by_id("cam2")
-            elif mode in ("single_cam1", "dual_cams_nostitch"):
-                self.set_view_mode_by_id("cam1")
-            else:
-                self.set_view_mode_by_id("16:9")
-        elif quad == 2:
-            mode = self.combo_live_proc_mode.currentData() if hasattr(self, 'combo_live_proc_mode') else "stitching_dual"
-            if mode == "dual_cams_nostitch":
-                self.set_view_mode_by_id("cam2")
-            else:
-                self.set_view_mode_by_id("8:3" if self.is_4_3_mode() else "32:9")
-        elif quad == 3:
-            self.set_view_mode_by_id("cam1")
-        elif quad == 4:
-            self.set_view_mode_by_id("cam2")
-
-    def _on_live_proc_mode_changed(self):
-        """Adapts UI, channels, and camera inputs based on stitching vs. single-stream mode."""
-        mode = self.combo_live_proc_mode.currentData() if hasattr(self, 'combo_live_proc_mode') else "stitching_dual"
-        if mode == "single_cam1":
-            self.combo_uvc_left.setEnabled(True)
-            self.combo_uvc_right.setEnabled(False)
-            if hasattr(self, 'combo_feed_c1'):
-                idx = self.combo_feed_c1.findData("cam1")
-                if idx >= 0: self.combo_feed_c1.setCurrentIndex(idx)
-            self.lbl_uvc_status.setText("💡 Einzelkamera-Modus: Nur Cam 1 aktiv. Kein Stitching = minimale CPU/GPU-Auslastung.")
-        elif mode == "single_cam2":
-            self.combo_uvc_left.setEnabled(False)
-            self.combo_uvc_right.setEnabled(True)
-            if hasattr(self, 'combo_feed_c1'):
-                idx = self.combo_feed_c1.findData("cam2")
-                if idx >= 0: self.combo_feed_c1.setCurrentIndex(idx)
-            self.lbl_uvc_status.setText("💡 Einzelkamera-Modus: Nur Cam 2 aktiv. Kein Stitching = minimale CPU/GPU-Auslastung.")
-        elif mode == "dual_cams_nostitch":
-            self.combo_uvc_left.setEnabled(True)
-            self.combo_uvc_right.setEnabled(True)
-            if hasattr(self, 'combo_feed_c1'):
-                idx1 = self.combo_feed_c1.findData("cam1")
-                if idx1 >= 0: self.combo_feed_c1.setCurrentIndex(idx1)
-            if hasattr(self, 'combo_feed_c2'):
-                idx2 = self.combo_feed_c2.findData("cam2")
-                if idx2 >= 0: self.combo_feed_c2.setCurrentIndex(idx2)
-            self.lbl_uvc_status.setText("💡 Dual Direct-Stream: Cam 1 & Cam 2 werden parallel direkt gestreamt (ohne Stitching).")
-        else:
-            self.combo_uvc_left.setEnabled(True)
-            self.combo_uvc_right.setEnabled(True)
-            if hasattr(self, 'combo_feed_c1'):
-                idx1 = self.combo_feed_c1.findData("broadcast_16x9")
-                if idx1 >= 0: self.combo_feed_c1.setCurrentIndex(idx1)
-            if hasattr(self, 'combo_feed_c2'):
-                idx2 = self.combo_feed_c2.findData("panorama_8x3")
-                if idx2 >= 0: self.combo_feed_c2.setCurrentIndex(idx2)
-            self.lbl_uvc_status.setText("💡 Dual-Kamera Stitching aktiv: Echtzeit-Panorama & KI Ball-Follow Regie.")
-
-        if getattr(self, 'view_mode', '') == "grid" and hasattr(self, 'live_capture_manager') and not self.live_capture_manager.is_running:
-            standby = self._build_multiview_grid(None, None, None, None, mode=mode)
-            if hasattr(self, 'viewport'):
-                self.viewport.update_preview_image(standby)
-
-    def _on_live_input_mode_changed(self, idx: int):
-        mode = self.combo_live_input_mode.currentData()
-        self.panel_uvc.setVisible(mode == "uvc")
-        self.panel_ble.setVisible(mode == "ble")
-
-    def _refresh_uvc_devices(self):
-        self.combo_uvc_left.clear()
-        self.combo_uvc_right.clear()
-        devices = enumerate_video_devices(max_devices=6)
-        if not devices:
-            self.combo_uvc_left.addItem("Keine Webcams gefunden", -1)
-            self.combo_uvc_right.addItem("--- (Keine / Einzelkamera-Modus) ---", -1)
-            self.lbl_uvc_status.setText("Keine USB-Webcams oder Kameras in Windows erkannt.")
-            return
-
-        for dev in devices:
-            self.combo_uvc_left.addItem(f"[{dev.index}] {dev.name}", dev.index)
-
-        self.combo_uvc_right.addItem("--- (Keine / Einzelkamera-Modus) ---", -1)
-        for dev in devices:
-            self.combo_uvc_right.addItem(f"[{dev.index}] {dev.name}", dev.index)
-
-        if len(devices) > 1:
-            self.combo_uvc_right.setCurrentIndex(2)
-            self.lbl_uvc_status.setText(f"{len(devices)} Webcams erkannt (Dual-Kamera Panorama-Stitching bereit).")
-        else:
-            self.combo_uvc_right.setCurrentIndex(0)
-            self.lbl_uvc_status.setText(f"{len(devices)} Webcam erkannt (Einzelkamera Live-Broadcast bereit).")
-
-    def _toggle_uvc_live_capture(self):
-        if self.live_capture_manager.is_running:
-            self.live_capture_manager.stop()
-            self.live_capture_timer.stop()
-            self.btn_toggle_uvc.setText("▶️ Live-Kameras aktivieren")
-            self.btn_toggle_uvc.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; border-radius: 6px; padding: 5px 12px; font-size: 11px;")
-            self.lbl_uvc_status.setText("Live-Kameras gestoppt.")
-            if getattr(self, 'view_mode', '') == "grid":
-                mode = self.combo_live_proc_mode.currentData() if hasattr(self, 'combo_live_proc_mode') else "stitching_dual"
-                self.viewport.update_preview_image(self._build_multiview_grid(None, None, None, None, mode=mode))
-        else:
-            mode = self.combo_live_proc_mode.currentData() if hasattr(self, 'combo_live_proc_mode') else "stitching_dual"
-            idx_l = self.combo_uvc_left.currentData()
-            idx_r = self.combo_uvc_right.currentData()
-
-            if mode == "single_cam2":
-                if idx_r is None or idx_r < 0:
-                    QMessageBox.warning(self, "Kamera wählen", "Bitte wähle eine gültige USB-Webcam für 'Cam Rechts' aus.")
-                    return
-                src_l = None
-                src_r = idx_r
-            elif mode == "single_cam1":
-                if idx_l is None or idx_l < 0:
-                    QMessageBox.warning(self, "Kamera wählen", "Bitte wähle eine gültige USB-Webcam für 'Cam Links' aus.")
-                    return
-                src_l = idx_l
-                src_r = None
-            else:
-                if idx_l is None or idx_l < 0:
-                    QMessageBox.warning(self, "Kamera wählen", "Bitte wähle mindestens eine gültige USB-Webcam für 'Cam Links' aus.")
-                    return
-                src_l = idx_l
-                src_r = idx_r if (idx_r is not None and idx_r >= 0) else None
-
-            fps_val = self.combo_stream_fps.currentData() or 30
-            self.live_capture_manager.start(src_l, src_r, width=1920, height=1080, fps=fps_val)
-            self.live_capture_timer.start()
-            self.btn_toggle_uvc.setText("⏹ Kameras deaktivieren")
-            self.btn_toggle_uvc.setStyleSheet("background-color: #b91c1c; color: white; font-weight: bold; border-radius: 6px; padding: 5px 12px; font-size: 11px;")
-
-            if mode == "single_cam1":
-                self.lbl_uvc_status.setText(f"Einzelkamera-Stream aktiv (Cam Links: [{src_l}], 1080p @ {fps_val} FPS - Ohne Stitching).")
-            elif mode == "single_cam2":
-                self.lbl_uvc_status.setText(f"Einzelkamera-Stream aktiv (Cam Rechts: [{src_r}], 1080p @ {fps_val} FPS - Ohne Stitching).")
-            elif mode == "dual_cams_nostitch":
-                self.lbl_uvc_status.setText(f"Dual Direct-Stream aktiv (Cams: [{src_l}] & [{src_r}] - Ohne Stitching).")
-            else:
-                if src_r is None:
-                    self.lbl_uvc_status.setText(f"Einzelkamera-Erfassung aktiv (Quelle: [{src_l}], 1080p @ {fps_val} FPS).")
-                else:
-                    self.lbl_uvc_status.setText(f"Dual-Webcam-Erfassung aktiv (Quellen: [{src_l}] & [{src_r}], 1080p @ {fps_val} FPS).")
-
-    def _build_multiview_grid(
-        self,
-        bcast_frame: Optional[np.ndarray],
-        pano_frame: Optional[np.ndarray],
-        frame_l: Optional[np.ndarray],
-        frame_r: Optional[np.ndarray],
-        mode: str = "stitching_dual"
-    ) -> np.ndarray:
-        """
-        Renders a broadcast-grade 2x2 Multiview Grid (Quad-Split) in 1920x1080:
-        Quadrant 1 (Top-Left):     Feed 1 - 16:9 KI-Regie (Ball-Follow) or Cam 1 Single
-        Quadrant 2 (Top-Right):    Feed 2 - 8:3/32:9 Taktik-Panorama or Cam 2
-        Quadrant 3 (Bottom-Left):  Feed 3 - Cam 1 Links (Roh-Feed)
-        Quadrant 4 (Bottom-Right): Feed 4 - Cam 2 Rechts (Roh-Feed)
-        """
-        gw, gh = 958, 538
-        grid_img = np.full((1080, 1920, 3), 16, dtype=np.uint8)
-
-        # Dividing lines between 4 quadrants
-        cv2.line(grid_img, (959, 0), (959, 1080), (38, 38, 54), 2)
-        cv2.line(grid_img, (0, 539), (1920, 539), (38, 38, 54), 2)
-
-        # Determine which feeds are actively streaming to RTMP
-        is_live_any = hasattr(self, 'stream_manager') and self.stream_manager.is_any_live()
-        c1_live = is_live_any and hasattr(self, 'chk_chan_1') and self.chk_chan_1.isChecked()
-        c2_live = is_live_any and hasattr(self, 'chk_chan_2') and self.chk_chan_2.isChecked()
-        c3_live = is_live_any and hasattr(self, 'chk_chan_3') and self.chk_chan_3.isChecked()
-        c4_live = is_live_any and hasattr(self, 'chk_chan_4') and self.chk_chan_4.isChecked()
-
-        feed_c1 = self.combo_feed_c1.currentData() if hasattr(self, 'combo_feed_c1') else "broadcast_16x9"
-        feed_c2 = self.combo_feed_c2.currentData() if hasattr(self, 'combo_feed_c2') else "panorama_8x3"
-        feed_c3 = self.combo_feed_c3.currentData() if hasattr(self, 'combo_feed_c3') else "cam1"
-        feed_c4 = self.combo_feed_c4.currentData() if hasattr(self, 'combo_feed_c4') else "cam2"
-
-        live_feeds = set()
-        if c1_live and feed_c1: live_feeds.add(feed_c1)
-        if c2_live and feed_c2: live_feeds.add(feed_c2)
-        if c3_live and feed_c3: live_feeds.add(feed_c3)
-        if c4_live and feed_c4: live_feeds.add(feed_c4)
-
-        if mode == "single_cam1":
-            q1_img = frame_l
-            q1_title = "CAM 1 (LINKS / SINGLE STREAM)"
-            q1_live = "cam1" in live_feeds or "broadcast_16x9" in live_feeds
-            q1_sub = "HAUPT-STREAM AKTIV"
-
-            q2_img = None
-            q2_title = "TAKTIK-PANORAMA"
-            q2_live = False
-            q2_sub = "INAKTIV (Einzelkamera-Modus)"
-
-            q3_img = frame_l
-            q3_title = "CAM 1 LINKS (ROH-FEED)"
-            q3_live = "cam1" in live_feeds
-            q3_sub = "ROH-SIGNAL"
-
-            q4_img = None
-            q4_title = "CAM 2 RECHTS"
-            q4_live = False
-            q4_sub = "NICHT VERWENDET"
-
-        elif mode == "single_cam2":
-            q1_img = frame_r
-            q1_title = "CAM 2 (RECHTS / SINGLE STREAM)"
-            q1_live = "cam2" in live_feeds or "broadcast_16x9" in live_feeds
-            q1_sub = "HAUPT-STREAM AKTIV"
-
-            q2_img = None
-            q2_title = "TAKTIK-PANORAMA"
-            q2_live = False
-            q2_sub = "INAKTIV (Einzelkamera-Modus)"
-
-            q3_img = None
-            q3_title = "CAM 1 LINKS"
-            q3_live = False
-            q3_sub = "NICHT VERWENDET"
-
-            q4_img = frame_r
-            q4_title = "CAM 2 RECHTS (ROH-FEED)"
-            q4_live = "cam2" in live_feeds
-            q4_sub = "ROH-SIGNAL"
-
-        elif mode == "dual_cams_nostitch":
-            q1_img = frame_l
-            q1_title = "CAM 1 LINKS (DIRECT-STREAM)"
-            q1_live = "cam1" in live_feeds or "broadcast_16x9" in live_feeds
-            q1_sub = "DIREKT-STREAM"
-
-            q2_img = frame_r
-            q2_title = "CAM 2 RECHTS (DIRECT-STREAM)"
-            q2_live = "cam2" in live_feeds or "panorama_8x3" in live_feeds
-            q2_sub = "DIREKT-STREAM"
-
-            q3_img = frame_l
-            q3_title = "CAM 1 LINKS (ROH-FEED)"
-            q3_live = "cam1" in live_feeds
-            q3_sub = "ROH-SIGNAL"
-
-            q4_img = frame_r
-            q4_title = "CAM 2 RECHTS (ROH-FEED)"
-            q4_live = "cam2" in live_feeds
-            q4_sub = "ROH-SIGNAL"
-
-        else: # stitching_dual
-            q1_img = bcast_frame
-            q1_title = "16:9 REGIE (BALL-FOLLOW KI)"
-            q1_live = "broadcast_16x9" in live_feeds
-            q1_sub = "KI-FOLLOW REGIE"
-
-            q2_img = pano_frame
-            q2_title = "TAKTIK-PANORAMA (8:3 / 32:9)"
-            q2_live = "panorama_8x3" in live_feeds
-            q2_sub = "STITCHED PANORAMA"
-
-            q3_img = frame_l
-            q3_title = "CAM 1 LINKS (ROH-FEED)"
-            q3_live = "cam1" in live_feeds
-            q3_sub = "ROH-SIGNAL"
-
-            q4_img = frame_r
-            q4_title = "CAM 2 RECHTS (ROH-FEED)"
-            q4_live = "cam2" in live_feeds
-            q4_sub = "ROH-SIGNAL"
-
-        def render_tile(dest_slice, src_img, title, quad_num, is_live=False, standby_sub="STANDBY"):
-            tile = np.full((gh, gw, 3), 18, dtype=np.uint8)
-            if src_img is not None and src_img.size > 0:
-                ih, iw = src_img.shape[:2]
-                target_ar = gw / gh
-                src_ar = iw / max(1, ih)
-
-                if abs(src_ar - target_ar) < 0.05:
-                    content = cv2.resize(src_img, (gw, gh), interpolation=cv2.INTER_LINEAR)
-                elif src_ar > target_ar:
-                    fit_h = max(10, int(gw / src_ar))
-                    if fit_h > gh: fit_h = gh
-                    resized = cv2.resize(src_img, (gw, fit_h), interpolation=cv2.INTER_LINEAR)
-                    pad_top = (gh - fit_h) // 2
-                    content = np.zeros((gh, gw, 3), dtype=np.uint8)
-                    content[pad_top:pad_top+fit_h, 0:gw] = resized
-                else:
-                    fit_w = max(10, int(gh * src_ar))
-                    if fit_w > gw: fit_w = gw
-                    resized = cv2.resize(src_img, (fit_w, gh), interpolation=cv2.INTER_LINEAR)
-                    pad_left = (gw - fit_w) // 2
-                    content = np.zeros((gh, gw, 3), dtype=np.uint8)
-                    content[0:gh, pad_left:pad_left+fit_w] = resized
-                tile = content
-
-                b_color = (0, 0, 235) if is_live else (65, 55, 45)
-                b_thick = 2 if is_live else 1
-                cv2.rectangle(tile, (0, 0), (gw-1, gh-1), b_color, b_thick)
-            else:
-                cv2.rectangle(tile, (0, 0), (gw-1, gh-1), (40, 35, 30), 1)
-                # Big watermark number
-                cv2.putText(tile, str(quad_num), (gw//2 - 35, gh//2 + 45), cv2.FONT_HERSHEY_DUPLEX, 3.6, (30, 28, 25), 4)
-                # Title & Status text
-                t_w = len(title) * 9
-                cv2.putText(tile, title, (max(20, gw//2 - t_w//2), gh//2 - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (160, 160, 175), 2)
-                s_w = len(standby_sub) * 7
-                cv2.putText(tile, standby_sub, (max(20, gw//2 - s_w//2), gh//2 + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 120), 1)
-
-            # Top Header Bar Overlay
-            cv2.rectangle(tile, (0, 0), (gw, 36), (14, 14, 18), -1)
-            cv2.line(tile, (0, 36), (gw, 36), (35, 35, 48), 1)
-
-            # Quadrant Number Badge
-            badge_color = (37, 99, 235) if not is_live else (0, 0, 220)
-            cv2.rectangle(tile, (8, 6), (34, 30), badge_color, -1)
-            cv2.putText(tile, str(quad_num), (15, 25), cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 255), 2)
-
-            # Title
-            cv2.putText(tile, title, (42, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (230, 230, 240), 1, cv2.LINE_AA)
-
-            # Indicator Badge
-            if is_live:
-                cv2.rectangle(tile, (gw - 85, 7), (gw - 10, 29), (0, 0, 200), -1)
-                cv2.putText(tile, "LIVE", (gw - 72, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 1, cv2.LINE_AA)
-            elif src_img is not None and src_img.size > 0:
-                cv2.rectangle(tile, (gw - 95, 7), (gw - 10, 29), (32, 32, 44), -1)
-                cv2.putText(tile, "PREVIEW", (gw - 88, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (160, 160, 175), 1, cv2.LINE_AA)
-
-            dest_slice[:] = tile
-
-        # Render 4 quadrants
-        render_tile(grid_img[0:gh, 0:gw], q1_img, q1_title, 1, is_live=q1_live, standby_sub=q1_sub)
-        render_tile(grid_img[0:gh, 962:962+gw], q2_img, q2_title, 2, is_live=q2_live, standby_sub=q2_sub)
-        render_tile(grid_img[542:542+gh, 0:gw], q3_img, q3_title, 3, is_live=q3_live, standby_sub=q3_sub)
-        render_tile(grid_img[542:542+gh, 962:962+gw], q4_img, q4_title, 4, is_live=q4_live, standby_sub=q4_sub)
-
-        return grid_img
-
-    def _on_live_capture_tick(self):
-        """Tick event capturing live frames from cameras, stitching/processing, and pushing to RTMP streams."""
-        if not self.live_capture_manager.is_running:
-            return
-
-        frame_l, frame_r, is_synced = self.live_capture_manager.get_synced_frames()
-        if frame_l is None and frame_r is None:
-            return
-
-        mode = self.combo_live_proc_mode.currentData() if hasattr(self, 'combo_live_proc_mode') else "stitching_dual"
-        res_mode = self.combo_stream_resolution.currentData() if hasattr(self, 'combo_stream_resolution') else "1080p"
-        is_4_3 = self.is_4_3_mode()
-
-        if res_mode == "480p":
-            pw, ph = (1280, 480) if is_4_3 else (1706, 480)
-            bw, bh = 854, 480
-        elif res_mode == "720p":
-            pw, ph = (1920, 720) if is_4_3 else (2560, 720)
-            bw, bh = 1280, 720
-        else:
-            pw, ph = (2560, 960) if is_4_3 else (3840, 1080)
-            bw, bh = 1920, 1080
-
-        pano_frame = None
-        bcast_frame = None
-        crop_box = None
-
-        if mode == "stitching_dual" and frame_l is not None:
-            try:
-                pano_frame, bcast_frame, crop_box = self.engine.stitch_live_pair(
-                    frame_l, frame_r,
-                    pano_width=pw,
-                    pano_height=ph,
-                    broadcast_width=bw,
-                    broadcast_height=bh
-                )
-            except Exception as e:
-                logger.warning(f"Fehler beim Live-Stitching/Capture: {e}")
-                return
-        elif mode == "single_cam1" or (mode == "stitching_dual" and frame_r is None and frame_l is not None):
-            bcast_frame = frame_l
-            pano_frame = None
-            crop_box = None
-        elif mode == "single_cam2":
-            bcast_frame = frame_r
-            pano_frame = None
-            crop_box = None
-        elif mode == "dual_cams_nostitch":
-            bcast_frame = frame_l
-            pano_frame = frame_r
-            crop_box = None
-
-        # Push to active RTMP streaming channels via dynamic feed routing
-        if self.stream_manager.is_any_live():
-            feeds = {
-                "broadcast_16x9": bcast_frame if bcast_frame is not None else frame_l,
-                "panorama_8x3": pano_frame if pano_frame is not None else frame_r,
-                "cam1": frame_l,
-                "cam2": frame_r
-            }
-            self.stream_manager.push_feeds(feeds)
-
-        # Update viewport preview
-        vm = self.view_mode
-        if vm == "grid":
-            display_frame = self._build_multiview_grid(
-                bcast_frame=bcast_frame,
-                pano_frame=pano_frame,
-                frame_l=frame_l,
-                frame_r=frame_r,
-                mode=mode
-            )
-            box = None
-        elif vm == "cam1":
-            display_frame = frame_l if frame_l is not None else bcast_frame
-            box = None
-        elif vm == "cam2":
-            display_frame = frame_r if frame_r is not None else bcast_frame
-            box = None
-        elif vm.startswith("16:9") and bcast_frame is not None:
-            display_frame = bcast_frame
-            box = None
-        else:
-            display_frame = pano_frame if pano_frame is not None else (bcast_frame if bcast_frame is not None else frame_l)
-            box = crop_box
-
-        if display_frame is not None and hasattr(self, 'viewport') and self.viewport is not None:
-            self.viewport.update_preview_image(display_frame, autocam_box=box)
-
-    def _on_ble_scan_clicked(self):
-        self.btn_ble_scan.setEnabled(False)
-        self.lbl_ble_status.setText("Suche nach DJI Osmo Action Kameras via Bluetooth...")
-        self.dji_ble_manager.scan_for_cameras(timeout_sec=5.0)
-        QTimer.singleShot(6000, lambda: self.btn_ble_scan.setEnabled(True))
-
-    def _on_dji_ble_device_found(self, dev: DjiCameraDevice):
-        label = f"{dev.name} ({dev.address})"
-        # Add to left/right combos if not already present
-        if self.combo_dji_cam_left.findData(dev.address) < 0:
-            self.combo_dji_cam_left.addItem(label, dev.address)
-        if self.combo_dji_cam_right.findData(dev.address) < 0:
-            self.combo_dji_cam_right.addItem(label, dev.address)
-        self.lbl_ble_status.setText(f"Gefunden: {dev.name}")
-
-    def _on_dji_ble_conn_changed(self, addr: str, connected: bool):
-        status_txt = "Verbunden" if connected else "Getrennt"
-        self.lbl_ble_status.setText(f"Kamera {addr}: {status_txt}")
-
-    def _on_dji_ble_stream_started(self, addr: str, rtmp_url: str):
-        self.lbl_ble_status.setText(f"🎉 Kamera {addr} streamt aktiv zu: {rtmp_url}")
-        QMessageBox.information(self, "DJI Stream aktiv", f"Die DJI Action Kamera ({addr}) hat den RTMP-Stream erfolgreich gestartet:\n\n{rtmp_url}")
-
-    def _on_dji_ble_error(self, err_msg: str):
-        self.lbl_ble_status.setText(f"Fehler: {err_msg}")
-
-    def _on_dji_connect_left_clicked(self):
-        addr = self.combo_dji_cam_left.currentData()
-        if addr:
-            self.dji_ble_manager.connect_camera(addr)
-
-    def _on_dji_connect_right_clicked(self):
-        addr = self.combo_dji_cam_right.currentData()
-        if addr:
-            self.dji_ble_manager.connect_camera(addr)
-
-    def _on_dji_start_rtmp_clicked(self):
-        ssid = self.txt_dji_wifi_ssid.text().strip()
-        pwd = self.txt_dji_wifi_pass.text().strip()
-        server_url = self.txt_rtmp_server_url.text().strip().rstrip("/")
-        if not ssid:
-            QMessageBox.warning(self, "WLAN erforderlich", "Bitte gib den Namen deines WLAN-Netzwerks (SSID) ein.")
-            return
-
-        addr_l = self.combo_dji_cam_left.currentData()
-        addr_r = self.combo_dji_cam_right.currentData()
-
-        if not addr_l and not addr_r:
-            QMessageBox.warning(self, "Kamera wählen", "Bitte wähle mindestens eine gefundene DJI-Kamera aus.")
-            return
-
-        bitrate = self.combo_stream_bitrate.currentData() or 6000
-
-        if addr_l:
-            url_l = f"{server_url}/{self.txt_stream_key_cam1.text().strip()}"
-            self.dji_ble_manager.start_rtmp_streaming(addr_l, ssid, pwd, url_l, bitrate_kbps=bitrate)
-
-        if addr_r:
-            url_r = f"{server_url}/{self.txt_stream_key_cam2.text().strip()}"
-            self.dji_ble_manager.start_rtmp_streaming(addr_r, ssid, pwd, url_r, bitrate_kbps=bitrate)
-
-    def _on_show_dji_qr_dialog(self):
-        ssid = self.txt_dji_wifi_ssid.text().strip()
-        pwd = self.txt_dji_wifi_pass.text().strip()
-        server_url = self.txt_rtmp_server_url.text().strip().rstrip("/")
-        key = self.txt_stream_key_cam1.text().strip() or "cam1"
-        full_url = f"{server_url}/{key}"
-
-        qr_img = self.dji_ble_manager.generate_dji_stream_qr_image(ssid, pwd, full_url)
-        dlg = DjiQRCodeDialog(qr_img, ssid, full_url, parent=self)
-        dlg.exec()
-
-    def _toggle_master_live_stream(self):
-        """Starts or stops the OBS-Style multi-stream engine."""
-        if self.stream_manager.is_any_live():
-            self.stream_manager.stop_all()
-            self.btn_master_stream_toggle.setText("🔴 LIVE-STREAM STARTEN (OBS-Engine)")
-            self.btn_master_stream_toggle.setStyleSheet(
-                "background-color: #dc2626; color: white; font-weight: 800; font-size: 13px; padding: 12px; border-radius: 10px;"
-            )
-            self.lbl_stream_tally.setText("⚪ BEREIT")
-            self.lbl_stream_tally.setStyleSheet(
-                "background-color: #27273a; color: #a1a1aa; font-weight: 900; font-size: 13px; padding: 6px 14px; border-radius: 8px;"
-            )
-            self.status_bar.showMessage("Stream beendet.")
-        else:
-            base_url = self.txt_rtmp_server_url.text().strip()
-            if not base_url:
-                QMessageBox.warning(self, "Server-URL fehlt", "Bitte gib eine gültige RTMP-Server-URL ein.")
-                return
-
-            # Full OBS Studio Output & Encoder settings
-            obs_cfg = self.obs_settings_widget.get_settings() if hasattr(self, 'obs_settings_widget') else {}
-            out_mode = obs_cfg.get("output_mode", "advanced")
-            codec = obs_cfg.get("video_encoder", self.combo_stream_encoder.currentData() or "h264_nvenc")
-            bitrate = int(obs_cfg.get("bitrate_kbps", 3000))
-            max_bitrate = int(obs_cfg.get("max_bitrate_kbps", 5000))
-            keyint_sec = float(obs_cfg.get("keyframe_interval_sec", 2.0))
-            fps = int(obs_cfg.get("fps", self.combo_stream_fps.currentData() or 30))
-            rc_mode = obs_cfg.get("rate_control", "vbr")
-            preset = obs_cfg.get("preset", "p4")
-            tuning = obs_cfg.get("tuning", "hq")
-            multipass = obs_cfg.get("multipass", "qres")
-            profile = obs_cfg.get("profile", "main")
-            lookahead = bool(obs_cfg.get("lookahead", True))
-            adaptive_quant = bool(obs_cfg.get("adaptive_quant", True))
-            b_frames = int(obs_cfg.get("b_frames", 2))
-            custom_opts = str(obs_cfg.get("custom_options", "")).strip()
-            rescale_output = bool(obs_cfg.get("rescale_output", False))
-            res_str = str(obs_cfg.get("rescale_resolution", "1920x1080"))
-            rw, rh = (1920, 1080)
-            if "x" in res_str:
-                try:
-                    parts = res_str.split("x")
-                    rw, rh = int(parts[0].split()[0]), int(parts[1].split()[0])
-                except Exception:
-                    rw, rh = (1920, 1080)
-            audio_track = int(obs_cfg.get("audio_track", 1))
-            audio_encoder = obs_cfg.get("audio_encoder", "aac")
-
-            res_mode = self.combo_stream_resolution.currentData() if hasattr(self, 'combo_stream_resolution') else "1080p"
-            is_4_3 = self.is_4_3_mode()
-
-            if res_mode == "480p":
-                w_16x9, h_16x9 = 854, 480
-                w_pano = 1280 if is_4_3 else 1706
-                h_pano = 480
-            elif res_mode == "720p":
-                w_16x9, h_16x9 = 1280, 720
-                w_pano = 1920 if is_4_3 else 2560
-                h_pano = 720
-            else:  # "1080p"
-                w_16x9, h_16x9 = 1920, 1080
-                w_pano = 2560 if is_4_3 else 3840
-                h_pano = 960 if is_4_3 else 1080
-
-            channels_data = [
-                (1, getattr(self, 'chk_chan_1', self.chk_chan_bcast), getattr(self, 'combo_feed_c1', None), getattr(self, 'txt_stream_key_c1', self.txt_stream_key_bcast), "broadcast_16x9"),
-                (2, getattr(self, 'chk_chan_2', self.chk_chan_pano), getattr(self, 'combo_feed_c2', None), getattr(self, 'txt_stream_key_c2', self.txt_stream_key_pano), "panorama_8x3"),
-                (3, getattr(self, 'chk_chan_3', self.chk_chan_cam1), getattr(self, 'combo_feed_c3', None), getattr(self, 'txt_stream_key_c3', self.txt_stream_key_cam1), "cam1"),
-                (4, getattr(self, 'chk_chan_4', self.chk_chan_cam2), getattr(self, 'combo_feed_c4', None), getattr(self, 'txt_stream_key_c4', self.txt_stream_key_cam2), "cam2"),
-            ]
-
-            active_count = 0
-            for chan_num, chk, combo, txt, default_feed in channels_data:
-                if chk and chk.isChecked():
-                    feed = combo.currentData() if combo else default_feed
-                    key = txt.text().strip() if txt else f"chan_{chan_num}"
-                    cw, ch = (w_pano, h_pano) if feed == "panorama_8x3" else (w_16x9, h_16x9)
-
-                    # In multi-stream, secondary feeds can slightly scale bitrate to preserve bandwidth
-                    chan_bitrate = bitrate if (feed == "broadcast_16x9" or active_count == 0) else max(400, int(bitrate * 0.75))
-
-                    cfg = RTMPChannelConfig(
-                        channel_id=f"channel_{chan_num}",
-                        name=f"Kanal {chan_num} ({feed})",
-                        stream_url=base_url,
-                        stream_key=key,
-                        enabled=True,
-                        width=cw,
-                        height=ch,
-                        fps=fps,
-                        bitrate_kbps=chan_bitrate,
-                        codec=codec,
-                        keyframe_interval_sec=keyint_sec,
-                        source_feed=feed,
-                        output_mode=out_mode,
-                        audio_track=audio_track,
-                        audio_encoder=audio_encoder,
-                        rescale_output=rescale_output,
-                        rescale_width=rw,
-                        rescale_height=rh,
-                        rate_control=rc_mode,
-                        max_bitrate_kbps=max_bitrate,
-                        preset=preset,
-                        tuning=tuning,
-                        multipass=multipass,
-                        profile=profile,
-                        lookahead=lookahead,
-                        adaptive_quant=adaptive_quant,
-                        b_frames=b_frames,
-                        custom_options=custom_opts
-                    )
-                    self.stream_manager.configure_channel(cfg)
-                    active_count += 1
-
-            if active_count == 0:
-                QMessageBox.warning(self, "Keine Kanäle aktiv", "Bitte aktiviere mindestens einen Live-Stream Kanal (Kanal 1-4).")
-                return
-
-            self.stream_manager.start_all_enabled()
-
-            # If UVC live capture is not running yet, auto-start it if cameras are selected
-            if not self.live_capture_manager.is_running and self.combo_live_input_mode.currentData() == "uvc":
-                self._toggle_uvc_live_capture()
-
-            self.btn_master_stream_toggle.setText("⏹ LIVE-STREAM STOPPEN")
-            self.btn_master_stream_toggle.setStyleSheet(
-                "background-color: #059669; color: white; font-weight: 800; font-size: 13px; padding: 12px; border-radius: 10px;"
-            )
-            self.lbl_stream_tally.setText(f"🔴 LIVE ({res_mode.upper()})")
-            self.lbl_stream_tally.setStyleSheet(
-                "background-color: #dc2626; color: white; font-weight: 900; font-size: 13px; padding: 6px 14px; border-radius: 8px;"
-            )
-            self.status_bar.showMessage(f"OBS-Stream aktiv ({active_count} Kanäle @ {res_mode.upper()})")
-
-    def _handle_stream_telemetry(self, stats_dict: dict):
-        """Thread-safe slot updating GUI with current live stream telemetry."""
-        if not stats_dict:
-            return
-
-        total_kbps = sum(s.current_bitrate_kbps for s in stats_dict.values())
-        max_uptime = max((s.uptime_sec for s in stats_dict.values()), default=0.0)
-        total_drops = sum(s.frames_dropped for s in stats_dict.values())
-        avg_fps = max((s.current_fps for s in stats_dict.values()), default=0.0)
-
-        m, s = divmod(int(max_uptime), 60)
-        h, m = divmod(m, 60)
-        uptime_str = f"{h:02d}:{m:02d}:{s:02d}"
-
-        active_count = sum(1 for s in stats_dict.values() if s.is_live)
-        if active_count > 0:
-            self.lbl_stream_tally.setText(f"🔴 LIVE ({active_count})")
-            self.lbl_stream_telemetry.setText(
-                f"Bitrate: {total_kbps:.0f} kbps ({total_kbps/1024:.1f} MB/s) | FPS: {avg_fps:.1f} | Uptime: {uptime_str} | Drops: {total_drops}"
-            )
-        else:
-            if self.stream_manager.is_any_live():
-                self.lbl_stream_tally.setText("🟡 VERBINDE")
-                self.lbl_stream_telemetry.setText("Verbinde mit RTMP-Server...")
-            else:
-                self.lbl_stream_tally.setText("⚪ BEREIT")
-                self.lbl_stream_telemetry.setText("Bereit für Live-Stream.")
+        self.landing_widget = build_landing_page(self)
+
+    def _init_stepper_wizard(self):
+        from .tabs.stepper_wizard import StepperWizardWidget
+        self.tab_stepper = StepperWizardWidget(self)
+        if hasattr(self, 'viewport'):
+            if hasattr(self.viewport, 'field_marking_changed'):
+                self.viewport.field_marking_changed.connect(self._on_field_marking_changed)
+            if hasattr(self.viewport, 'framing_changed'):
+                self.viewport.framing_changed.connect(self._on_framing_changed)
+
+    def _on_field_marking_changed(self, fm):
+        pass
+
+    def _on_framing_changed(self, min_z: float, max_z: float, cx: float, cy: float):
+        if hasattr(self, 'ctrl_min_zoom'):
+            self.ctrl_min_zoom.blockSignals(True)
+            self.ctrl_min_zoom.setValue(min_z)
+            self.ctrl_min_zoom.blockSignals(False)
+        if hasattr(self, 'ctrl_max_zoom'):
+            self.ctrl_max_zoom.blockSignals(True)
+            self.ctrl_max_zoom.setValue(max_z)
+            self.ctrl_max_zoom.blockSignals(False)
+        if hasattr(self, 'tab_stepper'):
+            self.tab_stepper.update_framing_previews()
+
+    def open_pre_stitched_panorama(self):
+        return self.open_panorama_video()
+
+    def start_export(self, custom_out_path=None, custom_w=None, custom_h=None, mode=None, custom_start_frame=None, custom_end_frame=None, use_lookahead=None):
+        return self.start_video_export(custom_out_path, custom_w, custom_h, mode, custom_start_frame, custom_end_frame, use_lookahead)
 
 
 def launch_gui():

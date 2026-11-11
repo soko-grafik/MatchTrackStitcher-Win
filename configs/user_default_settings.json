@@ -1,0 +1,287 @@
+{
+    "version": "1.3",
+    "name": "DJI Action 4 Dual-Rig 2.7K Dewarp (80 deg, 15 deg tilt)",
+    "rig": {
+        "name": "DJI Action 4 Dual-Rig 2.7K Dewarp (80 deg, 15 deg tilt)",
+        "left_camera": {
+            "name": "DJI Action 4 2.7K Standard/Dewarp (16:9)",
+            "sensor_width": 9.6,
+            "sensor_height": 7.2,
+            "image_width": 1920,
+            "image_height": 1080,
+            "fx": 837.4613767194809,
+            "fy": 837.4613767194809,
+            "cx": 960.0,
+            "cy": 540.0,
+            "k1": 0.0,
+            "k2": 0.0,
+            "k3": 0.0,
+            "k4": 0.0,
+            "model_type": "pinhole"
+        },
+        "right_camera": {
+            "name": "DJI Action 4 2.7K Standard/Dewarp (16:9)",
+            "sensor_width": 9.6,
+            "sensor_height": 7.2,
+            "image_width": 1920,
+            "image_height": 1080,
+            "fx": 837.4613767194809,
+            "fy": 837.4613767194809,
+            "cx": 960.0,
+            "cy": 540.0,
+            "k1": 0.0,
+            "k2": 0.0,
+            "k3": 0.0,
+            "k4": 0.0,
+            "model_type": "pinhole"
+        },
+        "left_pose": {
+            "yaw": -36.6,
+            "pitch": -3.3,
+            "roll": -12.0,
+            "tx": -0.04,
+            "ty": 0.0,
+            "tz": 0.0,
+            "corners": [
+                [
+                    0.0,
+                    0.0
+                ],
+                [
+                    1.0,
+                    0.0
+                ],
+                [
+                    1.0,
+                    1.0
+                ],
+                [
+                    0.0,
+                    1.0
+                ]
+            ]
+        },
+        "right_pose": {
+            "yaw": 37.7,
+            "pitch": -3.3,
+            "roll": 10.7,
+            "tx": 0.04,
+            "ty": 0.0,
+            "tz": 0.0,
+            "corners": [
+                [
+                    0.0,
+                    0.0
+                ],
+                [
+                    1.0,
+                    0.0
+                ],
+                [
+                    1.0,
+                    1.0
+                ],
+                [
+                    0.0,
+                    1.0
+                ]
+            ]
+        },
+        "global_pitch_correction": 3.3,
+        "global_roll_correction": 0.0,
+        "global_yaw_center": 17.3,
+        "pano_hfov": 148.0,
+        "projection_type": "cylindrical",
+        "field_curvature_correction": 0.0,
+        "blend_width_deg": 2.0,
+        "seam_angle_offset": 0.0,
+        "bottom_seam_taper_x": 0.0,
+        "bottom_seam_taper_y": 0.0,
+        "smart_seam_enabled": false,
+        "auto_color_match": true,
+        "color_match_strength": 1.0,
+        "vertical_crop_offset": -0.73,
+        "horizontal_squeeze": 0.5,
+        "auto_crop_lir": true,
+        "lir_safety_margin": 0.005
+    },
+    "sync": {
+        "frame_offset_right": -11
+    },
+    "autocam": {
+        "ai_tracking": false,
+        "tracking_mode": "hybrid_fusion",
+        "ball_weight": 0.9,
+        "players_weight": 0.3,
+        "enable_dynamic_zoom": false,
+        "fixed_zoom_factor": 1.2,
+        "min_zoom": 1.2,
+        "max_zoom": 1.2,
+        "zoom_speed": 0.04,
+        "anticipation_lead": 0.4,
+        "smoothing_factor": 0.74,
+        "deadband_width": 0.03,
+        "max_pan_speed": 0.13,
+        "vertical_center_bias": 0.46,
+        "enable_zone_damping": true,
+        "zone_boost_factor": 1.8,
+        "tactical_margin": 1.5,
+        "pitch_corners": [
+            [
+                0.29,
+                0.209
+            ],
+            [
+                0.505,
+                0.209
+            ],
+            [
+                0.7140000000000001,
+                0.223
+            ],
+            [
+                0.981,
+                0.43200000000000005
+            ],
+            [
+                0.501,
+                0.764
+            ],
+            [
+                0.031,
+                0.4
+            ]
+        ],
+        "scan_step": 2,
+        "use_fp16": false,
+        "enable_radar": false,
+        "radar_position": "top_right",
+        "radar_width": 320,
+        "radar_opacity": 0.85,
+        "burn_radar_in_export": false,
+        "ai_backend": "autocam_soccer_balldet_fp16",
+        "enable_offside_line": false,
+        "enable_skeletons": false,
+        "enable_speed_badges": false,
+        "enable_anti_jersey_filter": true,
+        "enable_static_leaf_filter": false,
+        "enable_sideline_filter": false,
+        "pitch_margin_pct": 0.0,
+        "enable_strict_ball_centering": true
+    },
+    "export": {
+        "format": "21:10",
+        "resolution_width": 5120,
+        "resolution_height": 1440,
+        "codec": "h264_nvenc",
+        "bitrate_mbps": 10,
+        "trim_only": true,
+        "audio_source": "left"
+    },
+    "cloud": {
+        "server_url": "https://cloud.matchtrack.de",
+        "team_id": "",
+        "category": "Pokalspiel",
+        "auto_upload": true,
+        "notify_team": false,
+        "fast_hls": true,
+        "concurrency": 3
+    },
+    "livestream": {
+        "server_url": "rtmp://matchtrack.de:1935/live",
+        "resolution": "1080p",
+        "stream_key_c1": "broadcast_1",
+        "stream_key_c2": "panorama_1",
+        "stream_key_c3": "cam1",
+        "stream_key_c4": "cam2",
+        "source_c1": "cam2",
+        "source_c2": "panorama_8x3",
+        "source_c3": "cam1",
+        "source_c4": "cam2",
+        "chan_c1_enabled": false,
+        "chan_c2_enabled": false,
+        "chan_c3_enabled": true,
+        "chan_c4_enabled": false,
+        "encoder": "NVIDIA NVENC H.264",
+        "bitrate_kbps": 3000,
+        "wifi_ssid": "",
+        "obs_settings": {
+            "output_mode": "advanced",
+            "audio_track": 1,
+            "audio_encoder": "aac",
+            "video_encoder": "h264_nvenc",
+            "rescale_output": false,
+            "rescale_resolution": "1920x1080",
+            "rate_control": "vbr",
+            "bitrate_kbps": 3000,
+            "max_bitrate_kbps": 5000,
+            "keyframe_interval_sec": 2.0,
+            "preset": "p4",
+            "tuning": "hq",
+            "multipass": "qres",
+            "profile": "main",
+            "lookahead": true,
+            "adaptive_quant": true,
+            "b_frames": 2,
+            "custom_options": "",
+            "fps": 30,
+            "rec_type": "standard",
+            "rec_path": "recordings",
+            "rec_format": "mp4",
+            "rec_video_encoder": "same_as_stream",
+            "rec_audio_encoder": "aac",
+            "replay_enabled": false,
+            "replay_sec": 20,
+            "replay_mem_mb": 512
+        }
+    },
+    "wide_angle": {
+        "camera_name": "DJI Action 4 Ultrawide (155° FOV)",
+        "fisheye_strength": 0.85,
+        "hfov_deg": 138.0,
+        "zoom_factor": 1.05,
+        "horizon_tilt_deg": 0.0,
+        "vertical_shift": 0.0,
+        "pitch_corners": [
+            [
+                0.5832266325224071,
+                0.3221653151230616
+            ],
+            [
+                0.8545134443021768,
+                0.37053634940958885
+            ],
+            [
+                0.8177016645326504,
+                0.7233603642054346
+            ],
+            [
+                0.2919334186939821,
+                0.40325793142694555
+            ]
+        ],
+        "geometry_mode": "trapezoid",
+        "trapezoid_top_width_ratio": 0.72,
+        "margin_percent": 8.0,
+        "target_format": "16:9",
+        "target_width": 1920,
+        "target_height": 1080
+    },
+    "ui_view": {
+        "view_mode": "32:9",
+        "show_frame": false,
+        "frame_opacity": 50.0,
+        "show_center_line": false,
+        "show_autocam": false,
+        "show_ball": false,
+        "show_radar": false,
+        "show_offside_line": false,
+        "show_skeletons": false,
+        "show_speed": false,
+        "show_sideline_filter": false,
+        "show_seam": true,
+        "show_grid": false,
+        "sync_angles": false,
+        "multi_frame_calib": true
+    }
+}

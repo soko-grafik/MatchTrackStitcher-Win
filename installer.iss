@@ -39,6 +39,15 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "dist\MatchTrack-Stitcher\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\MatchTrack-Stitcher\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+; Clean up legacy root-level loose files from pre-v1.5.5 installations
+Type: files; Name: "{app}\ffmpeg.exe"
+Type: files; Name: "{app}\ffprobe.exe"
+Type: files; Name: "{app}\*.pt"
+Type: files; Name: "{app}\*.onnx"
+Type: files; Name: "{app}\*.json"
+Type: files; Name: "{app}\*.log"
+
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"

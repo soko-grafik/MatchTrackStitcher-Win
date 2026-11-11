@@ -64,7 +64,10 @@ class VideoSource:
 
 
 def get_encoder_flags(codec: str, bitrate_mbps: int) -> list:
-    """Returns FFmpeg video encoding parameters based on chosen hardware encoder."""
+    """
+    Returns standard-compliant 8-Bit H.264 (yuv420p) video encoding parameters.
+    All exports and cloud uploads strictly require 8-Bit H.264 yuv420p for 100% universal browser and player playback.
+    """
     ffmpeg_bin = get_ffmpeg_path()
     try:
         res = subprocess.run([ffmpeg_bin, "-hide_banner", "-encoders"], capture_output=True, text=True)
@@ -73,30 +76,27 @@ def get_encoder_flags(codec: str, bitrate_mbps: int) -> list:
         logger.warning(f"Konnte FFmpeg Encoder-Liste nicht abfragen: {e}")
         encoder_list = ""
 
-    if "hevc_nvenc" in codec or codec == "hevc_nvenc":
-        real_codec = "hevc_nvenc" if "hevc_nvenc" in encoder_list else "libx265"
-        if real_codec == "hevc_nvenc":
-            if "hq" in codec:
-                return ["-c:v", "hevc_nvenc", "-preset", "p6", "-tune", "hq", "-spatial-aq", "1", "-rc", "vbr", "-cq", "18", "-b:v", f"{bitrate_mbps}M"]
-            else:
-                return ["-c:v", "hevc_nvenc", "-preset", "p4", "-tune", "hq", "-spatial-aq", "0", "-rc", "vbr", "-cq", "22", "-b:v", f"{bitrate_mbps}M", "-maxrate", f"{int(bitrate_mbps * 1.5)}M", "-bufsize", f"{int(bitrate_mbps * 2)}M"]
-        else:
-            logger.warning("hevc_nvenc nicht verfügbar, wechsle auf libx265 CPU Encoder.")
-            return ["-c:v", "libx265", "-preset", "fast", "-crf", "20"]
-    elif "h264_nvenc" in codec or codec == "h264_nvenc":
+    codec_lower = codec.lower() if codec else ""
+
+    if "nvenc" in codec_lower:
         real_codec = "h264_nvenc" if "h264_nvenc" in encoder_list else "libx264"
         if real_codec == "h264_nvenc":
-            if "hq" in codec:
-                return ["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-spatial-aq", "1", "-rc", "vbr", "-cq", "18", "-b:v", f"{bitrate_mbps}M"]
+            if "hq" in codec_lower or "p6" in codec_lower:
+                return ["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-profile:v", "high", "-pix_fmt", "yuv420p", "-spatial-aq", "1", "-rc", "vbr", "-cq", "18", "-b:v", f"{bitrate_mbps}M"]
             else:
-                return ["-c:v", "h264_nvenc", "-preset", "p4", "-tune", "hq", "-spatial-aq", "0", "-rc", "vbr", "-cq", "20", "-b:v", f"{bitrate_mbps}M", "-maxrate", f"{int(bitrate_mbps * 1.5)}M", "-bufsize", f"{int(bitrate_mbps * 2)}M"]
+                return ["-c:v", "h264_nvenc", "-preset", "p4", "-tune", "hq", "-profile:v", "high", "-pix_fmt", "yuv420p", "-spatial-aq", "0", "-rc", "vbr", "-cq", "20", "-b:v", f"{bitrate_mbps}M", "-maxrate", f"{int(bitrate_mbps * 1.5)}M", "-bufsize", f"{int(bitrate_mbps * 2)}M"]
         else:
-            logger.warning("h264_nvenc nicht verfügbar, wechsle auf libx264 CPU Encoder.")
-            return ["-c:v", "libx264", "-preset", "fast", "-crf", "18"]
-    elif "qsv" in codec:
-        return ["-c:v", "hevc_qsv", "-preset", "medium", "-b:v", f"{bitrate_mbps}M"]
+            logger.warning("h264_nvenc nicht verfügbar, wechsle auf libx264 CPU Encoder (8-Bit H.264 yuv420p).")
+            return ["-c:v", "libx264", "-preset", "fast", "-profile:v", "high", "-pix_fmt", "yuv420p", "-crf", "18"]
+    elif "qsv" in codec_lower:
+        real_codec = "h264_qsv" if "h264_qsv" in encoder_list else "libx264"
+        if real_codec == "h264_qsv":
+            return ["-c:v", "h264_qsv", "-preset", "medium", "-profile:v", "high", "-pix_fmt", "yuv420p", "-b:v", f"{bitrate_mbps}M"]
+        else:
+            logger.warning("h264_qsv nicht verfügbar, wechsle auf libx264 CPU Encoder (8-Bit H.264 yuv420p).")
+            return ["-c:v", "libx264", "-preset", "fast", "-profile:v", "high", "-pix_fmt", "yuv420p", "-crf", "18"]
     else:
-        return ["-c:v", "libx264", "-preset", "fast", "-crf", "18"]
+        return ["-c:v", "libx264", "-preset", "fast", "-profile:v", "high", "-pix_fmt", "yuv420p", "-crf", "18"]
 
 
 class StitcherEngine:
@@ -242,10 +242,13 @@ class StitcherEngine:
                 else:
                     wa_frame = raw_src
 
-            tx, ty, tz, ball_found, ball_px = self.ai_broadcast.detect_action(wa_frame)
-            self.ai_broadcast.update_camera(tx, ty, tz)
+            if getattr(self.ai_broadcast.config, 'ai_tracking', False):
+                tx, ty, tz, ball_found, ball_px = self.ai_broadcast.detect_action(wa_frame)
+                self.ai_broadcast.update_camera(tx, ty, tz)
+            else:
+                ball_px = None
             crop_box = self.ai_broadcast.get_crop_rect(preview_width, preview_height)
-            return wa_frame, crop_box, ball_px, self.ai_broadcast.cam_zoom
+            return wa_frame, crop_box, ball_px, getattr(self.ai_broadcast, 'cam_zoom', 1.0)
 
         # Mode 1: Single 32:9 Panorama Video
         if self.video_panorama is not None:
@@ -258,11 +261,14 @@ class StitcherEngine:
             else:
                 pano_frame = raw_frame
 
-            tx, ty, tz, ball_found, ball_px = self.ai_broadcast.detect_action(pano_frame)
-            self.ai_broadcast.update_camera(tx, ty, tz)
+            if getattr(self.ai_broadcast.config, 'ai_tracking', False):
+                tx, ty, tz, ball_found, ball_px = self.ai_broadcast.detect_action(pano_frame)
+                self.ai_broadcast.update_camera(tx, ty, tz)
+            else:
+                ball_px = None
             crop_box = self.ai_broadcast.get_crop_rect(preview_width, preview_height)
 
-            return pano_frame, crop_box, ball_px, self.ai_broadcast.cam_zoom
+            return pano_frame, crop_box, ball_px, getattr(self.ai_broadcast, 'cam_zoom', 1.0)
 
         # Mode 2: 2-Camera Live Stitching Rig
         if not self.video_left or not self.video_right:
@@ -283,16 +289,21 @@ class StitcherEngine:
             frame_r = np.zeros((self.video_left.height, self.video_left.width, 3), dtype=np.uint8)
 
         luts = self.update_luts(preview_width, preview_height)
+        if getattr(self.rig, 'smart_seam_enabled', False) and luts.smart_seam_path is None:
+            luts.update_smart_seam(frame_l, frame_r, self.rig)
         self.color_matcher.enabled = getattr(self.rig, 'auto_color_match', True)
         self.color_matcher.set_strength(getattr(self.rig, 'color_match_strength', 1.0))
         stitched = apply_stitch(frame_l, frame_r, luts, color_matcher=self.color_matcher)
 
-        # AI Ball & Player Detection + Dynamic Auto-Zoom
-        tx, ty, tz, ball_found, ball_px = self.ai_broadcast.detect_action(stitched)
-        self.ai_broadcast.update_camera(tx, ty, tz)
+        # AI Ball & Player Detection + Dynamic Auto-Zoom (Only active if Deep Learning is enabled)
+        if getattr(self.ai_broadcast.config, 'ai_tracking', False):
+            tx, ty, tz, ball_found, ball_px = self.ai_broadcast.detect_action(stitched)
+            self.ai_broadcast.update_camera(tx, ty, tz)
+        else:
+            ball_px = None
         crop_box = self.ai_broadcast.get_crop_rect(preview_width, preview_height)
 
-        return stitched, crop_box, ball_px, self.ai_broadcast.cam_zoom
+        return stitched, crop_box, ball_px, getattr(self.ai_broadcast, 'cam_zoom', 1.0)
 
     def stitch_live_pair(
         self,
@@ -364,7 +375,11 @@ class StitcherEngine:
                              end_frame: Optional[int] = None,
                              audio_source: str = "left",
                              progress_callback: Optional[Callable[[int, int, float, float], None]] = None,
-                             wide_angle_rectifier: Optional[Any] = None) -> bool:
+                             wide_angle_rectifier: Optional[Any] = None,
+                             crop_rect: Optional[Tuple[float, float, float, float]] = None,
+                             stretch_x: float = 1.0,
+                             stretch_y: float = 1.0,
+                             preview_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
         """
         Hardware-accelerated multi-threaded batch render pipeline.
         Uses non-blocking parallel reader, multi-threaded worker pool, and live FFmpeg error logging.
@@ -402,6 +417,20 @@ class StitcherEngine:
                     start_frame=start_frame,
                     end_frame=end_frame,
                     progress_callback=cb_wrapper
+                )
+            elif mode == "custom_crop" or crop_rect is not None or stretch_x != 1.0 or stretch_y != 1.0:
+                return self.convert_panorama_to_21x10(
+                    output_filepath=output_filepath,
+                    out_width=out_width,
+                    out_height=out_height,
+                    codec=codec,
+                    bitrate_mbps=bitrate_mbps,
+                    start_frame=start_frame,
+                    end_frame=end_frame,
+                    progress_callback=cb_wrapper,
+                    crop_rect=crop_rect,
+                    stretch_x=stretch_x,
+                    stretch_y=stretch_y
                 )
             elif mode == "16:9_autocam":
                 return self.render_broadcast_from_panorama(
@@ -492,8 +521,19 @@ class StitcherEngine:
                 margin_percent=getattr(self.ai_broadcast.config, 'tactical_margin', 0.0)
             )
             logger.info(f"16:9 Taktik-Warp Zwischenauflösung: {inter_w}x{inter_h} (Aspekt {pano_aspect:.2f}) -> Ziel: {out_width}x{out_height}")
+        elif mode == "custom_crop" or crop_rect is not None or stretch_x != 1.0 or stretch_y != 1.0:
+            inter_h = max(out_height, 1080)
+            inter_w = int(round(inter_h * pano_aspect))
+            luts = self.update_luts(inter_w, inter_h)
+            logger.info(f"Custom Crop / Transform Zwischenauflösung: {inter_w}x{inter_h} (Aspekt {pano_aspect:.2f}) -> Ziel: {out_width}x{out_height}")
         else:
             luts = self.update_luts(out_width, out_height)
+
+        if getattr(self.rig, 'smart_seam_enabled', False) and luts.smart_seam_path is None:
+            fl_sample = self.video_left.get_frame(start_frame) if self.video_left else None
+            fr_sample = self.video_right.get_frame(max(0, start_frame - self.frame_offset_right)) if self.video_right else None
+            if fl_sample is not None and fr_sample is not None:
+                luts.update_smart_seam(fl_sample, fr_sample, self.rig)
 
         self.color_matcher.enabled = getattr(self.rig, 'auto_color_match', True)
         self.color_matcher.set_strength(getattr(self.rig, 'color_match_strength', 1.0))
@@ -803,6 +843,24 @@ class StitcherEngine:
                     except Exception as e:
                         logger.error(f"Fehler in 16:9 Taktik-Warp bei Frame {f_idx}: {e}", exc_info=True)
                         final_frame = cv2.resize(stitched, (out_width, out_height))
+                elif mode == "custom_crop" or crop_rect is not None or stretch_x != 1.0 or stretch_y != 1.0:
+                    curr_frame = stitched
+                    if crop_rect is not None:
+                        sh, sw = curr_frame.shape[:2]
+                        nx, ny, nw, nh = crop_rect
+                        cx = max(0, min(sw - 2, int(round(nx * sw))))
+                        cy = max(0, min(sh - 2, int(round(ny * sh))))
+                        cw = max(2, min(sw - cx, int(round(nw * sw))))
+                        ch = max(2, min(sh - cy, int(round(nh * sh))))
+                        curr_frame = curr_frame[cy:cy+ch, cx:cx+cw]
+                    if stretch_x != 1.0 or stretch_y != 1.0:
+                        tw = max(2, int(round(curr_frame.shape[1] * stretch_x)))
+                        th = max(2, int(round(curr_frame.shape[0] * stretch_y)))
+                        curr_frame = cv2.resize(curr_frame, (tw, th), interpolation=cv2.INTER_LINEAR)
+                    if (curr_frame.shape[1], curr_frame.shape[0]) != (out_width, out_height):
+                        final_frame = cv2.resize(curr_frame, (out_width, out_height), interpolation=cv2.INTER_LINEAR)
+                    else:
+                        final_frame = curr_frame
                 else:
                     final_frame = stitched
 
@@ -835,6 +893,12 @@ class StitcherEngine:
                         del final_frame
 
                 processed += 1
+
+                if preview_callback and (processed % 15 == 0 or processed == 1 or processed == frames_to_process):
+                    try:
+                        preview_callback(final_frame)
+                    except Exception:
+                        pass
 
                 if progress_callback and (processed % 15 == 0 or processed == frames_to_process):
                     elapsed = time.time() - start_time
@@ -902,7 +966,8 @@ class StitcherEngine:
                                        start_frame: int = 0,
                                        end_frame: Optional[int] = None,
                                        use_lookahead: bool = True,
-                                       progress_callback: Optional[Callable[[int, int, float, float, str], None]] = None) -> bool:
+                                       progress_callback: Optional[Callable[[int, int, float, float, str], None]] = None,
+                                       preview_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
         """
         Ultra-fast direct 16:9 Follow-Cam render from an existing 32:9 panorama video file.
         Stage 1 (Lookahead): Offline trajectory scan & bidirectional Gaussian smoothing.
@@ -957,10 +1022,15 @@ class StitcherEngine:
 
         # Stage 1: Precompute Trajectory if Lookahead is enabled
         if use_lookahead:
+            logger.info(f"Start Stufe 1/2: Berechne KI-Trajektorie (Lookahead) über {frames_to_process} Frames...")
             def traj_cb(curr, total, speed):
+                eta = (total - curr) / max(speed, 0.001)
                 if progress_callback:
-                    eta = (total - curr) / max(speed, 0.001)
                     progress_callback(curr, total, speed, eta, "Stufe 1/2: KI-Trajektorie (Lookahead)...")
+                if curr % 1200 == 0 or curr == total:
+                    pct = int((curr / max(total, 1)) * 100)
+                    m_eta, s_eta = divmod(int(eta), 60)
+                    logger.info(f"KI-Trajektorie Scan (Lookahead): {curr}/{total} ({pct}%) | {speed:.1f} FPS | Restzeit: {m_eta:02d}:{s_eta:02d}")
 
             step_val = getattr(self.ai_broadcast.config, "scan_step", 5)
             self.ai_broadcast.generate_offline_trajectory(
@@ -976,6 +1046,7 @@ class StitcherEngine:
             if self._stop_render.is_set():
                 logger.info("Export während der Trajektorienberechnung abgebrochen.")
                 return False
+            logger.info("🎉 Stufe 1/2 abgeschlossen: KI-Trajektorie erfolgreich vorbereitet.")
 
         # Stage 2: Hardware-Accelerated Video Crop & NVENC Encode
         ffmpeg_bin = get_ffmpeg_path()
@@ -1079,11 +1150,18 @@ class StitcherEngine:
 
                 processed += 1
 
+                if preview_callback and (processed % 15 == 0 or processed == 1 or processed == frames_to_process):
+                    try:
+                        preview_callback(final_frame)
+                    except Exception:
+                        pass
+
                 if progress_callback and (processed % 15 == 0 or processed == frames_to_process):
                     elapsed = time.time() - start_time
                     current_fps = processed / max(elapsed, 0.001)
                     eta_sec = (frames_to_process - processed) / max(current_fps, 0.001)
-                    progress_callback(processed, frames_to_process, current_fps, eta_sec, "Stufe 2/2: 16:9 Follow-Cam Rendering...")
+                    stage_title = "Stufe 2/2: 16:9 Follow-Cam Rendering..." if use_lookahead else "16:9 Follow-Cam Rendering..."
+                    progress_callback(processed, frames_to_process, current_fps, eta_sec, stage_title)
 
                 if processed % 150 == 0 or processed == frames_to_process:
                     elapsed = time.time() - start_time
@@ -1124,7 +1202,11 @@ class StitcherEngine:
                                   bitrate_mbps: int = 50,
                                   start_frame: int = 0,
                                   end_frame: Optional[int] = None,
-                                  progress_callback: Optional[Callable[[int, int, float, float, str], None]] = None) -> bool:
+                                  progress_callback: Optional[Callable[[int, int, float, float, str], None]] = None,
+                                  crop_rect: Optional[Tuple[float, float, float, float]] = None,
+                                  stretch_x: float = 1.0,
+                                  stretch_y: float = 1.0,
+                                  preview_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
         """
         Ultra-fast direct 32:9 to 21:10 Panorama conversion with even horizontal squeezing.
         Reads 32:9 panorama master, evenly resizes/squeezes each frame to (out_width, out_height),
@@ -1247,10 +1329,24 @@ class StitcherEngine:
                     logger.warning(f"Kein Frame bei Index {f_idx} aus 32:9 Video.")
                     break
 
-                if (pano_frame.shape[1], pano_frame.shape[0]) != (out_width, out_height):
-                    final_frame = cv2.resize(pano_frame, (out_width, out_height), interpolation=cv2.INTER_LINEAR)
+                curr_frame = pano_frame
+                if crop_rect is not None:
+                    sh, sw = curr_frame.shape[:2]
+                    nx, ny, nw, nh = crop_rect
+                    cx = max(0, min(sw - 2, int(round(nx * sw))))
+                    cy = max(0, min(sh - 2, int(round(ny * sh))))
+                    cw = max(2, min(sw - cx, int(round(nw * sw))))
+                    ch = max(2, min(sh - cy, int(round(nh * sh))))
+                    curr_frame = curr_frame[cy:cy+ch, cx:cx+cw]
+                if stretch_x != 1.0 or stretch_y != 1.0:
+                    tw = max(2, int(round(curr_frame.shape[1] * stretch_x)))
+                    th = max(2, int(round(curr_frame.shape[0] * stretch_y)))
+                    curr_frame = cv2.resize(curr_frame, (tw, th), interpolation=cv2.INTER_LINEAR)
+
+                if (curr_frame.shape[1], curr_frame.shape[0]) != (out_width, out_height):
+                    final_frame = cv2.resize(curr_frame, (out_width, out_height), interpolation=cv2.INTER_LINEAR)
                 else:
-                    final_frame = pano_frame
+                    final_frame = curr_frame
 
                 if getattr(self.ai_broadcast.config, "burn_radar_in_export", False):
                     try:
@@ -1275,6 +1371,12 @@ class StitcherEngine:
                     break
 
                 processed += 1
+
+                if preview_callback and (processed % 15 == 0 or processed == 1 or processed == frames_to_process):
+                    try:
+                        preview_callback(final_frame)
+                    except Exception:
+                        pass
 
                 if progress_callback and (processed % 15 == 0 or processed == frames_to_process):
                     elapsed = time.time() - start_time
@@ -1321,7 +1423,8 @@ class StitcherEngine:
                                           bitrate_mbps: int = 50,
                                           start_frame: int = 0,
                                           end_frame: Optional[int] = None,
-                                          progress_callback: Optional[Callable[[int, int, float, float, str], None]] = None) -> bool:
+                                          progress_callback: Optional[Callable[[int, int, float, float, str], None]] = None,
+                                          preview_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
         """
         Transforms a wide 32:9 panorama video into a planar 16:9 full-pitch tactical overview
         using 6-point dual-quad mesh homography without any virtual camera panning.
@@ -1478,6 +1581,12 @@ class StitcherEngine:
 
                 processed += 1
 
+                if preview_callback and (processed % 15 == 0 or processed == 1 or processed == frames_to_process):
+                    try:
+                        preview_callback(final_frame)
+                    except Exception:
+                        pass
+
                 if progress_callback and (processed % 15 == 0 or processed == frames_to_process):
                     elapsed = time.time() - start_time
                     current_fps = processed / max(elapsed, 0.001)
@@ -1525,7 +1634,8 @@ class StitcherEngine:
         start_frame: int = 0,
         end_frame: Optional[int] = None,
         wide_angle_rectifier: Optional[Any] = None,
-        progress_callback: Optional[Callable[[int, int, float, float, str], None]] = None
+        progress_callback: Optional[Callable[[int, int, float, float, str], None]] = None,
+        preview_callback: Optional[Callable[[np.ndarray], None]] = None
     ) -> bool:
         """
         Renders an ultra-wide angle video (e.g. DJI Action 4 155°) into a rectified, dewarped,
@@ -1585,7 +1695,6 @@ class StitcherEngine:
             map_x = grid_x * (src_w / float(out_width))
             map_y = grid_y * (src_h / float(out_height))
 
-        from .lut_generator import get_encoder_flags
         ffmpeg_bin = get_ffmpeg_path()
         codec_flags = get_encoder_flags(codec, bitrate_mbps)
 
@@ -1655,6 +1764,12 @@ class StitcherEngine:
                 proc.stdin.write(rectified.tobytes())
                 processed += 1
 
+                if preview_callback and (processed % 15 == 0 or processed == 1 or processed == frames_to_process):
+                    try:
+                        preview_callback(rectified)
+                    except Exception:
+                        pass
+
                 if progress_callback and (processed % 15 == 0 or processed == frames_to_process):
                     elapsed = time.time() - t_start_render
                     cur_fps = processed / max(elapsed, 0.001)
@@ -1696,7 +1811,8 @@ class StitcherEngine:
                                    audio_source: str = "left",
                                    use_lookahead: bool = True,
                                    keep_32x9: bool = True,
-                                   progress_callback: Optional[Callable[[int, int, float, float, str], None]] = None) -> bool:
+                                   progress_callback: Optional[Callable[[int, int, float, float, str], None]] = None,
+                                   preview_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
         """
         Full 2-stage automated broadcast pipeline:
         Stage 1: Stitches 2 raw cameras into a master 32:9 panorama video.
@@ -1734,7 +1850,8 @@ class StitcherEngine:
             start_frame=start_frame,
             end_frame=end_frame,
             audio_source=audio_source,
-            progress_callback=stage1_cb
+            progress_callback=stage1_cb,
+            preview_callback=preview_callback
         )
 
         if not ok1 or self._stop_render.is_set():
@@ -1756,7 +1873,8 @@ class StitcherEngine:
             start_frame=0,
             end_frame=frames_in_master,
             use_lookahead=use_lookahead,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
+            preview_callback=preview_callback
         )
 
         if not keep_32x9 and os.path.exists(output_32x9_filepath):

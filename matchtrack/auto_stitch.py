@@ -58,6 +58,14 @@ def extract_overlap_matches(
     gray_l = cv2.cvtColor(frame_left, cv2.COLOR_BGR2GRAY) if len(frame_left.shape) == 3 else frame_left
     gray_r = cv2.cvtColor(frame_right, cv2.COLOR_BGR2GRAY) if len(frame_right.shape) == 3 else frame_right
 
+    # Enhance lower half with CLAHE to extract features from turf markings, lines, and near-field details
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    split_y = int(h_l * 0.40)
+    gray_l_enh = gray_l.copy()
+    gray_r_enh = gray_r.copy()
+    gray_l_enh[split_y:, :] = clahe.apply(gray_l[split_y:, :])
+    gray_r_enh[split_y:, :] = clahe.apply(gray_r[split_y:, :])
+
     # Define ROI mask focusing on the overlap zone
     # Left camera: right 60% of frame (from x = 0.40 * w to w)
     mask_l = np.zeros((h_l, w_l), dtype=np.uint8)
@@ -67,18 +75,18 @@ def extract_overlap_matches(
     mask_r = np.zeros((h_r, w_r), dtype=np.uint8)
     mask_r[:, :int(w_r * 0.65)] = 255
 
-    # Try SIFT first, fallback to AKAZE or ORB if unavailable
+    # Try SIFT first with lower contrast threshold to pick up subtle turf contrast
     detector = None
     try:
-        detector = cv2.SIFT_create(nfeatures=max_features, contrastThreshold=0.03, edgeThreshold=10)
+        detector = cv2.SIFT_create(nfeatures=max_features, contrastThreshold=0.02, edgeThreshold=12)
     except Exception:
         try:
             detector = cv2.AKAZE_create()
         except Exception:
             detector = cv2.ORB_create(nfeatures=max_features)
 
-    kp_l, des_l = detector.detectAndCompute(gray_l, mask=mask_l)
-    kp_r, des_r = detector.detectAndCompute(gray_r, mask=mask_r)
+    kp_l, des_l = detector.detectAndCompute(gray_l_enh, mask=mask_l)
+    kp_r, des_r = detector.detectAndCompute(gray_r_enh, mask=mask_r)
 
     if des_l is None or des_r is None or len(kp_l) < 8 or len(kp_r) < 8:
         return []
@@ -254,27 +262,30 @@ def optimize_rig_calibration(
     pts_r_v = np.array([m.v_right for m in matches], dtype=np.float64)
 
     # Initial parameter vector:
-    # p = [yaw_left, yaw_right, cam_pitch, roll_left, roll_right, fov_deg]
+    # p = [yaw_left, yaw_right, pitch_left, pitch_right, roll_left, roll_right, fov_deg, taper_x, taper_y]
     p0 = np.array([
         initial_rig.left_pose.yaw,
         initial_rig.right_pose.yaw,
         initial_rig.left_pose.pitch,
+        initial_rig.right_pose.pitch,
         initial_rig.left_pose.roll,
         initial_rig.right_pose.roll,
-        initial_rig.left_camera.hfov_deg
+        initial_rig.left_camera.hfov_deg,
+        getattr(initial_rig, 'bottom_seam_taper_x', 0.0),
+        getattr(initial_rig, 'bottom_seam_taper_y', 0.0)
     ], dtype=np.float64)
 
     # Bounds for parameters
-    bounds_lower = np.array([-75.0,  15.0, -40.0, -12.0, -12.0,  70.0])
-    bounds_upper = np.array([-15.0,  75.0,  -2.0,  12.0,  12.0, 120.0])
+    bounds_lower = np.array([-75.0,  15.0, -40.0, -40.0, -12.0, -12.0,  70.0, -15.0, -10.0])
+    bounds_upper = np.array([-15.0,  75.0,  -2.0,  -2.0,  12.0,  12.0, 120.0,  15.0,  10.0])
 
     if not optimize_fov:
         # Clamp FOV bounds to initial value
-        bounds_lower[5] = p0[5] - 1e-4
-        bounds_upper[5] = p0[5] + 1e-4
+        bounds_lower[6] = p0[6] - 1e-4
+        bounds_upper[6] = p0[6] + 1e-4
 
     def compute_residuals(params: np.ndarray) -> np.ndarray:
-        yaw_l, yaw_r, pitch_val, roll_l, roll_r, fov_val = params
+        yaw_l, yaw_r, pitch_l, pitch_r, roll_l, roll_r, fov_val, tap_x, tap_y = params
 
         # Update intrinsics with current FOV candidate
         cam_l = CameraIntrinsics.from_dict(initial_rig.left_camera.to_dict())
@@ -287,11 +298,12 @@ def optimize_rig_calibration(
         rays_r = unproject_pixel_to_cam_ray(pts_r_u, pts_r_v, cam_r)
 
         # Poses
-        pose_l = CameraPose(yaw=yaw_l, pitch=pitch_val, roll=roll_l, tx=initial_rig.left_pose.tx)
-        pose_r = CameraPose(yaw=yaw_r, pitch=pitch_val, roll=roll_r, tx=initial_rig.right_pose.tx)
+        pose_l = CameraPose(yaw=yaw_l, pitch=pitch_l, roll=roll_l, tx=initial_rig.left_pose.tx)
+        pose_r = CameraPose(yaw=yaw_r, pitch=pitch_r, roll=roll_r, tx=initial_rig.right_pose.tx)
 
-        # Global Leveling: If locked, counteract camera pitch directly
-        g_pitch = -pitch_val if lock_pitch_leveling else initial_rig.global_pitch_correction
+        # Global Leveling: If locked, counteract average camera pitch directly
+        avg_pitch = (pitch_l + pitch_r) * 0.5
+        g_pitch = -avg_pitch if lock_pitch_leveling else initial_rig.global_pitch_correction
         r_pitch = np.radians(g_pitch)
         r_roll = np.radians(initial_rig.global_roll_correction)
         r_yaw = np.radians(initial_rig.global_yaw_center)
@@ -311,8 +323,17 @@ def optimize_rig_calibration(
             initial_rig.pano_hfov, out_w, out_h, initial_rig.vertical_crop_offset
         )
 
-        dx = px_l - px_r
-        dy = py_l - py_r
+        # Apply bottom-area taper to right camera points:
+        # Top 25% is completely untouched (w_bottom = 0.0), below that quadratic onset:
+        y_norm = np.clip(py_r / max(1.0, float(out_h)), 0.0, 1.0)
+        w_bottom = np.maximum(0.0, (y_norm - 0.25) / 0.75) ** 2
+
+        hfov_rad = np.radians(initial_rig.pano_hfov)
+        px_r_adj = px_r - w_bottom * (np.radians(tap_x) / (hfov_rad * 0.5)) * (out_w * 0.5)
+        py_r_adj = py_r - w_bottom * (np.radians(tap_y) / (hfov_rad * 0.5)) * (out_h * 0.5)
+
+        dx = px_l - px_r_adj
+        dy = py_l - py_r_adj
 
         # Return concatenated 1D residual vector [dx_0, dy_0, dx_1, dy_1, ...]
         return np.column_stack([dx, dy]).ravel()
@@ -344,17 +365,21 @@ def optimize_rig_calibration(
         improvement = max(0.0, float((init_mean_err - opt_mean_err) / init_mean_err * 100.0))
 
     # Construct optimized RigConfiguration
-    opt_yaw_l, opt_yaw_r, opt_pitch, opt_roll_l, opt_roll_r, opt_fov = opt_p
+    opt_yaw_l, opt_yaw_r, opt_pitch_l, opt_pitch_r, opt_roll_l, opt_roll_r, opt_fov, opt_tap_x, opt_tap_y = opt_p
 
     new_rig = RigConfiguration.from_dict(initial_rig.to_dict())
     new_rig.left_pose.yaw = float(round(opt_yaw_l, 2))
     new_rig.right_pose.yaw = float(round(opt_yaw_r, 2))
-    new_rig.left_pose.pitch = float(round(opt_pitch, 2))
-    new_rig.right_pose.pitch = float(round(opt_pitch, 2))
+    new_rig.left_pose.pitch = float(round(opt_pitch_l, 2))
+    new_rig.right_pose.pitch = float(round(opt_pitch_r, 2))
     new_rig.left_pose.roll = float(round(opt_roll_l, 2))
     new_rig.right_pose.roll = float(round(opt_roll_r, 2))
+    new_rig.bottom_seam_taper_x = float(round(opt_tap_x, 2))
+    new_rig.bottom_seam_taper_y = float(round(opt_tap_y, 2))
+
+    avg_opt_pitch = (opt_pitch_l + opt_pitch_r) * 0.5
     if lock_pitch_leveling:
-        new_rig.global_pitch_correction = float(round(-opt_pitch, 2))
+        new_rig.global_pitch_correction = float(round(-avg_opt_pitch, 2))
 
     new_rig.left_camera.set_fov(float(round(opt_fov, 2)))
     new_rig.right_camera.set_fov(float(round(opt_fov, 2)))
@@ -367,7 +392,8 @@ def optimize_rig_calibration(
         f"Berechnete Rig-Winkel:\n"
         f"• Spreizung: {abs(opt_yaw_l) + abs(opt_yaw_r):.2f}° "
         f"(Links {opt_yaw_l:.1f}°, Rechts +{opt_yaw_r:.1f}°)\n"
-        f"• Neigung (Pitch): {opt_pitch:.1f}° (Ausgleich +{-opt_pitch:.1f}°)\n"
+        f"• Neigung (Pitch): L {opt_pitch_l:.1f}°, R {opt_pitch_r:.1f}° (Diff: {opt_pitch_r - opt_pitch_l:+.1f}°)\n"
+        f"• Boden-Nahtstellen Taper: X {opt_tap_x:+.1f}°, Y {opt_tap_y:+.1f}°\n"
         f"• Roll-Feinjustage: L {opt_roll_l:+.1f}°, R {opt_roll_r:+.1f}°\n"
         f"• Objektiv HFOV: {opt_fov:.1f}°"
     )
@@ -382,7 +408,12 @@ def optimize_rig_calibration(
         details={
             "yaw_left": float(opt_yaw_l),
             "yaw_right": float(opt_yaw_r),
-            "pitch": float(opt_pitch),
+            "pitch": float(opt_pitch_l),
+            "pitch_left": float(opt_pitch_l),
+            "pitch_right": float(opt_pitch_r),
+            "pitch_diff": float(opt_pitch_r - opt_pitch_l),
+            "bottom_taper_x": float(opt_tap_x),
+            "bottom_taper_y": float(opt_tap_y),
             "roll_left": float(opt_roll_l),
             "roll_right": float(opt_roll_r),
             "hfov": float(opt_fov),

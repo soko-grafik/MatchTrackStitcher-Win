@@ -134,6 +134,10 @@ class RigConfiguration:
     
     # Overlap blending & Auto-Crop parameters
     blend_width_deg: float = 8.0          # Angular width of seam transition (degrees)
+    seam_angle_offset: float = 0.0        # Shift seam position horizontally (-25° to +25°)
+    bottom_seam_taper_x: float = 0.0      # Horizontal taper offset at bottom seam (-15° to +15°)
+    bottom_seam_taper_y: float = 0.0      # Vertical pitch taper offset at bottom seam (-10° to +10°)
+    smart_seam_enabled: bool = False      # Dynamic contour seam avoiding persons/objects
     auto_color_match: bool = True         # Automatic color & exposure matching across cameras
     color_match_strength: float = 1.0     # 0.0 (off) to 1.0 (100% match)
     vertical_crop_offset: float = 0.12    # -2.0 (top) to +2.0 (bottom) vertical shift (0.12 gives optimal near-field corner coverage)
@@ -164,6 +168,10 @@ class RigConfiguration:
             "projection_type": self.projection_type,
             "field_curvature_correction": self.field_curvature_correction,
             "blend_width_deg": self.blend_width_deg,
+            "seam_angle_offset": getattr(self, 'seam_angle_offset', 0.0),
+            "bottom_seam_taper_x": getattr(self, 'bottom_seam_taper_x', 0.0),
+            "bottom_seam_taper_y": getattr(self, 'bottom_seam_taper_y', 0.0),
+            "smart_seam_enabled": getattr(self, 'smart_seam_enabled', False),
             "auto_color_match": self.auto_color_match,
             "color_match_strength": self.color_match_strength,
             "vertical_crop_offset": self.vertical_crop_offset,
@@ -192,6 +200,10 @@ class RigConfiguration:
             projection_type=data.get("projection_type", "cylindrical"),
             field_curvature_correction=float(data.get("field_curvature_correction", 0.0)),
             blend_width_deg=data.get("blend_width_deg", 8.0),
+            seam_angle_offset=float(data.get("seam_angle_offset", 0.0)),
+            bottom_seam_taper_x=float(data.get("bottom_seam_taper_x", 0.0)),
+            bottom_seam_taper_y=float(data.get("bottom_seam_taper_y", 0.0)),
+            smart_seam_enabled=bool(data.get("smart_seam_enabled", False)),
             auto_color_match=bool(data.get("auto_color_match", True)),
             color_match_strength=float(data.get("color_match_strength", 1.0)),
             vertical_crop_offset=data.get("vertical_crop_offset", 0.12),

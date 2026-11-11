@@ -5,24 +5,17 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 
-# Collect package data and submodules
+# Collect package data and submodules into structured directories
 datas = [
     ('matchtrack/assets', 'matchtrack/assets'),
-    ('default_rig_action4_80deg.json', '.'),
-    ('dji_action4_1080p_dewarp_rig.json', '.'),
-    ('dji_action4_1080p_4x3_dewarp_rocksteady.json', '.'),
-    ('user_default_settings.json', '.'),
-    ('dji_action4_1080p_2.json', '.'),
+    ('configs', 'configs'),
+    ('models', 'models'),
 ]
 
-for pt_model in ['yolo11m_football_player.pt', 'yolo11n_football_ball.pt', 'yolo11n.pt', 'yolov8n.pt', 'rtdetr-l.pt', 'yolov8n-pose.pt']:
-    if os.path.exists(pt_model):
-        datas.append((pt_model, '.'))
-
 if os.path.exists('bin/ffmpeg.exe'):
-    datas.append(('bin/ffmpeg.exe', '.'))
+    datas.append(('bin/ffmpeg.exe', 'bin'))
 if os.path.exists('bin/ffprobe.exe'):
-    datas.append(('bin/ffprobe.exe', '.'))
+    datas.append(('bin/ffprobe.exe', 'bin'))
 
 # Add ultralytics default assets if present
 try:

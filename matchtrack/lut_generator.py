@@ -39,6 +39,152 @@ class RemapLUTs:
     map_yr_sub: Optional[np.ndarray] = None
     weight_seam_l: Optional[np.ndarray] = None
     weight_seam_r: Optional[np.ndarray] = None
+    smart_seam_path: Optional[np.ndarray] = None
+
+    def update_smart_seam(self, frame_left: np.ndarray, frame_right: np.ndarray, rig: RigConfiguration) -> bool:
+        """
+        Dynamically routes the seam around obstacles (players, coaches) in the overlap zone
+        using content-aware dynamic programming. Updates blending weights in-place with zero allocation.
+        """
+        if self.seam_x_start is None or self.seam_x_end is None or self.map_xl_sub is None or self.map_xr_sub is None:
+            return False
+        if frame_left is None or frame_right is None:
+            return False
+
+        x0 = self.seam_x_start
+        x1 = self.seam_x_end
+        sub_w = x1 - x0
+        if sub_w < 8:
+            return False
+
+        try:
+            # Remap sub-strips in the overlap region
+            rem_l_sub = cv2.remap(
+                frame_left, self.map_xl_sub, self.map_yl_sub,
+                interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE
+            )
+            rem_r_sub = cv2.remap(
+                frame_right, self.map_xr_sub, self.map_yr_sub,
+                interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE
+            )
+
+            strip_l = rem_l_sub[:, x0:x1]
+            strip_r = rem_r_sub[:, :sub_w]
+
+            hfov_rad = np.radians(rig.pano_hfov)
+            r_yaw = np.radians(rig.global_yaw_center)
+            seam_center_angle = -r_yaw + np.radians(getattr(rig, 'seam_angle_offset', 0.0))
+            center_x = int(self.out_width * 0.5 + (seam_center_angle / (hfov_rad * 0.5)) * (self.out_width * 0.5))
+            center_x = max(x0 + 4, min(x1 - 5, center_x))
+
+            path_full = compute_smart_seam_path(strip_l, strip_r, x0, x1, center_x)
+            self.smart_seam_path = path_full
+
+            blend_rad = np.radians(max(rig.blend_width_deg, 1.0))
+            blend_px = max(6.0, float(self.out_width) * (blend_rad / max(1e-4, hfov_rad)))
+
+            xs = np.arange(x0, x1, dtype=np.float32)[np.newaxis, :]
+            centers = path_full[:, np.newaxis].astype(np.float32)
+
+            t = (xs - (centers - blend_px * 0.5)) / blend_px
+            t = np.clip(t, 0.0, 1.0)
+            w_r_strip = (3.0 * t * t - 2.0 * t * t * t)[:, :, np.newaxis]
+            w_l_strip = 1.0 - w_r_strip
+
+            mask_l_sub = (self.map_xl_sub[:, x0:x1] >= 0) & (self.map_yl_sub[:, x0:x1] >= 0)
+            mask_r_sub = (self.map_xr_sub[:, :sub_w] >= 0) & (self.map_yr_sub[:, :sub_w] >= 0)
+            valid_both = mask_l_sub & mask_r_sub
+
+            w_l_final = np.where(valid_both[:, :, np.newaxis], w_l_strip, np.where(mask_l_sub[:, :, np.newaxis], 1.0, 0.0))
+            w_r_final = np.where(valid_both[:, :, np.newaxis], w_r_strip, np.where(mask_r_sub[:, :, np.newaxis], 1.0, 0.0))
+            tot = w_l_final + w_r_final
+            w_l_final = np.where(tot > 0.0, w_l_final / np.maximum(tot, 1e-5), 0.5)
+            w_r_final = np.where(tot > 0.0, w_r_final / np.maximum(tot, 1e-5), 0.5)
+
+            self.weight_seam_l = np.ascontiguousarray(w_l_final.astype(np.float32))
+            self.weight_seam_r = np.ascontiguousarray(w_r_final.astype(np.float32))
+            self.weight_left[:, x0:x1] = self.weight_seam_l
+            self.weight_right[:, x0:x1] = self.weight_seam_r
+            return True
+        except Exception:
+            return False
+
+
+def compute_smart_seam_path(
+    strip_l: np.ndarray,
+    strip_r: np.ndarray,
+    overlap_x0: int,
+    overlap_x1: int,
+    center_x: int,
+    center_weight: float = 30.0
+) -> np.ndarray:
+    """
+    Computes an optimal seam path x*(y) through the overlap region using Dynamic Programming.
+    Avoids cutting through high-contrast objects (like players or coaches) by routing through
+    uniform regions (such as grass).
+    """
+    H = strip_l.shape[0]
+    w_ov = overlap_x1 - overlap_x0
+    if w_ov < 4:
+        return np.full(H, center_x, dtype=np.int32)
+
+    scale_y = 270.0 / float(H) if H > 270 else 1.0
+    h_small = max(30, int(H * scale_y))
+    w_small = w_ov
+
+    strip_l_small = cv2.resize(strip_l, (w_small, h_small), interpolation=cv2.INTER_AREA)
+    strip_r_small = cv2.resize(strip_r, (w_small, h_small), interpolation=cv2.INTER_AREA)
+
+    diff = np.mean(np.abs(strip_l_small.astype(np.float32) - strip_r_small.astype(np.float32)), axis=2)
+
+    gray_l = cv2.cvtColor(strip_l_small, cv2.COLOR_BGR2GRAY)
+    gray_r = cv2.cvtColor(strip_r_small, cv2.COLOR_BGR2GRAY)
+    edge_l = cv2.Sobel(gray_l, cv2.CV_32F, 1, 0)**2 + cv2.Sobel(gray_l, cv2.CV_32F, 0, 1)**2
+    edge_r = cv2.Sobel(gray_r, cv2.CV_32F, 1, 0)**2 + cv2.Sobel(gray_r, cv2.CV_32F, 0, 1)**2
+    edge_cost = np.sqrt(edge_l) + np.sqrt(edge_r)
+
+    local_center = center_x - overlap_x0
+    xs = np.arange(w_small, dtype=np.float32)
+    dist_penalty = center_weight * ((xs - local_center) / float(max(1, w_small))) ** 2
+    cost = diff * 1.5 + edge_cost * 0.8 + dist_penalty[np.newaxis, :]
+
+    M = np.zeros_like(cost)
+    M[0, :] = cost[0, :]
+    backtrack = np.zeros((h_small, w_small), dtype=np.int32)
+
+    for y in range(1, h_small):
+        m_prev = M[y - 1, :]
+        left = np.pad(m_prev[:-1], (1, 0), mode='edge')
+        center = m_prev
+        right = np.pad(m_prev[1:], (0, 1), mode='edge')
+
+        stacked = np.stack([left, center, right], axis=0)
+        min_idx = np.argmin(stacked, axis=0) - 1
+        min_val = np.min(stacked, axis=0)
+
+        M[y, :] = cost[y, :] + min_val
+        prev_x = np.clip(np.arange(w_small) + min_idx, 0, w_small - 1)
+        backtrack[y, :] = prev_x
+
+    path_small = np.zeros(h_small, dtype=np.int32)
+    best_x = int(np.argmin(M[-1, :]))
+    path_small[-1] = best_x
+    for y in range(h_small - 1, 0, -1):
+        best_x = backtrack[y, best_x]
+        path_small[y - 1] = best_x
+
+    y_coords_orig = np.linspace(0, h_small - 1, H)
+    path_orig_local = np.interp(y_coords_orig, np.arange(h_small), path_small)
+
+    kernel_size = max(5, int(H * 0.05))
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    kernel = np.ones(kernel_size) / float(kernel_size)
+    padded = np.pad(path_orig_local, (kernel_size // 2, kernel_size // 2), mode='edge')
+    smoothed_local = np.convolve(padded, kernel, mode='valid')[:H]
+
+    path_full = (overlap_x0 + smoothed_local).astype(np.int32)
+    return np.clip(path_full, overlap_x0, overlap_x1 - 1)
 
 
 def _project_rays_to_camera(rays_global: np.ndarray, 
@@ -207,7 +353,13 @@ def find_largest_interior_rectangle(combined_mask: np.ndarray, mask_l: np.ndarra
 find_largest_interior_rectangle_32x9 = find_largest_interior_rectangle
 
 
-def generate_remap_luts(rig: RigConfiguration, out_width: int, out_height: int) -> RemapLUTs:
+def generate_remap_luts(
+    rig: RigConfiguration,
+    out_width: int,
+    out_height: int,
+    sample_frame_left: Optional[np.ndarray] = None,
+    sample_frame_right: Optional[np.ndarray] = None
+) -> RemapLUTs:
     """
     Generates high-performance remapping coordinates and seam blending weights for a target resolution.
     If rig.auto_crop_lir is True, applies Largest Interior Rectangle cropping to eliminate all black curved borders.
@@ -281,9 +433,44 @@ def generate_remap_luts(rig: RigConfiguration, out_width: int, out_height: int) 
     Ry = np.array([[np.cos(r_yaw), 0, np.sin(r_yaw)], [0, 1, 0], [-np.sin(r_yaw), 0, np.cos(r_yaw)]], dtype=np.float64)
     R_global = Rz @ Rx @ Ry
 
-    # 4. Project into Left & Right Cameras
+    # 4. Project into Left Camera
     map_x_l, map_y_l, mask_l = _project_rays_to_camera(rays_global, rig.left_pose, rig.left_camera, R_global)
-    map_x_r, map_y_r, mask_r = _project_rays_to_camera(rays_global, rig.right_pose, rig.right_camera, R_global)
+
+    # 4b. Right Camera with Bottom-Area Parallax / Taper Compensation
+    taper_x = float(getattr(rig, 'bottom_seam_taper_x', 0.0))
+    taper_y = float(getattr(rig, 'bottom_seam_taper_y', 0.0))
+    if abs(taper_x) > 1e-4 or abs(taper_y) > 1e-4:
+        # Normalized Y from 0.0 (top) to 1.0 (bottom)
+        y_norm = np.clip(grid_y / max(1.0, float(out_height - 1)), 0.0, 1.0)
+        # Top 25% is completely untouched (weight = 0.0). Below that, quadratic onset:
+        w_bottom = np.maximum(0.0, (y_norm - 0.25) / 0.75) ** 2
+
+        lam_r = lambda_angles + w_bottom * np.radians(taper_x)
+        h_heights_r = h_heights + w_bottom * np.radians(taper_y) * (f_pano / max(1e-4, f_pano_v))
+
+        if rig.projection_type == "cylindrical":
+            Xg_r = np.sin(lam_r)
+            Yg_r = h_heights_r
+            Zg_r = np.cos(lam_r)
+        elif rig.projection_type == "pannini":
+            cos_lam_r = np.cos(lam_r)
+            sin_lam_r = np.sin(lam_r)
+            d = 1.0
+            S_r = (d + 1.0) / (d + cos_lam_r)
+            Xg_r = sin_lam_r * S_r
+            Yg_r = h_heights_r
+            Zg_r = (cos_lam_r + d) * S_r - d
+        else: # Rectilinear
+            Xg_r = np.tan(lam_r)
+            Yg_r = h_heights_r
+            Zg_r = np.ones_like(lam_r)
+
+        norm_r = np.maximum(np.sqrt(Xg_r * Xg_r + Yg_r * Yg_r + Zg_r * Zg_r), 1e-7)
+        rays_global_r = np.stack([Xg_r / norm_r, Yg_r / norm_r, Zg_r / norm_r], axis=-1)
+    else:
+        rays_global_r = rays_global
+
+    map_x_r, map_y_r, mask_r = _project_rays_to_camera(rays_global_r, rig.right_pose, rig.right_camera, R_global)
 
     # 5. Seamless Multi-Band / Linear Feathering Blending Weights
     overlap = mask_l & mask_r
@@ -298,7 +485,7 @@ def generate_remap_luts(rig: RigConfiguration, out_width: int, out_height: int) 
     # Overlap Region Smooth Transition (dynamically tracks yaw offset)
     if np.any(overlap):
         blend_rad = np.radians(max(rig.blend_width_deg, 1.0))
-        seam_center_angle = -r_yaw
+        seam_center_angle = -r_yaw + np.radians(getattr(rig, 'seam_angle_offset', 0.0))
         t = (lambda_angles - (seam_center_angle - blend_rad * 0.5)) / blend_rad
         t = np.clip(t, 0.0, 1.0)
         # Smoothstep curve: 3*t^2 - 2*t^3
@@ -377,7 +564,7 @@ def generate_remap_luts(rig: RigConfiguration, out_width: int, out_height: int) 
         weight_seam_l = None
         weight_seam_r = None
 
-    return RemapLUTs(
+    res_luts = RemapLUTs(
         out_width=out_width,
         out_height=out_height,
         map_x_left=map_x_l,
@@ -397,6 +584,9 @@ def generate_remap_luts(rig: RigConfiguration, out_width: int, out_height: int) 
         weight_seam_l=weight_seam_l,
         weight_seam_r=weight_seam_r
     )
+    if getattr(rig, 'smart_seam_enabled', False) and sample_frame_left is not None and sample_frame_right is not None:
+        res_luts.update_smart_seam(sample_frame_left, sample_frame_right, rig)
+    return res_luts
 
 
 def apply_stitch(frame_left: np.ndarray, frame_right: np.ndarray, luts: RemapLUTs, color_matcher: Optional[Any] = None) -> np.ndarray:

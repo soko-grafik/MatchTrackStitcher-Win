@@ -4,15 +4,15 @@
     "rig": {
         "name": "DJI Action 4 Dual-Rig 2.7K Dewarp (80 deg, 15 deg tilt)",
         "left_camera": {
-            "name": "DJI Action 4 1080p 4:3 Dewarp (RockSteady ON, 30fps)",
+            "name": "DJI Action 4 2.7K Standard/Dewarp (16:9)",
             "sensor_width": 9.6,
             "sensor_height": 7.2,
-            "image_width": 1280,
-            "image_height": 720,
-            "fx": 618.0408158765273,
-            "fy": 618.0408158765273,
-            "cx": 640.0,
-            "cy": 360.0,
+            "image_width": 1920,
+            "image_height": 1080,
+            "fx": 835.9872030875448,
+            "fy": 835.9872030875448,
+            "cx": 960.0,
+            "cy": 540.0,
             "k1": 0.0,
             "k2": 0.0,
             "k3": 0.0,
@@ -20,14 +20,14 @@
             "model_type": "pinhole"
         },
         "right_camera": {
-            "name": "DJI Action 4 1080p 4:3 Dewarp (RockSteady ON, 30fps)",
+            "name": "DJI Action 4 2.7K Standard/Dewarp (16:9)",
             "sensor_width": 9.6,
             "sensor_height": 7.2,
-            "image_width": 1440,
+            "image_width": 1920,
             "image_height": 1080,
-            "fx": 828.0,
-            "fy": 828.0,
-            "cx": 720.0,
+            "fx": 835.9872030875448,
+            "fy": 835.9872030875448,
+            "cx": 960.0,
             "cy": 540.0,
             "k1": 0.0,
             "k2": 0.0,
@@ -36,8 +36,8 @@
             "model_type": "pinhole"
         },
         "left_pose": {
-            "yaw": -36.7,
-            "pitch": -2.0,
+            "yaw": -36.6,
+            "pitch": -3.1,
             "roll": -12.0,
             "tx": -0.04,
             "ty": 0.0,
@@ -62,9 +62,9 @@
             ]
         },
         "right_pose": {
-            "yaw": 37.9,
-            "pitch": -2.0,
-            "roll": 10.5,
+            "yaw": 37.7,
+            "pitch": -3.1,
+            "roll": 10.6,
             "tx": 0.04,
             "ty": 0.0,
             "tz": 0.0,
@@ -87,13 +87,14 @@
                 ]
             ]
         },
-        "global_pitch_correction": 2.0,
+        "global_pitch_correction": 3.1,
         "global_roll_correction": 0.0,
         "global_yaw_center": 1.5,
         "pano_hfov": 148.0,
         "projection_type": "cylindrical",
         "field_curvature_correction": 0.0,
         "blend_width_deg": 4.5,
+        "seam_angle_offset": 0.0,
         "auto_color_match": true,
         "color_match_strength": 1.0,
         "vertical_crop_offset": -0.64,
@@ -106,50 +107,50 @@
     },
     "autocam": {
         "ai_tracking": false,
-        "tracking_mode": "ball_centric",
+        "tracking_mode": "hybrid_fusion",
         "ball_weight": 0.9,
         "players_weight": 0.3,
         "enable_dynamic_zoom": false,
-        "fixed_zoom_factor": 1.0,
+        "fixed_zoom_factor": 1.2,
         "min_zoom": 1.15,
-        "max_zoom": 1.75,
+        "max_zoom": 1.6,
         "zoom_speed": 0.04,
-        "anticipation_lead": 0.05,
-        "smoothing_factor": 0.99,
-        "deadband_width": 0.21,
-        "max_pan_speed": 0.03,
-        "vertical_center_bias": 0.36,
+        "anticipation_lead": 0.4,
+        "smoothing_factor": 0.74,
+        "deadband_width": 0.03,
+        "max_pan_speed": 0.13,
+        "vertical_center_bias": 0.46,
         "enable_zone_damping": true,
         "zone_boost_factor": 1.8,
-        "tactical_margin": 0.0,
+        "tactical_margin": 1.5,
         "pitch_corners": [
             [
-                0.285,
-                0.22899999999999998
+                0.29,
+                0.209
             ],
             [
-                0.5,
-                0.24
+                0.505,
+                0.209
             ],
             [
-                0.743,
-                0.23800000000000002
+                0.7140000000000001,
+                0.223
             ],
             [
-                0.98,
-                0.382
+                0.981,
+                0.43200000000000005
             ],
             [
-                0.503,
-                0.612
+                0.501,
+                0.764
             ],
             [
-                0.033,
-                0.363
+                0.031,
+                0.4
             ]
         ],
         "scan_step": 2,
-        "use_fp16": true,
+        "use_fp16": false,
         "enable_radar": false,
         "radar_position": "top_right",
         "radar_width": 320,
@@ -161,22 +162,22 @@
         "enable_speed_badges": false,
         "enable_anti_jersey_filter": true,
         "enable_static_leaf_filter": false,
-        "enable_sideline_filter": true,
+        "enable_sideline_filter": false,
         "pitch_margin_pct": 0.0,
         "enable_strict_ball_centering": true
     },
     "export": {
-        "format": "16:9_autocam",
-        "resolution_width": 1920,
-        "resolution_height": 1080,
+        "format": "21:10",
+        "resolution_width": 3360,
+        "resolution_height": 1600,
         "codec": "h264_nvenc",
-        "bitrate_mbps": 30,
+        "bitrate_mbps": 50,
         "trim_only": true,
         "audio_source": "left"
     },
     "cloud": {
         "server_url": "https://matchtrack.de",
-        "team_id": "team_b2dd2fd6f5",
+        "team_id": "",
         "category": "Pokalspiel",
         "auto_upload": false,
         "notify_team": false,
@@ -240,20 +241,20 @@
         "vertical_shift": 0.0,
         "pitch_corners": [
             [
-                0.3296671084828711,
-                0.37867047308319735
+                0.5832266325224071,
+                0.3221653151230616
             ],
             [
-                0.6060996125611746,
-                0.39498368678629686
+                0.8545134443021768,
+                0.37053634940958885
             ],
             [
-                0.9536475326264274,
-                0.7171696574225123
+                0.8177016645326504,
+                0.7233603642054346
             ],
             [
-                0.022264987765089644,
-                0.6886215334420881
+                0.2919334186939821,
+                0.40325793142694555
             ]
         ],
         "geometry_mode": "trapezoid",
@@ -264,17 +265,17 @@
         "target_height": 1080
     },
     "ui_view": {
-        "view_mode": "wide_angle",
+        "view_mode": "32:9",
         "show_frame": false,
         "frame_opacity": 50.0,
         "show_center_line": false,
         "show_autocam": true,
-        "show_ball": true,
+        "show_ball": false,
         "show_radar": false,
         "show_offside_line": false,
         "show_skeletons": false,
         "show_speed": false,
-        "show_sideline_filter": true,
+        "show_sideline_filter": false,
         "show_seam": true,
         "show_grid": true,
         "sync_angles": false,

@@ -67,47 +67,44 @@ def build():
         print(f"\n[ERROR] Expected output directory not found: {dist_app}")
         sys.exit(1)
 
-    # 3. Verify key bundled files
+    # 3. Verify key bundled files and structured directories
     print("\nVerifying bundled application assets...")
     exe_path = os.path.join(dist_app, "MatchTrack-Stitcher.exe")
     assert os.path.exists(exe_path), f"Executable missing: {exe_path}"
     print(f"[OK] Executable verified: {exe_path}")
 
-    # Ensure ffmpeg.exe is in app folder
-    ffmpeg_target = os.path.join(dist_app, "ffmpeg.exe")
-    if not os.path.exists(ffmpeg_target):
-        if os.path.exists(r"bin\ffmpeg.exe"):
-            shutil.copy2(r"bin\ffmpeg.exe", ffmpeg_target)
-            print("[OK] Bundled bin\\ffmpeg.exe into app folder")
-        elif os.path.exists(r"C:\ffmpeg\bin\ffmpeg.exe"):
-            shutil.copy2(r"C:\ffmpeg\bin\ffmpeg.exe", ffmpeg_target)
-            print("[OK] Bundled C:\\ffmpeg\\bin\\ffmpeg.exe into app folder")
+    # Create structured subdirectories: bin/, models/, configs/, logs/
+    for sub in ["bin", "models", "configs", "logs"]:
+        os.makedirs(os.path.join(dist_app, sub), exist_ok=True)
 
-    # Ensure ffprobe.exe is in app folder
-    ffprobe_target = os.path.join(dist_app, "ffprobe.exe")
-    if not os.path.exists(ffprobe_target):
-        if os.path.exists(r"bin\ffprobe.exe"):
-            shutil.copy2(r"bin\ffprobe.exe", ffprobe_target)
-            print("[OK] Bundled bin\\ffprobe.exe into app folder")
-        elif os.path.exists(r"C:\ffmpeg\bin\ffprobe.exe"):
-            shutil.copy2(r"C:\ffmpeg\bin\ffprobe.exe", ffprobe_target)
-            print("[OK] Bundled C:\\ffmpeg\\bin\\ffprobe.exe into app folder")
+    # Ensure bin/ contains ffmpeg.exe and ffprobe.exe
+    for b_name in ["ffmpeg.exe", "ffprobe.exe"]:
+        dst_b = os.path.join(dist_app, "bin", b_name)
+        if not os.path.exists(dst_b):
+            src_b = os.path.join(root_dir, "bin", b_name)
+            if os.path.exists(src_b):
+                shutil.copy2(src_b, dst_b)
+                print(f"[OK] Bundled bin/{b_name}")
 
-    # Ensure all AI models are in app folder
-    for pt_model in ["yolo11m_football_player.pt", "yolo11n_football_ball.pt", "yolo11n.pt", "yolov8n.pt", "rtdetr-l.pt", "yolov8n-pose.pt"]:
-        model_src = os.path.join(root_dir, pt_model)
-        model_target = os.path.join(dist_app, pt_model)
-        if os.path.exists(model_src) and not os.path.exists(model_target):
-            shutil.copy2(model_src, model_target)
-            print(f"[OK] Bundled {pt_model} into app folder")
+    # Ensure models/ contains all .pt and .onnx models
+    models_dir = os.path.join(root_dir, "models")
+    if os.path.exists(models_dir):
+        for m in os.listdir(models_dir):
+            src_m = os.path.join(models_dir, m)
+            dst_m = os.path.join(dist_app, "models", m)
+            if os.path.isfile(src_m) and not os.path.exists(dst_m):
+                shutil.copy2(src_m, dst_m)
+                print(f"[OK] Bundled models/{m}")
 
-    # Ensure JSON configs are in app folder
-    for json_file in ["default_rig_action4_80deg.json", "dji_action4_1080p_dewarp_rig.json", "dji_action4_1080p_4x3_dewarp_rocksteady.json", "user_default_settings.json", "dji_action4_1080p_2.json"]:
-        src_json = os.path.join(root_dir, json_file)
-        dst_json = os.path.join(dist_app, json_file)
-        if os.path.exists(src_json) and not os.path.exists(dst_json):
-            shutil.copy2(src_json, dst_json)
-            print(f"[OK] Bundled {json_file}")
+    # Ensure configs/ contains all JSON presets and settings
+    configs_dir = os.path.join(root_dir, "configs")
+    if os.path.exists(configs_dir):
+        for c in os.listdir(configs_dir):
+            src_c = os.path.join(configs_dir, c)
+            dst_c = os.path.join(dist_app, "configs", c)
+            if os.path.isfile(src_c) and not os.path.exists(dst_c):
+                shutil.copy2(src_c, dst_c)
+                print(f"[OK] Bundled configs/{c}")
 
     # 4. Build Windows Setup Installer with Inno Setup
     print("\n[Step 2/2] Compiling Windows Setup Installer with Inno Setup...")
