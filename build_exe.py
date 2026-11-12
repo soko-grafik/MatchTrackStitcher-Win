@@ -106,16 +106,21 @@ def build():
                 shutil.copy2(src_c, dst_c)
                 print(f"[OK] Bundled configs/{c}")
 
-    # 4. Build Windows Setup Installer with Inno Setup
+    # 4. Build Windows Setup Installer with Inno Setup (Multi-Core LZMA2)
     print("\n[Step 2/2] Compiling Windows Setup Installer with Inno Setup...")
     iscc_bin = find_iscc()
     if not iscc_bin:
         print("[ERROR] Inno Setup compiler (ISCC.exe) not found.")
         sys.exit(1)
 
+    num_cpus = os.cpu_count() or 4
+    lzma_threads = max(2, min(16, num_cpus - 1 if num_cpus > 4 else num_cpus))
     print(f"Using Inno Setup Compiler: {iscc_bin}")
+    print(f"Multi-Core Beschleunigung aktiv: {lzma_threads} parallele CPU-Kerne für LZMA2-Kompression")
+
     iss_script = os.path.join(root_dir, "installer.iss")
-    res_inno = subprocess.run([iscc_bin, iss_script])
+    iscc_cmd = [iscc_bin, f"/DLZMA_THREADS={lzma_threads}", iss_script]
+    res_inno = subprocess.run(iscc_cmd)
     if res_inno.returncode != 0:
         print("\n[ERROR] Inno Setup compilation failed.")
         sys.exit(1)
@@ -141,4 +146,10 @@ def build():
 
 if __name__ == "__main__":
     build()
+    if "--publish" in sys.argv:
+        print("\n[INFO] --publish flag erkannt. Starte automatische Veröffentlichung via publish_release.py...")
+        res = subprocess.run([sys.executable, "publish_release.py"])
+        if res.returncode != 0:
+            print("[ERROR] publish_release.py fehlgeschlagen.")
+            sys.exit(res.returncode)
 

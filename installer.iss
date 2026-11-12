@@ -18,8 +18,15 @@ OutputDir=installer_output
 OutputBaseFilename=MatchTrack-Stitcher-Setup-v1.5.7
 
 
-Compression=lzma2/ultra64
+#ifndef LZMA_THREADS
+#define LZMA_THREADS "8"
+#endif
+
+Compression=lzma2/max
 SolidCompression=yes
+LZMAUseSeparateProcess=yes
+LZMANumBlockThreads={#LZMA_THREADS}
+LZMABlockSize=65536
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
