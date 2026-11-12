@@ -173,7 +173,7 @@ class MainWindow(
 
         self.apply_dark_theme()
         self.load_default_startup_settings()
-        self.show_landing_page()
+        self.show_workspace(0)
         QTimer.singleShot(400, self.restore_cloud_session_on_startup)
 
     def init_ui(self):
@@ -225,18 +225,16 @@ class MainWindow(
         nav_layout.setSpacing(4)
 
         self.btn_nav_wizard = QPushButton("⚡ Autocam Assistent")
-        self.btn_nav_home = QPushButton("🏠 Zentrale")
         self.btn_nav_stitch = QPushButton("🧵 Stitching")
         self.btn_nav_live = QPushButton("🔴 Live-Stream")
         self.btn_nav_cloud = QPushButton("☁️ Cloud-Upload")
 
         self.btn_nav_wizard.clicked.connect(lambda: self.show_workspace(0))
-        self.btn_nav_home.clicked.connect(self.show_landing_page)
         self.btn_nav_stitch.clicked.connect(lambda: self.show_workspace(1))
         self.btn_nav_live.clicked.connect(lambda: self.show_workspace(2))
         self.btn_nav_cloud.clicked.connect(lambda: self.show_workspace(3))
 
-        for btn in [self.btn_nav_wizard, self.btn_nav_home, self.btn_nav_stitch, self.btn_nav_live, self.btn_nav_cloud]:
+        for btn in [self.btn_nav_wizard, self.btn_nav_stitch, self.btn_nav_live, self.btn_nav_cloud]:
             btn.setStyleSheet("background-color: transparent; border: none; border-radius: 6px; font-weight: 700; font-size: 11px; padding: 5px 12px; color: #94a3b8;")
             nav_layout.addWidget(btn)
 
@@ -247,7 +245,6 @@ class MainWindow(
         self.menuBar().clear()
         self.menuBar().setVisible(False)
         self.menuBar().hide()
-        QShortcut(QKeySequence("Ctrl+H"), self, self.show_landing_page)
         QShortcut(QKeySequence("Ctrl+1"), self, lambda: self.show_workspace(0))
         QShortcut(QKeySequence("Ctrl+2"), self, lambda: self.show_workspace(1))
         QShortcut(QKeySequence("Ctrl+3"), self, lambda: self.show_workspace(2))
@@ -1835,7 +1832,6 @@ class MainWindow(
         """Updates highlight styling for top navigation pills."""
         pills = {
             "wizard": getattr(self, "btn_nav_wizard", None),
-            "home": getattr(self, "btn_nav_home", None),
             "stitch": getattr(self, "btn_nav_stitch", None),
             "live": getattr(self, "btn_nav_live", None),
             "cloud": getattr(self, "btn_nav_cloud", None),
