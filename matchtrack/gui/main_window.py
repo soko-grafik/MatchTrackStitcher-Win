@@ -4162,8 +4162,27 @@ class MainWindow(
             self.ctrl_max_zoom.blockSignals(True)
             self.ctrl_max_zoom.setValue(max_z)
             self.ctrl_max_zoom.blockSignals(False)
+        if hasattr(self, 'ctrl_ac_vpos'):
+            self.ctrl_ac_vpos.blockSignals(True)
+            self.ctrl_ac_vpos.setValue(cy)
+            self.ctrl_ac_vpos.blockSignals(False)
         if hasattr(self, 'tab_stepper'):
-            self.tab_stepper.update_framing_previews()
+            st = self.tab_stepper
+            if hasattr(st, 'slider_min_zoom'):
+                st.slider_min_zoom.blockSignals(True)
+                st.slider_min_zoom.setValue(min_z)
+                st.slider_min_zoom.blockSignals(False)
+            if hasattr(st, 'slider_max_zoom'):
+                st.slider_max_zoom.blockSignals(True)
+                st.slider_max_zoom.setValue(max_z)
+                st.slider_max_zoom.blockSignals(False)
+            if hasattr(st, 'slider_vpos'):
+                st.slider_vpos.blockSignals(True)
+                st.slider_vpos.setValue(cy)
+                st.slider_vpos.blockSignals(False)
+            if hasattr(st, '_mark_custom_framing'):
+                st._mark_custom_framing()
+            st.update_framing_previews()
 
     def open_pre_stitched_panorama(self):
         return self.open_panorama_video()

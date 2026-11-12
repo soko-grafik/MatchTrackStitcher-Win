@@ -770,7 +770,11 @@ class StepperWizardWidget(QWidget):
         self.preview_monitor_low.setText("Live Min-Zoom Vorschau")
         cl_layout.addWidget(self.preview_monitor_low)
 
-        lbl_low_hint = QLabel("Ziehe den grünen Rahmen im Panorama oder verändere die Ecke.")
+        self.slider_min_zoom = LabeledSliderSpinBox("Weitester Zoom (Min-Zoom):", 1.0, 2.5, 1.20, 0.05, "x", decimals=2)
+        self.slider_min_zoom.valueChanged.connect(self._on_min_zoom_slider_changed)
+        cl_layout.addWidget(self.slider_min_zoom)
+
+        lbl_low_hint = QLabel("💡 Ziehe den grünen Rahmen oder dessen rechte untere Ecke im Panorama.")
         lbl_low_hint.setStyleSheet("color: #94a3b8; font-size: 11px;")
         cl_layout.addWidget(lbl_low_hint)
 
@@ -797,13 +801,56 @@ class StepperWizardWidget(QWidget):
         self.preview_monitor_high.setText("Live Max-Zoom Vorschau")
         ch_layout.addWidget(self.preview_monitor_high)
 
-        lbl_high_hint = QLabel("Ziehe den weißen Rahmen im Panorama oder skaliere den Zoom.")
+        self.slider_max_zoom = LabeledSliderSpinBox("Engster Zoom (Max-Zoom):", 1.1, 4.0, 2.00, 0.05, "x", decimals=2)
+        self.slider_max_zoom.valueChanged.connect(self._on_max_zoom_slider_changed)
+        ch_layout.addWidget(self.slider_max_zoom)
+
+        lbl_high_hint = QLabel("💡 Ziehe den weißen Rahmen oder dessen rechte untere Ecke im Panorama.")
         lbl_high_hint.setStyleSheet("color: #94a3b8; font-size: 11px;")
         ch_layout.addWidget(lbl_high_hint)
 
         row_monitors.addWidget(card_high, 1)
 
         layout.addLayout(row_monitors)
+
+        # Custom Framing & Camera Dynamics Fine-Tuning Panel
+        self.grp_custom_framing = QFrame()
+        self.grp_custom_framing.setStyleSheet("QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 10px; padding: 12px 16px; margin-top: 6px; }")
+        l_custom = QVBoxLayout(self.grp_custom_framing)
+        l_custom.setSpacing(10)
+
+        lbl_cf_hdr = QLabel("⚙️ KAMERAFÜHRUNG & FEINEINSTELLUNGEN (SMOOTHING, HORIZONT & DYNAMIK):")
+        lbl_cf_hdr.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 800; letter-spacing: 1px;")
+        l_custom.addWidget(lbl_cf_hdr)
+
+        row_params1 = QHBoxLayout()
+        row_params1.setSpacing(16)
+        self.slider_vpos = LabeledSliderSpinBox("Vertikale Ausrichtung (Spielfeld-Zentrum):", 0.25, 0.75, 0.50, 0.02, "", decimals=2)
+        self.slider_vpos.setToolTip("Bestimmt die vertikale Bildhöhe der 16:9 Broadcast-Kamera (0.50 = Bildmitte, < 0.50 = weiter oben, > 0.50 = weiter unten).")
+        self.slider_vpos.valueChanged.connect(self._on_vpos_slider_changed)
+        row_params1.addWidget(self.slider_vpos, 1)
+
+        self.slider_smooth = LabeledSliderSpinBox("Kamera-Dämpfung (Sanftheit):", 0.70, 0.99, 0.94, 0.01, "", decimals=2)
+        self.slider_smooth.setToolTip("Broadcast-Glättung des Kameraschwenks (0.94 = sanfte TV-Führung).")
+        self.slider_smooth.valueChanged.connect(self._on_smooth_slider_changed)
+        row_params1.addWidget(self.slider_smooth, 1)
+        l_custom.addLayout(row_params1)
+
+        row_params2 = QHBoxLayout()
+        row_params2.setSpacing(16)
+        self.slider_speed = LabeledSliderSpinBox("Max. Schwenkgeschwindigkeit:", 0.01, 0.15, 0.04, 0.005, "", decimals=3)
+        self.slider_speed.setToolTip("Maximale Verfolgungsgeschwindigkeit der virtuellen Kamera bei schnellen Spielverlagerungen.")
+        self.slider_speed.valueChanged.connect(self._on_speed_slider_changed)
+        row_params2.addWidget(self.slider_speed, 1)
+
+        self.chk_wizard_dyn_zoom = QCheckBox("🔍 Dynamischen Zoom aktivieren (Bei Pässen & Torschüssen stufenlos zoomen)")
+        self.chk_wizard_dyn_zoom.setChecked(True)
+        self.chk_wizard_dyn_zoom.setStyleSheet("font-weight: 700; color: #38bdf8; font-size: 12px; margin-top: 14px;")
+        self.chk_wizard_dyn_zoom.toggled.connect(self._on_dyn_zoom_toggled)
+        row_params2.addWidget(self.chk_wizard_dyn_zoom, 1)
+        l_custom.addLayout(row_params2)
+
+        layout.addWidget(self.grp_custom_framing)
 
         # AI Tracking Model Selection Row
         grp_model = QFrame()
@@ -889,18 +936,176 @@ class StepperWizardWidget(QWidget):
             btn.setChecked(is_act)
             btn.setStyleSheet(self._card_button_style(active=is_act))
 
-        # Adjust zoom levels in engine
-        if hasattr(self.win, 'ctrl_min_zoom') and hasattr(self.win, 'ctrl_max_zoom'):
-            if preset == "tactical":
-                self.win.ctrl_min_zoom.setValue(1.05)
-                self.win.ctrl_max_zoom.setValue(1.30)
-            elif preset == "broadcast":
-                self.win.ctrl_min_zoom.setValue(1.20)
-                self.win.ctrl_max_zoom.setValue(2.00)
-            elif preset == "fixed":
-                self.win.ctrl_min_zoom.setValue(1.20)
-                self.win.ctrl_max_zoom.setValue(1.20)
+        if preset == "tactical":
+            min_z, max_z, sm, vp, spd, dz = 1.05, 1.30, 0.96, 0.50, 0.035, False
+        elif preset == "broadcast":
+            min_z, max_z, sm, vp, spd, dz = 1.20, 2.00, 0.94, 0.50, 0.040, True
+        elif preset == "fixed":
+            min_z, max_z, sm, vp, spd, dz = 1.20, 1.20, 0.98, 0.50, 0.020, False
+        else: # "custom"
+            return
+
+        if hasattr(self, 'slider_min_zoom'):
+            self.slider_min_zoom.blockSignals(True)
+            self.slider_min_zoom.setValue(min_z)
+            self.slider_min_zoom.blockSignals(False)
+
+        if hasattr(self, 'slider_max_zoom'):
+            self.slider_max_zoom.blockSignals(True)
+            self.slider_max_zoom.setValue(max_z)
+            self.slider_max_zoom.blockSignals(False)
+
+        if hasattr(self, 'slider_smooth'):
+            self.slider_smooth.blockSignals(True)
+            self.slider_smooth.setValue(sm)
+            self.slider_smooth.blockSignals(False)
+
+        if hasattr(self, 'slider_vpos'):
+            self.slider_vpos.blockSignals(True)
+            self.slider_vpos.setValue(vp)
+            self.slider_vpos.blockSignals(False)
+
+        if hasattr(self, 'slider_speed'):
+            self.slider_speed.blockSignals(True)
+            self.slider_speed.setValue(spd)
+            self.slider_speed.blockSignals(False)
+
+        if hasattr(self, 'chk_wizard_dyn_zoom'):
+            self.chk_wizard_dyn_zoom.blockSignals(True)
+            self.chk_wizard_dyn_zoom.setChecked(dz)
+            self.chk_wizard_dyn_zoom.blockSignals(False)
+
+        if hasattr(self.win, 'ctrl_min_zoom'): self.win.ctrl_min_zoom.setValue(min_z)
+        if hasattr(self.win, 'ctrl_max_zoom'): self.win.ctrl_max_zoom.setValue(max_z)
+        if hasattr(self.win, 'ctrl_ac_smooth'): self.win.ctrl_ac_smooth.setValue(sm)
+        if hasattr(self.win, 'ctrl_ac_vpos'): self.win.ctrl_ac_vpos.setValue(vp)
+        if hasattr(self.win, 'ctrl_ac_speed'): self.win.ctrl_ac_speed.setValue(spd)
+        if hasattr(self.win, 'chk_dynamic_zoom'): self.win.chk_dynamic_zoom.setChecked(dz)
+
+        if hasattr(self.win, 'viewport'):
+            self.win.viewport.framing_widest_zoom = min_z
+            self.win.viewport.framing_tightest_zoom = max_z
+            self.win.viewport.framing_center_y = vp
+            self.win.viewport.update()
+
         self.update_framing_previews()
+
+    def _mark_custom_framing(self):
+        self.framing_preset = "custom"
+        for k, btn in self.framing_btns.items():
+            is_act = (k == "custom")
+            btn.setChecked(is_act)
+            btn.setStyleSheet(self._card_button_style(active=is_act))
+
+    def _on_min_zoom_slider_changed(self, val: float):
+        if hasattr(self, 'slider_max_zoom') and val > self.slider_max_zoom.value():
+            self.slider_max_zoom.blockSignals(True)
+            self.slider_max_zoom.setValue(val)
+            self.slider_max_zoom.blockSignals(False)
+            if hasattr(self.win, 'ctrl_max_zoom'):
+                self.win.ctrl_max_zoom.setValue(val)
+            if hasattr(self.win, 'viewport'):
+                self.win.viewport.framing_tightest_zoom = float(val)
+
+        if hasattr(self.win, 'viewport'):
+            self.win.viewport.framing_widest_zoom = float(val)
+            self.win.viewport.update()
+        if hasattr(self.win, 'ctrl_min_zoom'):
+            self.win.ctrl_min_zoom.setValue(val)
+        if hasattr(self.win.engine, 'ai_broadcast'):
+            self.win.engine.ai_broadcast.config.min_zoom = float(val)
+
+        self._mark_custom_framing()
+        self.update_framing_previews()
+
+    def _on_max_zoom_slider_changed(self, val: float):
+        if hasattr(self, 'slider_min_zoom') and val < self.slider_min_zoom.value():
+            self.slider_min_zoom.blockSignals(True)
+            self.slider_min_zoom.setValue(val)
+            self.slider_min_zoom.blockSignals(False)
+            if hasattr(self.win, 'ctrl_min_zoom'):
+                self.win.ctrl_min_zoom.setValue(val)
+            if hasattr(self.win, 'viewport'):
+                self.win.viewport.framing_widest_zoom = float(val)
+
+        if hasattr(self.win, 'viewport'):
+            self.win.viewport.framing_tightest_zoom = float(val)
+            self.win.viewport.update()
+        if hasattr(self.win, 'ctrl_max_zoom'):
+            self.win.ctrl_max_zoom.setValue(val)
+        if hasattr(self.win.engine, 'ai_broadcast'):
+            self.win.engine.ai_broadcast.config.max_zoom = float(val)
+
+        self._mark_custom_framing()
+        self.update_framing_previews()
+
+    def _on_vpos_slider_changed(self, val: float):
+        if hasattr(self.win, 'viewport'):
+            self.win.viewport.framing_center_y = float(val)
+            self.win.viewport.update()
+        if hasattr(self.win, 'ctrl_ac_vpos'):
+            self.win.ctrl_ac_vpos.setValue(val)
+        if hasattr(self.win.engine, 'ai_broadcast'):
+            self.win.engine.ai_broadcast.config.vertical_pos = float(val)
+
+        self._mark_custom_framing()
+        self.update_framing_previews()
+
+    def _on_smooth_slider_changed(self, val: float):
+        if hasattr(self.win, 'ctrl_ac_smooth'):
+            self.win.ctrl_ac_smooth.setValue(val)
+        if hasattr(self.win.engine, 'ai_broadcast'):
+            self.win.engine.ai_broadcast.config.smoothing_factor = float(val)
+        self._mark_custom_framing()
+
+    def _on_speed_slider_changed(self, val: float):
+        if hasattr(self.win, 'ctrl_ac_speed'):
+            self.win.ctrl_ac_speed.setValue(val)
+        if hasattr(self.win.engine, 'ai_broadcast'):
+            self.win.engine.ai_broadcast.config.max_speed = float(val)
+        self._mark_custom_framing()
+
+    def _on_dyn_zoom_toggled(self, checked: bool):
+        if hasattr(self.win, 'chk_dynamic_zoom'):
+            self.win.chk_dynamic_zoom.setChecked(checked)
+        if hasattr(self.win.engine, 'ai_broadcast'):
+            self.win.engine.ai_broadcast.config.enable_dynamic_zoom = bool(checked)
+        self._mark_custom_framing()
+
+    def sync_framing_controls_from_engine(self):
+        """Synchronizes Step 4 Framing sliders with current engine & viewport settings."""
+        if not hasattr(self, 'slider_min_zoom'):
+            return
+        wz = getattr(self.win.viewport, 'framing_widest_zoom', 1.20)
+        tz = getattr(self.win.viewport, 'framing_tightest_zoom', 2.00)
+        cy = getattr(self.win.viewport, 'framing_center_y', 0.50)
+        sm = self.win.ctrl_ac_smooth.value() if hasattr(self.win, 'ctrl_ac_smooth') else 0.94
+        spd = self.win.ctrl_ac_speed.value() if hasattr(self.win, 'ctrl_ac_speed') else 0.04
+        dz = self.win.chk_dynamic_zoom.isChecked() if hasattr(self.win, 'chk_dynamic_zoom') else True
+
+        self.slider_min_zoom.blockSignals(True)
+        self.slider_min_zoom.setValue(wz)
+        self.slider_min_zoom.blockSignals(False)
+
+        self.slider_max_zoom.blockSignals(True)
+        self.slider_max_zoom.setValue(tz)
+        self.slider_max_zoom.blockSignals(False)
+
+        self.slider_vpos.blockSignals(True)
+        self.slider_vpos.setValue(cy)
+        self.slider_vpos.blockSignals(False)
+
+        self.slider_smooth.blockSignals(True)
+        self.slider_smooth.setValue(sm)
+        self.slider_smooth.blockSignals(False)
+
+        self.slider_speed.blockSignals(True)
+        self.slider_speed.setValue(spd)
+        self.slider_speed.blockSignals(False)
+
+        self.chk_wizard_dyn_zoom.blockSignals(True)
+        self.chk_wizard_dyn_zoom.setChecked(dz)
+        self.chk_wizard_dyn_zoom.blockSignals(False)
 
     def update_framing_previews(self):
         """Renders live side-by-side cropped preview monitors at lowest and highest zoom."""
@@ -909,8 +1114,12 @@ class StepperWizardWidget(QWidget):
         frame = self.win.viewport.current_frame_bgr
         fh, fw = frame.shape[:2]
 
-        min_z = float(self.win.ctrl_min_zoom.value()) if hasattr(self.win, 'ctrl_min_zoom') else 1.2
-        max_z = float(self.win.ctrl_max_zoom.value()) if hasattr(self.win, 'ctrl_max_zoom') else 2.0
+        min_z = float(self.win.ctrl_min_zoom.value()) if hasattr(self.win, 'ctrl_min_zoom') else (
+            float(self.slider_min_zoom.value()) if hasattr(self, 'slider_min_zoom') else 1.2
+        )
+        max_z = float(self.win.ctrl_max_zoom.value()) if hasattr(self.win, 'ctrl_max_zoom') else (
+            float(self.slider_max_zoom.value()) if hasattr(self, 'slider_max_zoom') else 2.0
+        )
 
         self.lbl_low_title.setText(f"🟢 Weitester Zoom (Widest - {min_z:.1f}x)")
         self.lbl_high_title.setText(f"⚪ Engster Zoom (Tightest - {max_z:.1f}x)")
@@ -918,11 +1127,12 @@ class StepperWizardWidget(QWidget):
         # Crop 16:9 around center for preview
         aspect = 16.0 / 9.0
         
+        cx = int(fw * getattr(self.win.viewport, 'framing_center_x', 0.5))
+        cy = int(fh * getattr(self.win.viewport, 'framing_center_y', 0.5))
+
         # Low zoom crop
         ch_low = int(fh / max(0.5, min_z))
         cw_low = int(ch_low * aspect)
-        cx = fw // 2
-        cy = fh // 2
         x1_l = max(0, cx - cw_low // 2)
         y1_l = max(0, cy - ch_low // 2)
         crop_low = frame[y1_l:min(fh, y1_l + ch_low), x1_l:min(fw, x1_l + cw_low)]
@@ -1652,6 +1862,7 @@ class StepperWizardWidget(QWidget):
                     self.win.viewport.set_workflow_domain("field_marking")
                 elif step_idx == 3: # Framing
                     self.win.viewport.set_workflow_domain("framing")
+                    self.sync_framing_controls_from_engine()
                     self.update_framing_previews()
                 elif step_idx == 1: # Source
                     self.win.viewport.set_workflow_domain("stitching")

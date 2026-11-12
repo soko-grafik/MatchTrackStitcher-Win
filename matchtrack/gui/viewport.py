@@ -1565,6 +1565,10 @@ class InteractivePanoramaViewport(QWidget):
         y_tight = tl_y + (cy - h_tight_norm * 0.5) * th
         rect_tight = QRectF(x_tight, y_tight, w_tight_norm * tw, h_tight_norm * th)
 
+        # Store framing rects for hit-testing and resizing
+        self._framing_rect_wide = rect_wide
+        self._framing_rect_tight = rect_tight
+
         # 1. Draw Widest Box (Solid Green)
         pen_wide = QPen(QColor(16, 185, 129, 240), 2.5, Qt.SolidLine)
         painter.setPen(pen_wide)
@@ -1575,6 +1579,12 @@ class InteractivePanoramaViewport(QWidget):
         painter.setPen(QColor(255, 255, 255))
         painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
         painter.drawText(badge_w, Qt.AlignCenter, f"Widest - {widest_z:.1f}x")
+
+        # Resize handle for Widest Box (bottom-right)
+        handle_w = QRectF(rect_wide.right() - 8, rect_wide.bottom() - 8, 16, 16)
+        painter.fillRect(handle_w, QColor(16, 185, 129))
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawRect(handle_w)
 
         # 2. Draw Tightest Box (Dashed White)
         pen_tight = QPen(QColor(255, 255, 255, 240), 2.5, Qt.DashLine)
@@ -1587,7 +1597,24 @@ class InteractivePanoramaViewport(QWidget):
         painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
         painter.drawText(badge_t, Qt.AlignCenter, f"Tightest - {tightest_z:.1f}x")
 
+        # Resize handle for Tightest Box (bottom-right)
+        handle_t = QRectF(rect_tight.right() - 8, rect_tight.bottom() - 8, 16, 16)
+        painter.fillRect(handle_t, QColor(255, 255, 255))
+        painter.setPen(QColor(0, 0, 0))
+        painter.drawRect(handle_t)
+
     def wheelEvent(self, event: QWheelEvent):
+        if self.workflow_domain == "framing":
+            delta = event.angleDelta().y()
+            step = 0.05 if delta > 0 else -0.05
+            pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
+            if hasattr(self, '_framing_rect_tight') and self._framing_rect_tight is not None and self._framing_rect_tight.contains(pos):
+                self.framing_tightest_zoom = float(np.clip(self.framing_tightest_zoom + step, self.framing_widest_zoom, 4.0))
+            else:
+                self.framing_widest_zoom = float(np.clip(self.framing_widest_zoom + step, 1.0, self.framing_tightest_zoom))
+            self.framing_changed.emit(self.framing_widest_zoom, self.framing_tightest_zoom, self.framing_center_x, self.framing_center_y)
+            self.update()
+            return
         delta = event.angleDelta().y()
         if delta > 0:
             self.zoom_level = min(5.0, self.zoom_level * 1.15)
@@ -1616,8 +1643,23 @@ class InteractivePanoramaViewport(QWidget):
 
         # Autocam Framing Click & Drag
         if self.workflow_domain == "framing" and target_rect is not None and event.button() == Qt.LeftButton:
+            pos = event.pos()
+            # 1. Check tightest resize handle
+            if hasattr(self, '_framing_rect_tight') and self._framing_rect_tight is not None:
+                br_t = self._framing_rect_tight.bottomRight()
+                if (pos.x() - br_t.x())**2 + (pos.y() - br_t.y())**2 <= 400: # 20px radius
+                    self.dragging_framing_box = "resize_tight"
+                    self.framing_drag_start_pos = pos
+                    return
+            # 2. Check widest resize handle
+            if hasattr(self, '_framing_rect_wide') and self._framing_rect_wide is not None:
+                br_w = self._framing_rect_wide.bottomRight()
+                if (pos.x() - br_w.x())**2 + (pos.y() - br_w.y())**2 <= 400:
+                    self.dragging_framing_box = "resize_wide"
+                    self.framing_drag_start_pos = pos
+                    return
             self.dragging_framing_box = "center"
-            self.framing_drag_start_pos = event.pos()
+            self.framing_drag_start_pos = pos
             return
 
         # WA-1. Wide-Angle Sequential 4-Click Mode
@@ -1717,8 +1759,17 @@ class InteractivePanoramaViewport(QWidget):
         if self.dragging_framing_box is not None and target_rect is not None and self.framing_drag_start_pos is not None:
             dx = (event.pos().x() - self.framing_drag_start_pos.x()) / max(1.0, target_rect.width())
             dy = (event.pos().y() - self.framing_drag_start_pos.y()) / max(1.0, target_rect.height())
-            self.framing_center_x = float(np.clip(self.framing_center_x + dx, 0.2, 0.8))
-            self.framing_center_y = float(np.clip(self.framing_center_y + dy, 0.2, 0.8))
+            if self.dragging_framing_box == "center":
+                self.framing_center_x = float(np.clip(self.framing_center_x + dx, 0.2, 0.8))
+                self.framing_center_y = float(np.clip(self.framing_center_y + dy, 0.25, 0.75))
+            elif self.dragging_framing_box == "resize_wide":
+                delta_z = -(dx + dy) * 1.5
+                new_wz = float(np.clip(self.framing_widest_zoom + delta_z, 1.0, self.framing_tightest_zoom))
+                self.framing_widest_zoom = new_wz
+            elif self.dragging_framing_box == "resize_tight":
+                delta_z = -(dx + dy) * 2.0
+                new_tz = float(np.clip(self.framing_tightest_zoom + delta_z, self.framing_widest_zoom, 4.0))
+                self.framing_tightest_zoom = new_tz
             self.framing_drag_start_pos = event.pos()
             self.framing_changed.emit(self.framing_widest_zoom, self.framing_tightest_zoom, self.framing_center_x, self.framing_center_y)
             self.update()
