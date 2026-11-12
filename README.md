@@ -6,7 +6,7 @@
 
 ### Professioneller 32:9 Fußball-Panorama Stitcher & KI-gestützte 16:9 Broadcast Follow-Cam
 
-[![Release](https://img.shields.io/badge/Release-v1.5.5-blue.svg)](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.5)
+[![Release](https://img.shields.io/badge/Release-v1.5.7-blue.svg)](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.7)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-41CD52.svg?logo=qt&logoColor=white)](https://pypi.org/project/PySide6/)
 [![OpenCV](https://img.shields.io/badge/Computer%20Vision-OpenCV-5C3EE8.svg?logo=opencv&logoColor=white)](https://opencv.org/)
@@ -15,7 +15,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6.svg?logo=windows&logoColor=white)](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases)
 [![License](https://img.shields.io/badge/License-Proprietary-red.svg)](#lizenz)
 
-[**Download Windows Installer (v1.5.5)**](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.5) • [**Dokumentation**](#-workflow-anleitung) • [**CLI Reference**](#-cli-batch-modus) • [**Release Notes**](#-release-notes--changelog)
+[**Download Windows Installer (v1.5.7)**](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.7) • [**Dokumentation**](#-workflow-anleitung) • [**CLI Reference**](#-cli-batch-modus) • [**Release Notes**](#-release-notes--changelog)
 
 </div>
 
@@ -115,7 +115,7 @@ Zusätzlich beinhaltet das System eine **KI-gestützte 16:9 Broadcast Follow-Cam
 
 Für Endanwender und Analysten steht ein vorkompilierter Standalone-Installer zur Verfügung, der sämtliche Abhängigkeiten, FFmpeg und KI-Modelle bündelt:
 
-1. Laden Sie die Datei **`MatchTrack-Stitcher-Setup-v1.5.5.exe`** unter [**Releases**](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.5) herunter.
+1. Laden Sie die Datei **`MatchTrack-Stitcher-Setup-v1.5.7.exe`** unter [**Releases**](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.7) herunter.
 2. Führen Sie die Setup-Datei aus und folgen Sie dem Installationsassistenten.
 3. Starten Sie **MatchTrack Stitcher** bequem über das Startmenü oder die Desktop-Verknüpfung.
 
@@ -307,13 +307,31 @@ Das Skript führt folgende Schritte automatisch aus:
 2. Kompilieren aller Python-Module und GUI-Ressourcen mit **PyInstaller**.
 3. Bündeln von `ffmpeg.exe`, `ffprobe.exe` sowie aller **YOLO-KI-Modelle** (`.pt`).
 4. Generierung des signierfähigen Setup-Installers mit **Inno Setup 6**.
-5. Ausgabe der fertigen Datei in `installer_output/MatchTrack-Stitcher-Setup-v1.5.5.exe`.
+5. Ausgabe der fertigen Datei in `installer_output/MatchTrack-Stitcher-Setup-v1.5.7.exe`.
 
 ---
 
 ## 📝 Release Notes / Changelog
 
-### Version 1.5.5 (Aktuell)
+### Version 1.5.7 (Aktuell)
+- **Spielfeld-Zentrierung & Klick-Ausrichtung:**
+  - Neue Feineinstellungs-Sektion in Schritt 2 des Autocam-Assistenten.
+  - Interaktiver Klick-Modus (`🎯 Spielfeldmitte in Vorschau anklicken`), der durch einfachen Klick auf die Mittellinie oder Begrenzungsstange das gesamte Panorama zentriert.
+  - Stufenlose Panning-Slider und Schnellwahltasten `[⏪ -5°]`, `[◀ -1°]`, `[🎯 0° Reset]`, `[▶ +1°]`, `[⏩ +5°]`.
+- **Automatische Mittellinien-Marker-Erkennung:**
+  - KI-Analyse erkennt beim Vorbereiten des Stitchings gelbe Mittellinien-Trainingsstangen / Trainingsmarker automatisch und gleicht den Zentrierungs-Versatz ab.
+- **Volle Spielfeld- & Eckfahnen-Abdeckung:**
+  - Neues Preset-Tuning für DJI Osmo Action 4 (1080p 16:9 RockSteady & Dewarp): HFOV auf 152°, vertikaler Offset auf -0.16 und Curvature Correction auf +0.04.
+  - Verhindert das Durchhängen und Abschneiden der unteren Auslinien und Tore.
+- **UI-Bereinigung & Direkter Assistenten-Start:**
+  - Veralteter "Weitwinkel"- und Standalone-"Export"-Tab entfernt.
+  - Startet direkt im "Autocam Assistent" Workflow.
+  - Übersichtlich strukturiertes 2-Spalten-Layout in Schritt 5 mit links angedocktem Live-Prozess-Monitor.
+- **Fehlerbehebungen:**
+  - Behebung des Viewport-Renderfehlers (`UnboundLocalError`) beim schnellen Vorbereiten im Taktik-Modus.
+  - Robuste Ereignisbehandlung für PySide6 EventFilter.
+
+### Version 1.5.5
 - **DJI Osmo Action 4 (155° Ultrawide) Begradigung & Spielfeld-Trapez:**
   - **Optische Fisheye-Begradigung:** Mathematisches Entzerrungsmodell (Kannala-Brandt / Äquidistant) für extreme Weitwinkelaufnahmen (155° FOV) eines einzelnen stationären 4m-Stativs.
   - **Interaktive 4-Punkt Kalibrierung im Viewport:** Geführter 4-Klick Assistent (TL ➔ TR ➔ BR ➔ BL) zum punktgenauen Setzen der Eckfahnen im Videobild.
