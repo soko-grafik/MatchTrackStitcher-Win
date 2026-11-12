@@ -124,11 +124,7 @@ class YOLODetectorBackend(BaseDetectorBackend):
         # 1. Main player / referee detector
         candidates = [
             self.player_model_name,
-            get_resource_path(self.player_model_name),
-            "yolo11n.pt",
-            get_resource_path("yolo11n.pt"),
-            "yolov8n.pt",
-            get_resource_path("yolov8n.pt")
+            get_resource_path(self.player_model_name)
         ]
         for c in candidates:
             if os.path.exists(c):

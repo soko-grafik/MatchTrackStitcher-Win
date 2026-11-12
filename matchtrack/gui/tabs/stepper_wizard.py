@@ -199,11 +199,7 @@ class StepperWizardWidget(QWidget):
 
         self.sport_btns = {}
         sports = [
-            ("football", "⚽ Fußball", "Ballgeführtes Panning mit distanzbasiertem Zoom"),
-            ("basketball", "🏀 Basketball", "Halbfeld-Tracking, konstanter Zoom"),
-            ("handball", "🤾 Handball", "Schnelles End-to-End Spiel"),
-            ("futsal", "🥅 Futsal", "Kleinfeld-Hallenfußball"),
-            ("other", "🎯 Sonstige", "Allgemeines Ball-Tracking")
+            ("football", "⚽ Fußball", "Ballgeführtes Panning mit distanzbasiertem Zoom & taktischer Analyse")
         ]
 
         for s_key, s_title, s_sub in sports:
@@ -1856,10 +1852,6 @@ class StepperWizardWidget(QWidget):
                 disp_m = "Autocam Soccer FP16"
             elif "Soccer Ball (INT8" in m_txt:
                 disp_m = "Autocam Soccer INT8"
-            elif "Basketball Ball (FP16" in m_txt:
-                disp_m = "Autocam B-ball FP16"
-            elif "Basketball Ball (INT8" in m_txt:
-                disp_m = "Autocam B-ball INT8"
             elif "Keypoints" in m_txt:
                 disp_m = "Autocam Keypoints"
             else:

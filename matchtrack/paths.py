@@ -277,10 +277,7 @@ def get_available_ai_models() -> list:
     if autocam_dir and os.path.isdir(autocam_dir):
         label_map = {
             "soccer_balldet_fp16.onnx": ("⚽ Once Autocam Soccer Ball (FP16 ONNX)", "ball", "Original Autocam Fußball-Balldetektor (FP16 Präzision)"),
-            "soccer_balldet_int8.onnx": ("⚡ Once Autocam Soccer Ball (INT8 Quantized ONNX)", "ball", "Autocam Fußball-Balldetektor (INT8 High-Speed)"),
-            "basketball_balldet_fp16.onnx": ("🏀 Once Autocam Basketball Ball (FP16 ONNX)", "ball", "Autocam Basketball Balldetektor (FP16)"),
-            "basketball_balldet_int8.onnx": ("⚡ Once Autocam Basketball Ball (INT8 Quantized ONNX)", "ball", "Autocam Basketball Balldetektor (INT8)"),
-            "detect_kpts_fp16.onnx": ("📐 Once Autocam Keypoints / Field Spline (FP16 ONNX)", "keypoints", "Autocam Spielfeld-Schlüsselfeldlinien-Erkennung")
+            "soccer_balldet_int8.onnx": ("⚡ Once Autocam Soccer Ball (INT8 Quantized ONNX)", "ball", "Autocam Fußball-Balldetektor (INT8 High-Speed)")
         }
         for fname in sorted(os.listdir(autocam_dir)):
             if fname.lower().endswith(".onnx"):

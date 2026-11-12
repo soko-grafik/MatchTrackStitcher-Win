@@ -9,13 +9,11 @@ block_cipher = None
 datas = [
     ('matchtrack/assets', 'matchtrack/assets'),
     ('configs', 'configs'),
-    ('models', 'models'),
 ]
 
-if os.path.exists('bin/ffmpeg.exe'):
-    datas.append(('bin/ffmpeg.exe', 'bin'))
-if os.path.exists('bin/ffprobe.exe'):
-    datas.append(('bin/ffprobe.exe', 'bin'))
+# Note: bin/ (ffmpeg.exe, ffprobe.exe) and models/ are placed directly into
+# the application root folder (dist/MatchTrack-Stitcher/bin and dist/MatchTrack-Stitcher/models)
+# by build_exe.py to prevent duplicate copies inside _internal/
 
 # Add ultralytics default assets if present
 try:
@@ -49,6 +47,44 @@ hiddenimports = [
 ]
 hiddenimports += collect_submodules('matchtrack')
 
+excludes = [
+    'tkinter',
+    'tensorflow',
+    'tensorboard',
+    'tensorboard_data_server',
+    'polars',
+    'polars_runtime',
+    'keras',
+    'tf_keras',
+    'matplotlib',
+    'seaborn',
+    'pandas',
+    'grpc',
+    'grpcio',
+    'h5py',
+    'onnx2tf',
+    'tflite_support',
+    'ai_edge_litert',
+    'libclang',
+    'PySide6.QtWebEngine',
+    'PySide6.QtWebEngineCore',
+    'PySide6.QtWebEngineWidgets',
+    'PySide6.QtPdf',
+    'PySide6.QtPdfWidgets',
+    'PySide6.QtQml',
+    'PySide6.QtQuick',
+    'PySide6.QtQuickWidgets',
+    'PySide6.Qt3DCore',
+    'PySide6.Qt3DRender',
+    'PySide6.QtCharts',
+    'PySide6.QtDataVisualization',
+    'PySide6.QtBluetooth',
+    'PySide6.QtSensors',
+    'PySide6.QtPositioning',
+    'PySide6.QtNfc',
+    'PySide6.QtTest',
+]
+
 a = Analysis(
     ['main.py'],
     pathex=['.'],
@@ -58,7 +94,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter'],
+    excludes=excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
