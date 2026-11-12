@@ -6,7 +6,7 @@
 
 ### Professioneller 32:9 Fußball-Panorama Stitcher & KI-gestützte 16:9 Broadcast Follow-Cam
 
-[![Release](https://img.shields.io/badge/Release-v1.5.7-blue.svg)](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.7)
+[![Release](https://img.shields.io/badge/Release-v1.5.8-blue.svg)](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.8)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-41CD52.svg?logo=qt&logoColor=white)](https://pypi.org/project/PySide6/)
 [![OpenCV](https://img.shields.io/badge/Computer%20Vision-OpenCV-5C3EE8.svg?logo=opencv&logoColor=white)](https://opencv.org/)
@@ -15,7 +15,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6.svg?logo=windows&logoColor=white)](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases)
 [![License](https://img.shields.io/badge/License-Proprietary-red.svg)](#lizenz)
 
-[**Download Windows Installer (v1.5.7)**](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.7) • [**Dokumentation**](#-workflow-anleitung) • [**CLI Reference**](#-cli-batch-modus) • [**Release Notes**](#-release-notes--changelog)
+[**Download Windows Installer (v1.5.8)**](https://github.com/soko-grafik/MatchTrackStitcher-Win/releases/tag/v1.5.8) • [**Dokumentation**](#-workflow-anleitung) • [**CLI Reference**](#-cli-batch-modus) • [**Release Notes**](#-release-notes--changelog)
 
 </div>
 
@@ -307,13 +307,29 @@ Das Skript führt folgende Schritte automatisch aus:
 2. Kompilieren aller Python-Module und GUI-Ressourcen mit **PyInstaller**.
 3. Bündeln von `ffmpeg.exe`, `ffprobe.exe` sowie aller **YOLO-KI-Modelle** (`.pt`).
 4. Generierung des signierfähigen Setup-Installers mit **Inno Setup 6**.
-5. Ausgabe der fertigen Datei in `installer_output/MatchTrack-Stitcher-Setup-v1.5.7.exe`.
+5. Ausgabe der fertigen Datei in `installer_output/MatchTrack-Stitcher-Setup-v1.5.8.exe`.
 
 ---
 
 ## 📝 Release Notes / Changelog
 
-### Version 1.5.7 (Aktuell)
+### Version 1.5.8 (Aktuell)
+- **Multi-Core LZMA2 Kompression (>7x schnellerer Build):**
+  - Inno Setup LZMA2 nutzt nun bis zu 16 parallele CPU-Threads (`LZMAUseSeparateProcess=yes`, `LZMANumBlockThreads`, `LZMABlockSize=65536`).
+  - Der Setup-Kompilierungsprozess verkürzte sich von 271 Sekunden (4,5 Min) auf **37 Sekunden**.
+- **61% kleinerer Installer (-682 MB):**
+  - Die Downloadgröße des Windows-Installers wurde von **1.118 MB auf 435 MB** reduziert.
+  - Eliminierung redundanter Asset-Kopien und rigoroses Ausschließen ungenutzter Python-Bibliotheken (TensorFlow 965 MB, Polars 182 MB etc.) aus dem PyInstaller-Bundle.
+- **Sportarten-Fokussierung & Modell-Bereinigung:**
+  - Konzentration auf den Kernsport **⚽ Fußball** (Basketball, Handball, Futsal und Sonstiges vollständig entfernt).
+  - Ungenutzte KI-Modelle aus dem Lieferumfang entfernt (Modell-Ordner um 150 MB verkleinert).
+- **Taktik-Panorama Beibehaltungs-Option & Cloud-Erweiterung:**
+  - Option zum dauerhaften Beibehalten des hochauflösenden 32:9 Taktik-Panoramas nach dem Autocam-Export.
+  - Erweiterte Cloud-Upload-Felder (Spielname, Spielkategorie, Mannschaftsauswahl) direkt in Schritt 5 integriert.
+- **Automatisierte Release-Flags:**
+  - Unterstützung für `--publish` in `build_exe.py` und `--build` in `publish_release.py`.
+
+### Version 1.5.7
 - **Spielfeld-Zentrierung & Klick-Ausrichtung:**
   - Neue Feineinstellungs-Sektion in Schritt 2 des Autocam-Assistenten.
   - Interaktiver Klick-Modus (`🎯 Spielfeldmitte in Vorschau anklicken`), der durch einfachen Klick auf die Mittellinie oder Begrenzungsstange das gesamte Panorama zentriert.
