@@ -1351,15 +1351,18 @@ class MainWindow(
             cam_w = getattr(cam, 'image_width', 1920)
             cam_h = getattr(cam, 'image_height', 1080)
             if cam_w / max(1, cam_h) >= 1.55:
-                if hasattr(self, 'ctrl_squeeze') and self.ctrl_squeeze.value() > 0.60:
-                    self.ctrl_squeeze.setValue(0.52)
-                    self.rig.horizontal_squeeze = 0.52
-                if hasattr(self, 'ctrl_v_offset') and self.ctrl_v_offset.value() > -0.05:
-                    self.ctrl_v_offset.setValue(-0.12)
-                    self.rig.vertical_crop_offset = -0.12
-                if hasattr(self, 'ctrl_pano_hfov') and self.ctrl_pano_hfov.value() < 145.0:
-                    self.ctrl_pano_hfov.setValue(146.0)
-                    self.rig.pano_hfov = 146.0
+                if hasattr(self, 'ctrl_squeeze'):
+                    self.ctrl_squeeze.setValue(0.50)
+                    self.rig.horizontal_squeeze = 0.50
+                if hasattr(self, 'ctrl_v_offset'):
+                    self.ctrl_v_offset.setValue(-0.16)
+                    self.rig.vertical_crop_offset = -0.16
+                if hasattr(self, 'ctrl_pano_hfov'):
+                    self.ctrl_pano_hfov.setValue(152.0)
+                    self.rig.pano_hfov = 152.0
+                if hasattr(self, 'ctrl_curvature'):
+                    self.ctrl_curvature.setValue(0.04)
+                    self.rig.field_curvature_correction = 0.04
 
             # Automatic Color & Exposure Matching across left and right cameras
             self.rig.auto_color_match = True
@@ -1381,6 +1384,39 @@ class MainWindow(
                     gr = color_res.get("gain_r", [1.0, 1.0, 1.0])
                     color_info = f"\n\nFarb- & Belichtungsabgleich:\n• Kameras L ↔ R automatisch harmonisiert\n• Gains: L=[{gl[0]:.2f}, {gl[1]:.2f}, {gl[2]:.2f}], R=[{gr[0]:.2f}, {gr[1]:.2f}, {gr[2]:.2f}]"
 
+            # Automatic Pitch Midfield Centering Detection (detect yellow pole / marker in central strip)
+            center_info = ""
+            try:
+                frame_cur_l = self.engine.video_left.get_frame(self.current_frame_idx) if self.engine.video_left else None
+                frame_cur_r = self.engine.video_right.get_frame(max(0, self.current_frame_idx - self.engine.frame_offset_right)) if self.engine.video_right else None
+                if frame_cur_l is not None and frame_cur_r is not None:
+                    stitched_test = self.engine.stitch_frame(frame_cur_l, frame_cur_r, self.rig)
+                    if stitched_test is not None:
+                        H_st, W_st = stitched_test.shape[:2]
+                        x0_st, x1_st = int(W_st * 0.30), int(W_st * 0.70)
+                        central_strip = stitched_test[:, x0_st:x1_st]
+                        hsv_strip = cv2.cvtColor(central_strip, cv2.COLOR_BGR2HSV)
+                        # Bright yellow marker / cone on pitch
+                        mask_yellow = cv2.inRange(hsv_strip, (16, 110, 110), (34, 255, 255))
+                        mask_yellow[:int(H_st * 0.35), :] = 0  # Ignore top 35% (sky / trees)
+                        ys_y, xs_y = np.where(mask_yellow > 0)
+                        if len(xs_y) >= 8:
+                            med_x = x0_st + float(np.median(xs_y))
+                            norm_x = med_x / float(W_st)
+                            ang_offset = (norm_x - 0.5) * self.rig.pano_hfov
+                            if abs(ang_offset) > 0.4:
+                                new_yaw = float(np.clip(self.rig.global_yaw_center + ang_offset, -60.0, 60.0))
+                                self.rig.global_yaw_center = new_yaw
+                                if hasattr(self, 'ctrl_h_offset'):
+                                    self.ctrl_h_offset.blockSignals(True)
+                                    self.ctrl_h_offset.setValue(new_yaw)
+                                    self.ctrl_h_offset.blockSignals(False)
+                                center_info = f"\n\n🎯 Spielfeldmitte:\n• Gelbe Mittellinien-Markierung erkannt & zentriert (Korrektur: {ang_offset:+.1f}°)"
+                                self.engine.invalidate_luts()
+                                self.engine.update_luts(2560, 720)
+            except Exception as e_center:
+                logger.warning(f"Auto midfield detection skipped: {e_center}")
+
             if self.rig.smart_seam_enabled:
                 curr_l = self.engine.video_left.get_frame(self.current_frame_idx) if self.engine.video_left else None
                 curr_r = self.engine.video_right.get_frame(max(0, self.current_frame_idx - self.engine.frame_offset_right)) if self.engine.video_right else None
@@ -1388,11 +1424,15 @@ class MainWindow(
                     self.engine.luts.update_smart_seam(curr_l, curr_r, self.rig)
             self.render_high_res_preview()
 
+            # Synchronize Step 2 Controls in Stepper Wizard
+            if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'update_step2_controls_from_rig'):
+                self.tab_stepper.update_step2_controls_from_rig()
+
             self.status_bar.showMessage(
                 f"KI-Kalibrierung fertig! {result.num_matches} Matches | "
-                f"Nahtfehler: {result.initial_error_px:.1f}px ➔ {result.optimized_error_px:.2f}px ({result.improvement_pct:.1f}% verbessert) | Farbabgleich aktiv"
+                f"Nahtfehler: {result.initial_error_px:.1f}px ➔ {result.optimized_error_px:.2f}px ({result.improvement_pct:.1f}% verbessert) | Farbabgleich & Spielfeld-Optimierung aktiv"
             )
-            QMessageBox.information(self, "KI-Nahtstellen-Kalibrierung", result.message + color_info)
+            QMessageBox.information(self, "KI-Nahtstellen-Kalibrierung", result.message + color_info + center_info)
 
         except Exception as e:
             self.status_bar.showMessage(f"Fehler bei KI-Kalibrierung: {e}")
@@ -2154,6 +2194,11 @@ class MainWindow(
             self.btn_pick_center_calib.setChecked(checked)
             self.btn_pick_center_calib.blockSignals(False)
 
+        if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'btn_pick_center') and self.tab_stepper.btn_pick_center is not None and self.tab_stepper.btn_pick_center.isChecked() != checked:
+            self.tab_stepper.btn_pick_center.blockSignals(True)
+            self.tab_stepper.btn_pick_center.setChecked(checked)
+            self.tab_stepper.btn_pick_center.blockSignals(False)
+
         self.viewport.set_pick_center_mode(checked)
         if checked:
             self.status_bar.showMessage("📍 Klicken Sie in der Vorschau auf die Mittellinie / den Anstoßpunkt zum automatischen Zentrieren...")
@@ -2168,6 +2213,8 @@ class MainWindow(
         
         self.ctrl_h_offset.setValue(new_yaw)
         self.on_pick_center_toggled(False)
+        if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'update_step2_controls_from_rig'):
+            self.tab_stepper.update_step2_controls_from_rig()
         self.status_bar.showMessage(f"🎯 Spielfeld-Mitte ausgerichtet (Versatz: {new_yaw:+.1f}°) – Beide Tore sind jetzt im Bild!")
 
     def toggle_center_line(self, checked: bool):
@@ -2177,6 +2224,8 @@ class MainWindow(
     def pan_offset_by(self, delta_deg: float):
         new_yaw = float(np.clip(self.ctrl_h_offset.value() + delta_deg, -60.0, 60.0))
         self.ctrl_h_offset.setValue(new_yaw)
+        if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'update_step2_controls_from_rig'):
+            self.tab_stepper.update_step2_controls_from_rig()
 
     def shift_framing(self, dh_deg: float, dv_shift: float):
         """Nudges the panorama framing horizontally (yaw pan) and vertically (shift)."""
@@ -2356,7 +2405,7 @@ class MainWindow(
         self.rig.global_yaw_center = 0.0
         self.rig.pano_hfov = 154.0
         self.rig.projection_type = "cylindrical"
-        self.rig.field_curvature_correction = 0.0
+        self.rig.field_curvature_correction = 0.04
         self.rig.blend_width_deg = 3.5
         self.rig.seam_angle_offset = 0.0
         self.rig.bottom_seam_taper_x = 0.0
@@ -2364,8 +2413,8 @@ class MainWindow(
         self.rig.smart_seam_enabled = False
         self.rig.auto_color_match = True
         self.rig.color_match_strength = 1.0
-        self.rig.vertical_crop_offset = -0.12
-        self.rig.horizontal_squeeze = 0.52
+        self.rig.vertical_crop_offset = -0.16
+        self.rig.horizontal_squeeze = 0.50
         self.rig.auto_crop_lir = True
         self.rig.lir_safety_margin = 0.005
 
@@ -2387,12 +2436,16 @@ class MainWindow(
         self.ctrl_global_pitch.setValue(2.0)
         self.ctrl_h_offset.setValue(0.0)
         self.ctrl_pano_hfov.setValue(154.0)
-        self.ctrl_v_offset.setValue(-0.12)
-        self.ctrl_squeeze.setValue(0.52)
+        self.ctrl_v_offset.setValue(-0.16)
+        self.ctrl_squeeze.setValue(0.50)
         self.ctrl_blend_width.setValue(3.5)
         self.ctrl_cam_fov.setValue(92.0)
         self.ctrl_safety_margin.setValue(0.5)
         self.chk_auto_crop.setChecked(True)
+        if hasattr(self, 'ctrl_curvature'):
+            self.ctrl_curvature.blockSignals(True)
+            self.ctrl_curvature.setValue(0.04)
+            self.ctrl_curvature.blockSignals(False)
 
         for ctrl in [
             self.ctrl_left_yaw, self.ctrl_right_yaw, self.ctrl_master_yaw,
@@ -2415,6 +2468,8 @@ class MainWindow(
         self._update_format_combo_labels()
         self.update_resolution_dropdown()
         self.refresh_preview()
+        if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'update_step2_controls_from_rig'):
+            self.tab_stepper.update_step2_controls_from_rig()
         self.status_bar.showMessage("📹 Preset aktiviert: DJI Action 4 1080p 16:9 Dewarp Standard (60fps)")
 
     def apply_action4_1080p_16x9_rocksteady_preset(self):
@@ -2439,9 +2494,9 @@ class MainWindow(
         self.rig.global_pitch_correction = 2.0
         self.rig.global_roll_correction = 0.0
         self.rig.global_yaw_center = 0.0
-        self.rig.pano_hfov = 146.0
+        self.rig.pano_hfov = 152.0
         self.rig.projection_type = "cylindrical"
-        self.rig.field_curvature_correction = 0.0
+        self.rig.field_curvature_correction = 0.04
         self.rig.blend_width_deg = 3.5
         self.rig.seam_angle_offset = 0.0
         self.rig.bottom_seam_taper_x = 0.0
@@ -2449,8 +2504,8 @@ class MainWindow(
         self.rig.smart_seam_enabled = False
         self.rig.auto_color_match = True
         self.rig.color_match_strength = 1.0
-        self.rig.vertical_crop_offset = -0.12
-        self.rig.horizontal_squeeze = 0.52
+        self.rig.vertical_crop_offset = -0.16
+        self.rig.horizontal_squeeze = 0.50
         self.rig.auto_crop_lir = True
         self.rig.lir_safety_margin = 0.005
 
@@ -2471,13 +2526,17 @@ class MainWindow(
         self.ctrl_right_roll.setValue(0.0)
         self.ctrl_global_pitch.setValue(2.0)
         self.ctrl_h_offset.setValue(0.0)
-        self.ctrl_pano_hfov.setValue(146.0)
-        self.ctrl_v_offset.setValue(-0.12)
-        self.ctrl_squeeze.setValue(0.52)
+        self.ctrl_pano_hfov.setValue(152.0)
+        self.ctrl_v_offset.setValue(-0.16)
+        self.ctrl_squeeze.setValue(0.50)
         self.ctrl_blend_width.setValue(3.5)
         self.ctrl_cam_fov.setValue(82.0)
         self.ctrl_safety_margin.setValue(0.5)
         self.chk_auto_crop.setChecked(True)
+        if hasattr(self, 'ctrl_curvature'):
+            self.ctrl_curvature.blockSignals(True)
+            self.ctrl_curvature.setValue(0.04)
+            self.ctrl_curvature.blockSignals(False)
 
         for ctrl in [
             self.ctrl_left_yaw, self.ctrl_right_yaw, self.ctrl_master_yaw,
@@ -2498,6 +2557,10 @@ class MainWindow(
         self.update_corner_spinboxes_from_rig()
         self.engine.invalidate_luts()
         self._update_format_combo_labels()
+        self.update_resolution_dropdown()
+        self.refresh_preview()
+        if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'update_step2_controls_from_rig'):
+            self.tab_stepper.update_step2_controls_from_rig()
         self.update_resolution_dropdown()
         self.refresh_preview()
         self.status_bar.showMessage("📹 Preset aktiviert: DJI Action 4 1080p 16:9 RockSteady")

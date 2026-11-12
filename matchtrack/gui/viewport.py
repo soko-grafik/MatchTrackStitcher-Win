@@ -737,9 +737,11 @@ class InteractivePanoramaViewport(QWidget):
                     painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
                     painter.drawText(tag_seam, Qt.AlignCenter, "🧠 Intelligente Kontur-Naht")
                 else:
+                    yaw_center_deg = getattr(self.rig_ref, 'global_yaw_center', 0.0) if self.rig_ref else 0.0
                     seam_offset_deg = getattr(self.rig_ref, 'seam_angle_offset', 0.0) if self.rig_ref else 0.0
                     pano_hfov = getattr(self.rig_ref, 'pano_hfov', 145.0) if self.rig_ref else 145.0
-                    seam_norm = 0.5 + (seam_offset_deg / max(1.0, pano_hfov))
+                    seam_angle = -yaw_center_deg + seam_offset_deg
+                    seam_norm = 0.5 + (seam_angle / max(1.0, pano_hfov))
                     seam_x = target_rect.left() + target_rect.width() * seam_norm
                     painter.drawLine(int(seam_x), int(target_rect.top()), int(seam_x), int(target_rect.bottom()))
 

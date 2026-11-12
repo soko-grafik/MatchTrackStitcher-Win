@@ -340,6 +340,96 @@ class StepperWizardWidget(QWidget):
         row_calib.addWidget(self.btn_prep_stitch)
 
         layout_two.addLayout(row_calib)
+
+        # Spielfeld-Ausrichtung & Feineinstellungen (Field Framing & Seam Alignment)
+        card_tune = QFrame()
+        card_tune.setStyleSheet(
+            "QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 10px; padding: 12px; }"
+        )
+        tune_layout = QVBoxLayout(card_tune)
+        tune_layout.setContentsMargins(12, 10, 12, 10)
+        tune_layout.setSpacing(10)
+
+        header_tune = QHBoxLayout()
+        lbl_tune = QLabel("📐 Spielfeld-Ausrichtung & Feineinstellung (Framing & Corners)")
+        lbl_tune.setStyleSheet("font-size: 13px; font-weight: 800; color: #f8fafc;")
+        header_tune.addWidget(lbl_tune)
+
+        header_tune.addStretch()
+
+        self.btn_pick_center = QPushButton("🎯 Spielfeldmitte in Vorschau anklicken")
+        self.btn_pick_center.setCheckable(True)
+        self.btn_pick_center.setStyleSheet(
+            "QPushButton { background: #1e293b; color: #38bdf8; border: 1px solid #0284c7; border-radius: 6px; padding: 5px 12px; font-weight: 700; font-size: 11px; }"
+            "QPushButton:checked { background: #0284c7; color: white; border: 1px solid #38bdf8; font-weight: 800; }"
+        )
+        self.btn_pick_center.setToolTip(
+            "Klicken Sie auf diesen Button und anschließend direkt in der Panorama-Vorschau auf die Mittellinie oder den gelben Pfosten, um das Spielfeld sofort exakt zu zentrieren."
+        )
+        self.btn_pick_center.toggled.connect(self.win.on_pick_center_toggled)
+        header_tune.addWidget(self.btn_pick_center)
+        tune_layout.addLayout(header_tune)
+
+        # 1. Row: Horizontal Center Pan & Quick Buttons
+        row_pan = QHBoxLayout()
+        self.ctrl_step2_h_offset = LabeledSliderSpinBox(
+            "↔️ Spielfeldmitte (Links ↔ Rechts Pan):", -45.0, 45.0, 0.0, 0.2, "°", decimals=1
+        )
+        self.ctrl_step2_h_offset.valueChanged.connect(self._on_step2_h_offset_changed)
+        row_pan.addWidget(self.ctrl_step2_h_offset, 1)
+
+        pan_btn_layout = QHBoxLayout()
+        pan_btn_layout.setSpacing(4)
+        for d_pan, txt in [(-5.0, "⏪ -5°"), (-1.0, "◀ -1°"), (0.0, "🎯 0° Reset"), (1.0, "▶ +1°"), (5.0, "⏩ +5°")]:
+            btn_p = QPushButton(txt)
+            btn_p.setStyleSheet(
+                "QPushButton { background: #1e1e2d; border: 1px solid #28283a; border-radius: 5px; padding: 4px 8px; font-size: 11px; font-weight: 600; color: #cbd5e1; }"
+                "QPushButton:hover { background: #28283a; color: white; }"
+            )
+            if d_pan == 0.0:
+                btn_p.clicked.connect(lambda chk=False: self._on_step2_h_offset_changed(0.0))
+            else:
+                btn_p.clicked.connect(lambda chk=False, d=d_pan: self.win.pan_offset_by(d))
+            pan_btn_layout.addWidget(btn_p)
+        row_pan.addLayout(pan_btn_layout)
+        tune_layout.addLayout(row_pan)
+
+        # 2. Row: Height / Bottom Corners & HFOV
+        row_hv = QHBoxLayout()
+        row_hv.setSpacing(14)
+        self.ctrl_step2_v_offset = LabeledSliderSpinBox(
+            "↕️ Bildhöhe / Untere Ecken (Shift):", -0.40, 0.40, -0.16, 0.01, "", decimals=2
+        )
+        self.ctrl_step2_v_offset.setToolTip("Hebt oder senkt das Spielfeld, damit alle vier Tore und die unteren Eckfahnen/Auslinien vollständig sichtbar sind.")
+        self.ctrl_step2_v_offset.valueChanged.connect(self._on_step2_v_offset_changed)
+        row_hv.addWidget(self.ctrl_step2_v_offset, 1)
+
+        self.ctrl_step2_hfov = LabeledSliderSpinBox(
+            "🔍 Panorama-Breite (HFOV):", 120.0, 175.0, 152.0, 0.5, "°", decimals=1
+        )
+        self.ctrl_step2_hfov.setToolTip("Erweitert das Sichtfeld horizontal, damit linkes und rechtes Tor vollständig im Panorama sichtbar sind.")
+        self.ctrl_step2_hfov.valueChanged.connect(self._on_step2_hfov_changed)
+        row_hv.addWidget(self.ctrl_step2_hfov, 1)
+        tune_layout.addLayout(row_hv)
+
+        # 3. Row: Curvature Correction & Auto-Crop Toggle
+        row_curv = QHBoxLayout()
+        row_curv.setSpacing(14)
+        self.ctrl_step2_curvature = LabeledSliderSpinBox(
+            "📐 Seitenlinien-Begradigung (Curvature):", -0.30, 0.30, 0.04, 0.01, "", decimals=2
+        )
+        self.ctrl_step2_curvature.setToolTip("Gleicht die durch Kamera-Abwärtsneigung gekrümmten Bodenlinien aus und hebt die unteren Ecken an.")
+        self.ctrl_step2_curvature.valueChanged.connect(self._on_step2_curvature_changed)
+        row_curv.addWidget(self.ctrl_step2_curvature, 1)
+
+        self.chk_step2_auto_crop = QCheckBox("✂️ Auto-Crop LIR (Schwarze Ränder entfernen)")
+        self.chk_step2_auto_crop.setChecked(True)
+        self.chk_step2_auto_crop.setStyleSheet("color: #94a3b8; font-weight: 600; font-size: 11px;")
+        self.chk_step2_auto_crop.toggled.connect(self._on_step2_auto_crop_changed)
+        row_curv.addWidget(self.chk_step2_auto_crop)
+        tune_layout.addLayout(row_curv)
+
+        layout_two.addWidget(card_tune)
         layout.addWidget(self.box_two_cam)
 
         # Container for Single-Cam / Pre-stitched Panorama mode
@@ -593,13 +683,100 @@ class StepperWizardWidget(QWidget):
             self.win.apply_rig_preset_by_key(val)
         elif val and hasattr(self.win, 'apply_action4_4x3_rocksteady_preset'):
             self.win.apply_action4_4x3_rocksteady_preset()
+        self.update_step2_controls_from_rig()
 
     def _prepare_stitching(self):
         try:
             self.win.run_auto_stitch_calibration()
+            self.update_step2_controls_from_rig()
         except Exception as e:
             logger.error(f"Fehler bei prepare stitching: {e}", exc_info=True)
             QMessageBox.critical(self, "Stitching Vorbereitung", f"Fehler bei der Vorbereitung: {e}")
+
+    def _on_step2_h_offset_changed(self, val: float):
+        if not hasattr(self.win, 'rig'):
+            return
+        self.win.rig.global_yaw_center = float(val)
+        if hasattr(self.win, 'ctrl_h_offset'):
+            self.win.ctrl_h_offset.blockSignals(True)
+            self.win.ctrl_h_offset.setValue(val)
+            self.win.ctrl_h_offset.blockSignals(False)
+        if hasattr(self, 'ctrl_step2_h_offset') and abs(self.ctrl_step2_h_offset.value() - val) > 0.01:
+            self.ctrl_step2_h_offset.blockSignals(True)
+            self.ctrl_step2_h_offset.setValue(val)
+            self.ctrl_step2_h_offset.blockSignals(False)
+        self.win.engine.invalidate_luts()
+        self.win.trigger_smooth_preview()
+
+    def _on_step2_v_offset_changed(self, val: float):
+        if not hasattr(self.win, 'rig'):
+            return
+        self.win.rig.vertical_crop_offset = float(val)
+        if hasattr(self.win, 'ctrl_v_offset'):
+            self.win.ctrl_v_offset.blockSignals(True)
+            self.win.ctrl_v_offset.setValue(val)
+            self.win.ctrl_v_offset.blockSignals(False)
+        self.win.engine.invalidate_luts()
+        self.win.trigger_smooth_preview()
+
+    def _on_step2_hfov_changed(self, val: float):
+        if not hasattr(self.win, 'rig'):
+            return
+        self.win.rig.pano_hfov = float(val)
+        if hasattr(self.win, 'ctrl_pano_hfov'):
+            self.win.ctrl_pano_hfov.blockSignals(True)
+            self.win.ctrl_pano_hfov.setValue(val)
+            self.win.ctrl_pano_hfov.blockSignals(False)
+        self.win.engine.invalidate_luts()
+        self.win.trigger_smooth_preview()
+
+    def _on_step2_curvature_changed(self, val: float):
+        if not hasattr(self.win, 'rig'):
+            return
+        self.win.rig.field_curvature_correction = float(val)
+        if hasattr(self.win, 'ctrl_curvature'):
+            self.win.ctrl_curvature.blockSignals(True)
+            self.win.ctrl_curvature.setValue(val)
+            self.win.ctrl_curvature.blockSignals(False)
+        self.win.engine.invalidate_luts()
+        self.win.trigger_smooth_preview()
+
+    def _on_step2_auto_crop_changed(self, checked: bool):
+        if not hasattr(self.win, 'rig'):
+            return
+        self.win.rig.auto_crop_lir = checked
+        if hasattr(self.win, 'chk_auto_crop'):
+            self.win.chk_auto_crop.blockSignals(True)
+            self.win.chk_auto_crop.setChecked(checked)
+            self.win.chk_auto_crop.blockSignals(False)
+        self.win.engine.invalidate_luts()
+        self.win.trigger_smooth_preview()
+
+    def update_step2_controls_from_rig(self):
+        if not hasattr(self, 'ctrl_step2_h_offset'):
+            return
+        rig = getattr(self.win, 'rig', None)
+        if not rig:
+            return
+        self.ctrl_step2_h_offset.blockSignals(True)
+        self.ctrl_step2_h_offset.setValue(getattr(rig, 'global_yaw_center', 0.0))
+        self.ctrl_step2_h_offset.blockSignals(False)
+
+        self.ctrl_step2_v_offset.blockSignals(True)
+        self.ctrl_step2_v_offset.setValue(getattr(rig, 'vertical_crop_offset', -0.16))
+        self.ctrl_step2_v_offset.blockSignals(False)
+
+        self.ctrl_step2_hfov.blockSignals(True)
+        self.ctrl_step2_hfov.setValue(getattr(rig, 'pano_hfov', 152.0))
+        self.ctrl_step2_hfov.blockSignals(False)
+
+        self.ctrl_step2_curvature.blockSignals(True)
+        self.ctrl_step2_curvature.setValue(getattr(rig, 'field_curvature_correction', 0.04))
+        self.ctrl_step2_curvature.blockSignals(False)
+
+        self.chk_step2_auto_crop.blockSignals(True)
+        self.chk_step2_auto_crop.setChecked(getattr(rig, 'auto_crop_lir', True))
+        self.chk_step2_auto_crop.blockSignals(False)
 
     # =========================================================================
     # STEP 3: FIELD MARKING (10-Point Sideline Model)
@@ -1930,6 +2107,7 @@ class StepperWizardWidget(QWidget):
                     self.update_framing_previews()
                 elif step_idx == 1: # Source
                     self.win.viewport.set_workflow_domain("stitching")
+                    self.update_step2_controls_from_rig()
                     if hasattr(self.win, 'video_path_l') and self.win.video_path_l:
                         self.update_left_video_path(self.win.video_path_l)
                     if hasattr(self.win, 'video_path_r') and self.win.video_path_r:

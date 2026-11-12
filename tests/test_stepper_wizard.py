@@ -219,6 +219,36 @@ class TestStepperWizard(unittest.TestCase):
         self.assertEqual(self.win.rig.left_camera.image_height, 1080)
         self.assertAlmostEqual(self.win.rig.left_camera.hfov_deg, 92.0)
         self.assertAlmostEqual(self.win.ctrl_master_yaw.value(), 77.0)
+        self.assertAlmostEqual(self.win.rig.pano_hfov, 154.0)
+        self.assertAlmostEqual(self.win.rig.vertical_crop_offset, -0.16)
+
+    def test_step2_framing_controls_sync(self):
+        """Verifies Step 2 framing and centering controls update rig and sync properly."""
+        self.wizard.go_to_step(1) # Step 2 (Source)
+
+        # Test horizontal pan (Spielfeldmitte)
+        self.wizard._on_step2_h_offset_changed(-4.5)
+        self.assertAlmostEqual(self.win.rig.global_yaw_center, -4.5)
+        self.assertAlmostEqual(self.win.ctrl_h_offset.value(), -4.5)
+
+        # Test vertical shift (Untere Ecken / Höhe)
+        self.wizard._on_step2_v_offset_changed(-0.18)
+        self.assertAlmostEqual(self.win.rig.vertical_crop_offset, -0.18)
+        self.assertAlmostEqual(self.win.ctrl_v_offset.value(), -0.18)
+
+        # Test HFOV (Panorama-Breite)
+        self.wizard._on_step2_hfov_changed(156.0)
+        self.assertAlmostEqual(self.win.rig.pano_hfov, 156.0)
+        self.assertAlmostEqual(self.win.ctrl_pano_hfov.value(), 156.0)
+
+        # Test Curvature (Seitenlinien-Begradigung)
+        self.wizard._on_step2_curvature_changed(0.06)
+        self.assertAlmostEqual(self.win.rig.field_curvature_correction, 0.06)
+        self.assertAlmostEqual(self.win.ctrl_curvature.value(), 0.06)
+
+        # Test Click-to-center pitch
+        self.win.on_pitch_center_picked(0.45) # 5% left of center
+        self.assertAlmostEqual(self.wizard.ctrl_step2_h_offset.value(), self.win.rig.global_yaw_center)
 
     def test_viewport_paint_all_view_modes_including_8x3(self):
         """Verifies paintEvent does not crash on 8:3 tactical panorama or any other view mode."""
