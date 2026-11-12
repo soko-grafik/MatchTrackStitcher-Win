@@ -186,6 +186,13 @@ class InteractivePanoramaViewport(QWidget):
             self.placeholder_text = "Kein Video geladen. Bitte Video für die Spielfeld-Markierung (10 Punkte) laden."
         elif domain == "framing":
             self.placeholder_text = "Kein Video geladen für das visuelle 2-Box Framing."
+        elif domain == "export":
+            self.placeholder_text = "Video-Export läuft... Live-Vorschau wird geladen."
+        self.update()
+
+    def set_export_preview_image(self, qimg: QImage):
+        """Displays live stepping follow-cam preview frame in the main viewport during export."""
+        self.current_qimage = qimg
         self.update()
 
     def clear_preview(self):

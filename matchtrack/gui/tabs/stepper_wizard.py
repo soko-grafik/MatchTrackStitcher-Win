@@ -79,21 +79,21 @@ class StepperWizardWidget(QWidget):
         step_titles = [
             ("1", "Setup"),
             ("2", "Source"),
-            ("3", "Field marking"),
+            ("3", "Field"),
             ("4", "Framing"),
             ("5", "Output")
         ]
 
         for idx, (num, name) in enumerate(step_titles):
-            btn = QPushButton(f"  {num}  {name}  ")
+            btn = QPushButton(f"{num} {name}")
             btn.setCheckable(True)
             btn.setStyleSheet("""
                 QPushButton {
                     background-color: transparent;
                     color: #94a3b8;
                     font-weight: 700;
-                    font-size: 12px;
-                    padding: 8px 16px;
+                    font-size: 11px;
+                    padding: 6px 4px;
                     border-radius: 8px;
                     border: 1px solid transparent;
                 }
@@ -109,9 +109,7 @@ class StepperWizardWidget(QWidget):
             """)
             btn.clicked.connect(lambda _, i=idx: self.go_to_step(i))
             self.step_buttons.append(btn)
-            header_layout.addWidget(btn)
-
-        header_layout.addStretch()
+            header_layout.addWidget(btn, 1)
 
         root_layout.addWidget(self.header_card)
 
@@ -1159,223 +1157,81 @@ class StepperWizardWidget(QWidget):
     # =========================================================================
     # STEP 5: OUTPUT (Summary Dashboard & 1-Click Export)
     # =========================================================================
-    def _build_step5_output(self) -> QWidget:
-        page = QWidget()
-        layout = QHBoxLayout(page)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(24)
-
-        # Left Column: Export & Encoder Settings
-        col_left = QVBoxLayout()
-        col_left.setSpacing(14)
-
-        lbl_title = QLabel("Ausgabe & Export (Output)")
-        lbl_title.setStyleSheet("font-size: 20px; font-weight: 800; color: #f8fafc;")
-        col_left.addWidget(lbl_title)
-
-        # Output Path Row
-        lbl_dest = QLabel("SPEICHERORT:")
-        lbl_dest.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 800;")
-        col_left.addWidget(lbl_dest)
-
-        row_path = QHBoxLayout()
-        self.txt_out_path = QLineEdit()
-        self.txt_out_path.setReadOnly(True)
-        self.txt_out_path.setStyleSheet("background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 6px; padding: 8px; color: #f8fafc;")
-        row_path.addWidget(self.txt_out_path, 1)
-
-        btn_browse_out = QPushButton("Speichern unter...")
-        btn_browse_out.setStyleSheet("padding: 8px 14px; font-weight: 700; background: #1e1e2d; color: white; border-radius: 6px;")
-        btn_browse_out.clicked.connect(self._browse_output_path)
-        row_path.addWidget(btn_browse_out)
-        col_left.addLayout(row_path)
-
-        # Resolution & Bitrate Grid
-        grid_out = QGridLayout()
-        grid_out.setSpacing(10)
-
-        grid_out.addWidget(QLabel("Auflösung:"), 0, 0)
-        self.combo_wizard_res = QComboBox()
-        self.combo_wizard_res.addItem("1920x1080 (Full HD 1080p - Standard)", (1920, 1080))
-        self.combo_wizard_res.addItem("3840x2160 (4K UHD 2160p - Hohe Details)", (3840, 2160))
-        self.combo_wizard_res.addItem("2560x1440 (2K QHD 1440p)", (2560, 1440))
-        self.combo_wizard_res.addItem("1280x720 (HD 720p - Schnell)", (1280, 720))
-        grid_out.addWidget(self.combo_wizard_res, 0, 1)
-
-        grid_out.addWidget(QLabel("Bitrate:"), 1, 0)
-        self.ctrl_wizard_bitrate = LabeledSliderSpinBox("", 4, 100, 16, 1, " Mbps")
-        grid_out.addWidget(self.ctrl_wizard_bitrate, 1, 1)
-
-        grid_out.addWidget(QLabel("Hardware-Encoder:"), 2, 0)
-        self.combo_wizard_codec = create_codec_combobox()
-        grid_out.addWidget(self.combo_wizard_codec, 2, 1)
-
-        col_left.addLayout(grid_out)
-
-        # Logo Overlay Row (Optional)
-        grp_logo = QFrame()
-        grp_logo.setStyleSheet("QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 8px; padding: 10px; }")
-        l_layout = QHBoxLayout(grp_logo)
-        l_layout.setSpacing(10)
-
-        self.lbl_logo_info = QLabel("Vereinswappen / Logo-Overlay (Optional): Kein Logo gewählt")
-        self.lbl_logo_info.setStyleSheet("color: #94a3b8; font-size: 11px;")
-        l_layout.addWidget(self.lbl_logo_info, 1)
-
-        btn_logo = QPushButton("📁 Wappen wählen...")
-        btn_logo.setStyleSheet("padding: 6px 12px; font-weight: 700; background: #1e1e2d; color: white; border-radius: 6px;")
-        btn_logo.clicked.connect(self._browse_logo)
-        l_layout.addWidget(btn_logo)
-
-        col_left.addWidget(grp_logo)
-
-        # Audio Mute
-        self.chk_mute_audio = QCheckBox("Audio-Spur stummschalten (Mute audio)")
-        self.chk_mute_audio.setStyleSheet("color: #cbd5e1; font-weight: 600;")
-        col_left.addWidget(self.chk_mute_audio)
-
-        # Lookahead Option (1-Pass vs 2-Pass)
-        grp_mode = QFrame()
-        grp_mode.setStyleSheet("QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 8px; padding: 12px; }")
-        gm_layout = QVBoxLayout(grp_mode)
-        gm_layout.setSpacing(6)
-
-        self.chk_wizard_lookahead = QCheckBox("🎬 Filmische 2-Pass KI-Glättung (Lookahead)")
-        self.chk_wizard_lookahead.setChecked(False)
-        self.chk_wizard_lookahead.setStyleSheet("color: #f8fafc; font-weight: 700; font-size: 13px;")
-        self.chk_wizard_lookahead.stateChanged.connect(lambda: self.update_summary())
-        gm_layout.addWidget(self.chk_wizard_lookahead)
-
-        lbl_mode_desc = QLabel("• Aus (1-Pass): Startet sofort in Echtzeit (~60-100 FPS), ideal für schnelle Ergebnisse.\n• Ein (2-Pass): Scannt vorab den Spielverlauf für filmische Schwenks ohne Ruckeln.")
-        lbl_mode_desc.setStyleSheet("color: #94a3b8; font-size: 11px; line-height: 1.4;")
-        gm_layout.addWidget(lbl_mode_desc)
-        col_left.addWidget(grp_mode)
-
-        # MatchTrack Online Cloud Integration (Auto-Upload Option)
-        grp_cloud = QFrame()
-        grp_cloud.setStyleSheet("QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 8px; padding: 12px; }")
-        gc_layout = QVBoxLayout(grp_cloud)
-        gc_layout.setSpacing(8)
-
-        # Header Row: Checkbox + Login/Konto Button
-        row_c_hdr = QHBoxLayout()
-        self.chk_wizard_cloud_upload = QCheckBox("☁️ Nach Fertigstellung in MatchTrack Online Cloud hochladen")
-        self.chk_wizard_cloud_upload.setChecked(False)
-        self.chk_wizard_cloud_upload.setStyleSheet("color: #f8fafc; font-weight: 700; font-size: 13px;")
-        self.chk_wizard_cloud_upload.stateChanged.connect(self._on_cloud_upload_toggled)
-        row_c_hdr.addWidget(self.chk_wizard_cloud_upload, 1)
-
-        self.btn_wizard_cloud_login = QPushButton("🔑 Verbinden")
-        self.btn_wizard_cloud_login.setStyleSheet("background: #1e293b; color: #60a5fa; font-weight: 700; padding: 4px 10px; border-radius: 6px; border: 1px solid #3b82f6;")
-        self.btn_wizard_cloud_login.clicked.connect(self._on_cloud_login_clicked)
-        row_c_hdr.addWidget(self.btn_wizard_cloud_login)
-        gc_layout.addLayout(row_c_hdr)
-
-        # Details Row: Status badge + Team selection
-        self.row_cloud_details = QHBoxLayout()
-        self.row_cloud_details.setSpacing(10)
-
-        self.lbl_wizard_cloud_status = QLabel("⚪ Nicht angemeldet")
-        self.lbl_wizard_cloud_status.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 600;")
-        self.row_cloud_details.addWidget(self.lbl_wizard_cloud_status, 1)
-
-        lbl_team_title = QLabel("Mannschaft:")
-        lbl_team_title.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 700;")
-        self.row_cloud_details.addWidget(lbl_team_title)
-
-        self.combo_wizard_cloud_team = QComboBox()
-        self.combo_wizard_cloud_team.setStyleSheet("""
-            QComboBox {
-                background: #141420;
-                color: #f8fafc;
-                font-weight: 700;
-                font-size: 11px;
-                padding: 4px 8px;
-                border: 1px solid #28283c;
-                border-radius: 6px;
-                min-width: 150px;
-            }
-            QComboBox::drop-down { border: none; }
-            QComboBox QAbstractItemView {
-                background-color: #12121c;
-                color: #f8fafc;
-                selection-background-color: #10b981;
-            }
-        """)
-        self.combo_wizard_cloud_team.currentIndexChanged.connect(self._on_wizard_cloud_team_changed)
-        self.row_cloud_details.addWidget(self.combo_wizard_cloud_team)
-
-        gc_layout.addLayout(self.row_cloud_details)
-        col_left.addWidget(grp_cloud)
-
-        col_left.addStretch()
-
-        # Big Action Button
-        self.btn_start_render = QPushButton("🚀 Jetzt Video erstellen (Start processing)")
-        self.btn_start_render.setStyleSheet("""
-            QPushButton {
-                background-color: #10b981;
-                color: #ffffff;
-                font-weight: 800;
-                font-size: 15px;
-                padding: 16px;
-                border-radius: 10px;
-                border: none;
-            }
-            QPushButton:hover {
-                background-color: #059669;
-            }
-            QPushButton:disabled {
-                background-color: #1e293b;
-                color: #64748b;
-            }
-        """)
-        self.btn_start_render.clicked.connect(self._start_export)
-        col_left.addWidget(self.btn_start_render)
-
-        # Live Progress & Stepping Preview Box in Step 5 (Matching Once Sport Autocam)
+    def _build_progress_container(self):
+        """Creates the rich Live Process & Stepping Preview Dashboard designed for the LEFT Pane."""
         self.progress_container = QFrame()
         self.progress_container.setObjectName("progress_container")
         self.progress_container.setStyleSheet("""
             QFrame#progress_container {
-                background: #09090f;
+                background: #090910;
                 border: 1px solid #1e1e2d;
                 border-radius: 12px;
-                padding: 14px;
+                padding: 12px 16px;
             }
         """)
         p_layout = QVBoxLayout(self.progress_container)
+        p_layout.setContentsMargins(12, 12, 12, 12)
         p_layout.setSpacing(10)
 
-        # 1. Top Header: Filename & Status Badge
+        # 1. Top Header Row: Filename, Badge, Stage, Time
         hdr_row = QHBoxLayout()
+        hdr_row.setSpacing(10)
         self.lbl_progress_file = QLabel("🎬 MatchTrack_Autocam_Broadcast.mp4")
         self.lbl_progress_file.setStyleSheet("color: #f8fafc; font-weight: 800; font-size: 13px;")
-        hdr_row.addWidget(self.lbl_progress_file, 1)
+        hdr_row.addWidget(self.lbl_progress_file)
 
         self.lbl_progress_badge = QLabel("● Bereit")
         self.lbl_progress_badge.setStyleSheet("color: #94a3b8; font-weight: 700; font-size: 11px; padding: 3px 8px; background: #141420; border: 1px solid #28283a; border-radius: 8px;")
         hdr_row.addWidget(self.lbl_progress_badge)
-        p_layout.addLayout(hdr_row)
-
-        # 2. Percentage & ETA Row
-        row_pct_eta = QHBoxLayout()
-        self.lbl_progress_pct = QLabel("0.0%")
-        self.lbl_progress_pct.setStyleSheet("color: #ffffff; font-weight: 900; font-size: 26px;")
-        row_pct_eta.addWidget(self.lbl_progress_pct)
 
         self.lbl_progress_stage = QLabel("● Initialisierung")
-        self.lbl_progress_stage.setStyleSheet("color: #10b981; font-weight: 700; font-size: 11px; margin-left: 8px;")
-        row_pct_eta.addWidget(self.lbl_progress_stage)
+        self.lbl_progress_stage.setStyleSheet("color: #10b981; font-weight: 700; font-size: 11px; margin-left: 6px;")
+        hdr_row.addWidget(self.lbl_progress_stage)
 
-        row_pct_eta.addStretch()
+        hdr_row.addStretch()
 
         self.lbl_progress_time = QLabel("ETA --:--  •  Dauer 00:00")
         self.lbl_progress_time.setStyleSheet("color: #94a3b8; font-weight: 700; font-size: 11px; font-family: monospace;")
-        row_pct_eta.addWidget(self.lbl_progress_time)
-        p_layout.addLayout(row_pct_eta)
+        hdr_row.addWidget(self.lbl_progress_time)
+        p_layout.addLayout(hdr_row)
 
-        # 3. Progress Bar
+        # 2. Main Middle Row: Left Live Monitor + Right Telemetry & Progress
+        row_mid = QHBoxLayout()
+        row_mid.setSpacing(16)
+
+        # Left: Live Follow-Cam Preview Monitor
+        card_preview = QFrame()
+        card_preview.setStyleSheet("background: #050508; border: 1px solid #222233; border-radius: 10px; padding: 4px;")
+        cp_layout = QVBoxLayout(card_preview)
+        cp_layout.setContentsMargins(4, 4, 4, 4)
+        cp_layout.setSpacing(4)
+        cp_layout.setAlignment(Qt.AlignCenter)
+
+        lbl_p_hdr = QLabel("🎥 LIVE FOLLOW-CAM AUSGABE")
+        lbl_p_hdr.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        cp_layout.addWidget(lbl_p_hdr, alignment=Qt.AlignLeft)
+
+        self.lbl_export_preview = QLabel()
+        self.lbl_export_preview.setFixedSize(480, 270)
+        self.lbl_export_preview.setAlignment(Qt.AlignCenter)
+        self.lbl_export_preview.setStyleSheet("background: #000000; border-radius: 6px; color: #64748b; font-size: 12px; font-weight: 700;")
+        self.lbl_export_preview.setText("🎥 Live Follow-Cam Vorschau\n(Startet mit dem Rendering)")
+        cp_layout.addWidget(self.lbl_export_preview)
+        row_mid.addWidget(card_preview)
+
+        # Right: Percentage, Progress Bar, Metrics & Action Controls
+        col_right = QVBoxLayout()
+        col_right.setSpacing(10)
+
+        # Pct Row
+        row_pct = QHBoxLayout()
+        self.lbl_progress_pct = QLabel("0.0%")
+        self.lbl_progress_pct.setStyleSheet("color: #10b981; font-weight: 900; font-size: 32px;")
+        row_pct.addWidget(self.lbl_progress_pct)
+        row_pct.addStretch()
+        col_right.addLayout(row_pct)
+
+        # Glowing Progress Bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
@@ -1393,24 +1249,9 @@ class StepperWizardWidget(QWidget):
                 border-radius: 5px;
             }
         """)
-        p_layout.addWidget(self.progress_bar)
+        col_right.addWidget(self.progress_bar)
 
-        # 4. 16:9 Stepping Follow-Cam Preview Monitor Card
-        card_preview = QFrame()
-        card_preview.setStyleSheet("background: #000000; border: 1px solid #222233; border-radius: 10px;")
-        cp_layout = QVBoxLayout(card_preview)
-        cp_layout.setContentsMargins(4, 4, 4, 4)
-        cp_layout.setAlignment(Qt.AlignCenter)
-
-        self.lbl_export_preview = QLabel()
-        self.lbl_export_preview.setFixedSize(480, 270)
-        self.lbl_export_preview.setAlignment(Qt.AlignCenter)
-        self.lbl_export_preview.setStyleSheet("background: #050508; border-radius: 8px; color: #64748b; font-size: 12px; font-weight: 700;")
-        self.lbl_export_preview.setText("🎥 Live Follow-Cam Vorschau\n(Startet mit dem Rendering)")
-        cp_layout.addWidget(self.lbl_export_preview)
-        p_layout.addWidget(card_preview, alignment=Qt.AlignCenter)
-
-        # 5. Telemetry Metrics Cards Row (Matching Autocam: Speed, FPS, Frames, Output Size)
+        # Telemetry Metrics 4 Cards Row
         row_metrics = QHBoxLayout()
         row_metrics.setSpacing(8)
 
@@ -1438,10 +1279,11 @@ class StepperWizardWidget(QWidget):
         row_metrics.addWidget(card_fps, 1)
         row_metrics.addWidget(card_frm, 1)
         row_metrics.addWidget(card_siz, 1)
-        p_layout.addLayout(row_metrics)
+        col_right.addLayout(row_metrics)
 
-        # 6. Bottom Status & Stop / Abbrechen Row
+        # Status text & Stop button
         row_p_btns = QHBoxLayout()
+        row_p_btns.setSpacing(10)
         self.lbl_progress_status = QLabel("Bereit zum Exportieren.")
         self.lbl_progress_status.setStyleSheet("color: #94a3b8; font-weight: 600; font-size: 11px;")
         row_p_btns.addWidget(self.lbl_progress_status, 1)
@@ -1470,21 +1312,226 @@ class StepperWizardWidget(QWidget):
         """)
         self.btn_cancel_render.clicked.connect(self._on_cancel_clicked)
         row_p_btns.addWidget(self.btn_cancel_render)
-        p_layout.addLayout(row_p_btns)
+        col_right.addLayout(row_p_btns)
+
+        row_mid.addLayout(col_right, 1)
+        p_layout.addLayout(row_mid)
 
         self.progress_container.setVisible(False)
-        col_left.addWidget(self.progress_container)
 
-        layout.addLayout(col_left, 1)
+    def _build_step5_output(self) -> QWidget:
+        # 1. Build the Live Process & Preview Container (docked into MainWindow's LEFT pane)
+        self._build_progress_container()
 
-        # Right Column: Autocam Live Summary Card
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
+
+        # Smooth Scroll Area so Step 5 never clips or overflows vertically or horizontally
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        # Title & Subtitle
+        lbl_title = QLabel("Ausgabe & Export (Output)")
+        lbl_title.setStyleSheet("font-size: 18px; font-weight: 800; color: #f8fafc;")
+        layout.addWidget(lbl_title)
+
+        lbl_sub = QLabel("Wähle Speicherort, Auflösung und Encoder für das finale Video.")
+        lbl_sub.setStyleSheet("color: #94a3b8; font-size: 12px; margin-top: -6px;")
+        layout.addWidget(lbl_sub)
+
+        # 1. Speicherort Card
+        grp_dest = QFrame()
+        grp_dest.setStyleSheet("QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 10px; padding: 12px; }")
+        l_dest = QVBoxLayout(grp_dest)
+        l_dest.setSpacing(8)
+
+        lbl_dest = QLabel("📁 SPEICHERORT & DATEINAME:")
+        lbl_dest.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 800; letter-spacing: 0.5px;")
+        l_dest.addWidget(lbl_dest)
+
+        row_path = QHBoxLayout()
+        row_path.setSpacing(8)
+        self.txt_out_path = QLineEdit()
+        self.txt_out_path.setReadOnly(True)
+        self.txt_out_path.setStyleSheet("background: #141420; border: 1px solid #222232; border-radius: 6px; padding: 7px 10px; color: #f8fafc; font-size: 12px;")
+        row_path.addWidget(self.txt_out_path, 1)
+
+        btn_browse_out = QPushButton("Speichern unter...")
+        btn_browse_out.setStyleSheet("padding: 7px 12px; font-weight: 700; background: #1e1e2d; color: white; border-radius: 6px; font-size: 11px;")
+        btn_browse_out.clicked.connect(self._browse_output_path)
+        row_path.addWidget(btn_browse_out)
+        l_dest.addLayout(row_path)
+        layout.addWidget(grp_dest)
+
+        # 2. Video-Qualität & Hardware-Encoder Card
+        grp_quality = QFrame()
+        grp_quality.setStyleSheet("QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 10px; padding: 12px; }")
+        l_qual = QVBoxLayout(grp_quality)
+        l_qual.setSpacing(10)
+
+        lbl_q_hdr = QLabel("⚙️ VIDEO-QUALITÄT & ENCODER:")
+        lbl_q_hdr.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 800; letter-spacing: 0.5px;")
+        l_qual.addWidget(lbl_q_hdr)
+
+        grid_out = QGridLayout()
+        grid_out.setSpacing(10)
+
+        lbl_res = QLabel("Auflösung:")
+        lbl_res.setStyleSheet("color: #cbd5e1; font-weight: 600; font-size: 12px;")
+        grid_out.addWidget(lbl_res, 0, 0)
+
+        self.combo_wizard_res = QComboBox()
+        self.combo_wizard_res.addItem("1920x1080 (Full HD 1080p - Standard)", (1920, 1080))
+        self.combo_wizard_res.addItem("3840x2160 (4K UHD 2160p - Hohe Details)", (3840, 2160))
+        self.combo_wizard_res.addItem("2560x1440 (2K QHD 1440p)", (2560, 1440))
+        self.combo_wizard_res.addItem("1280x720 (HD 720p - Schnell)", (1280, 720))
+        self.combo_wizard_res.setStyleSheet("""
+            QComboBox { background: #141420; color: #f8fafc; font-weight: 700; font-size: 12px; padding: 6px 10px; border: 1px solid #28283c; border-radius: 6px; }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView { background-color: #12121c; color: #f8fafc; selection-background-color: #10b981; }
+        """)
+        self.combo_wizard_res.currentIndexChanged.connect(lambda: self.update_summary())
+        grid_out.addWidget(self.combo_wizard_res, 0, 1)
+
+        lbl_bit = QLabel("Bitrate:")
+        lbl_bit.setStyleSheet("color: #cbd5e1; font-weight: 600; font-size: 12px;")
+        grid_out.addWidget(lbl_bit, 1, 0)
+        self.ctrl_wizard_bitrate = LabeledSliderSpinBox("", 4, 100, 16, 1, " Mbps")
+        self.ctrl_wizard_bitrate.valueChanged.connect(lambda _: self.update_summary())
+        grid_out.addWidget(self.ctrl_wizard_bitrate, 1, 1)
+
+        lbl_enc = QLabel("Encoder:")
+        lbl_enc.setStyleSheet("color: #cbd5e1; font-weight: 600; font-size: 12px;")
+        grid_out.addWidget(lbl_enc, 2, 0)
+        self.combo_wizard_codec = create_codec_combobox()
+        self.combo_wizard_codec.setStyleSheet("""
+            QComboBox { background: #141420; color: #f8fafc; font-weight: 700; font-size: 12px; padding: 6px 10px; border: 1px solid #28283c; border-radius: 6px; }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView { background-color: #12121c; color: #f8fafc; selection-background-color: #10b981; }
+        """)
+        self.combo_wizard_codec.currentIndexChanged.connect(lambda: self.update_summary())
+        grid_out.addWidget(self.combo_wizard_codec, 2, 1)
+
+        l_qual.addLayout(grid_out)
+        layout.addWidget(grp_quality)
+
+        # 3. Branding & Optionen Card
+        grp_opts = QFrame()
+        grp_opts.setStyleSheet("QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 10px; padding: 12px; }")
+        l_opts = QVBoxLayout(grp_opts)
+        l_opts.setSpacing(10)
+
+        lbl_opt_hdr = QLabel("🎨 BRANDING & OPTIONEN:")
+        lbl_opt_hdr.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 800; letter-spacing: 0.5px;")
+        l_opts.addWidget(lbl_opt_hdr)
+
+        row_logo = QHBoxLayout()
+        row_logo.setSpacing(8)
+        self.lbl_logo_info = QLabel("Vereinswappen / Logo: Kein Logo gewählt")
+        self.lbl_logo_info.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        row_logo.addWidget(self.lbl_logo_info, 1)
+
+        btn_logo = QPushButton("📁 Wappen wählen...")
+        btn_logo.setStyleSheet("padding: 6px 10px; font-weight: 700; background: #1e1e2d; color: white; border-radius: 6px; font-size: 11px;")
+        btn_logo.clicked.connect(self._browse_logo)
+        row_logo.addWidget(btn_logo)
+        l_opts.addLayout(row_logo)
+
+        self.chk_mute_audio = QCheckBox("🔇 Audio-Spur stummschalten (Mute audio)")
+        self.chk_mute_audio.setStyleSheet("color: #cbd5e1; font-weight: 600; font-size: 12px;")
+        l_opts.addWidget(self.chk_mute_audio)
+
+        self.chk_wizard_lookahead = QCheckBox("🎬 Filmische 2-Pass KI-Glättung (Lookahead)")
+        self.chk_wizard_lookahead.setChecked(False)
+        self.chk_wizard_lookahead.setStyleSheet("color: #f8fafc; font-weight: 700; font-size: 12px;")
+        self.chk_wizard_lookahead.stateChanged.connect(lambda: self.update_summary())
+        l_opts.addWidget(self.chk_wizard_lookahead)
+
+        lbl_mode_desc = QLabel("• 1-Pass: Sofortige GPU-Verarbeitung (~60-100 FPS), ideal für schnelle Ergebnisse.\n• 2-Pass: Scannt vorab den Spielverlauf für kinoreife, butterweiche Schwenks.")
+        lbl_mode_desc.setStyleSheet("color: #64748b; font-size: 10px; line-height: 1.4;")
+        l_opts.addWidget(lbl_mode_desc)
+
+        layout.addWidget(grp_opts)
+
+        # 4. MatchTrack Online Cloud Integration Card
+        grp_cloud = QFrame()
+        grp_cloud.setStyleSheet("QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 10px; padding: 12px; }")
+        gc_layout = QVBoxLayout(grp_cloud)
+        gc_layout.setSpacing(8)
+
+        row_c_hdr = QHBoxLayout()
+        self.chk_wizard_cloud_upload = QCheckBox("☁️ In MatchTrack Online Cloud hochladen")
+        self.chk_wizard_cloud_upload.setChecked(False)
+        self.chk_wizard_cloud_upload.setStyleSheet("color: #f8fafc; font-weight: 700; font-size: 12px;")
+        self.chk_wizard_cloud_upload.stateChanged.connect(self._on_cloud_upload_toggled)
+        row_c_hdr.addWidget(self.chk_wizard_cloud_upload, 1)
+
+        self.btn_wizard_cloud_login = QPushButton("🔑 Verbinden")
+        self.btn_wizard_cloud_login.setStyleSheet("background: #1e293b; color: #60a5fa; font-weight: 700; padding: 4px 10px; border-radius: 6px; border: 1px solid #3b82f6; font-size: 11px;")
+        self.btn_wizard_cloud_login.clicked.connect(self._on_cloud_login_clicked)
+        row_c_hdr.addWidget(self.btn_wizard_cloud_login)
+        gc_layout.addLayout(row_c_hdr)
+
+        self.row_cloud_details = QHBoxLayout()
+        self.row_cloud_details.setSpacing(8)
+        self.lbl_wizard_cloud_status = QLabel("⚪ Nicht angemeldet")
+        self.lbl_wizard_cloud_status.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 600;")
+        self.row_cloud_details.addWidget(self.lbl_wizard_cloud_status, 1)
+
+        lbl_team_title = QLabel("Team:")
+        lbl_team_title.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 700;")
+        self.row_cloud_details.addWidget(lbl_team_title)
+
+        self.combo_wizard_cloud_team = QComboBox()
+        self.combo_wizard_cloud_team.setStyleSheet("""
+            QComboBox { background: #141420; color: #f8fafc; font-weight: 700; font-size: 11px; padding: 4px 8px; border: 1px solid #28283c; border-radius: 6px; }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView { background-color: #12121c; color: #f8fafc; selection-background-color: #10b981; }
+        """)
+        self.combo_wizard_cloud_team.currentIndexChanged.connect(self._on_wizard_cloud_team_changed)
+        self.row_cloud_details.addWidget(self.combo_wizard_cloud_team)
+        gc_layout.addLayout(self.row_cloud_details)
+
+        layout.addWidget(grp_cloud)
+
+        # 5. Prominent Action Button: Start Processing
+        self.btn_start_render = QPushButton("🚀 Jetzt Video erstellen (Start processing)")
+        self.btn_start_render.setStyleSheet("""
+            QPushButton {
+                background-color: #10b981;
+                color: #ffffff;
+                font-weight: 800;
+                font-size: 14px;
+                padding: 14px;
+                border-radius: 8px;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #059669;
+            }
+            QPushButton:disabled {
+                background-color: #1e293b;
+                color: #64748b;
+            }
+        """)
+        self.btn_start_render.clicked.connect(self._start_export)
+        layout.addWidget(self.btn_start_render)
+
+        # 6. Full-Width Summary Card (placed below action button)
         self.summary_card = QFrame()
-        self.summary_card.setFixedWidth(340)
-        self.summary_card.setStyleSheet("QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 12px; padding: 16px; }")
+        self.summary_card.setStyleSheet("QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 10px; padding: 12px 14px; }")
         s_layout = QVBoxLayout(self.summary_card)
-        s_layout.setSpacing(12)
+        s_layout.setSpacing(8)
 
-        lbl_sum_hdr = QLabel("ZUSAMMENFASSUNG (SUMMARY)")
+        lbl_sum_hdr = QLabel("📋 ZUSAMMENFASSUNG (SUMMARY)")
         lbl_sum_hdr.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 800; letter-spacing: 1px;")
         s_layout.addWidget(lbl_sum_hdr)
 
@@ -1506,21 +1553,22 @@ class StepperWizardWidget(QWidget):
             lbl_k = QLabel(key)
             lbl_k.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 700;")
             lbl_v = QLabel(val)
-            lbl_v.setStyleSheet("color: #f8fafc; font-size: 11px; font-weight: 700; text-align: right;")
+            lbl_v.setStyleSheet("color: #f8fafc; font-size: 11px; font-weight: 700;")
             lbl_v.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.summary_fields[key] = lbl_v
             row.addWidget(lbl_k)
             row.addWidget(lbl_v)
             s_layout.addLayout(row)
 
-        s_layout.addStretch()
-
         btn_save_preset = QPushButton("💾 Als Voreinstellung sichern...")
-        btn_save_preset.setStyleSheet("padding: 8px; font-weight: 700; background: #1e1e2d; color: #cbd5e1; border-radius: 6px; border: 1px solid #28283a;")
+        btn_save_preset.setStyleSheet("padding: 7px; font-weight: 700; background: #1e1e2d; color: #cbd5e1; border-radius: 6px; border: 1px solid #28283a; font-size: 11px; margin-top: 4px;")
         btn_save_preset.clicked.connect(self.win.save_as_default_settings)
         s_layout.addWidget(btn_save_preset)
 
         layout.addWidget(self.summary_card)
+
+        scroll.setWidget(content)
+        page_layout.addWidget(scroll)
 
         return page
 
@@ -1661,6 +1709,7 @@ class StepperWizardWidget(QWidget):
         )
 
     def on_export_started(self):
+        self._is_rendering = True
         self._export_start_time = time.time()
         self.btn_start_render.setEnabled(False)
         self.btn_start_render.setText("⏳ Export läuft...")
@@ -1677,7 +1726,12 @@ class StepperWizardWidget(QWidget):
         if hasattr(self, 'lbl_progress_stage'):
             self.lbl_progress_stage.setText("● Initialisierung")
         self.lbl_progress_status.setText("Export wird vorbereitet...")
-        self.progress_container.setVisible(True)
+        if hasattr(self, 'progress_container'):
+            self.progress_container.setVisible(True)
+        if hasattr(self.win, 'timeline_frame'):
+            self.win.timeline_frame.setVisible(False)
+        if hasattr(self.win, 'viewport'):
+            self.win.viewport.set_workflow_domain("export")
 
     def on_export_progress(self, processed: int, total: int, fps: float, eta: float, stage_text: str = ""):
         pct = int((processed / max(total, 1)) * 100)
@@ -1717,7 +1771,7 @@ class StepperWizardWidget(QWidget):
         self.lbl_progress_status.setText(f"{prefix}{processed:,}/{total:,} Frames ({pct}%) | {fps:.1f} FPS | Restzeit: {m:02d}:{s:02d}")
 
     def on_export_preview_frame(self, qimg: QImage):
-        """Displays the stepping follow-cam preview frame in the monitor."""
+        """Displays the stepping follow-cam preview frame in the monitor and viewport."""
         if not hasattr(self, 'lbl_export_preview') or qimg is None:
             return
         pix = QPixmap.fromImage(qimg)
@@ -1727,8 +1781,11 @@ class StepperWizardWidget(QWidget):
             Qt.SmoothTransformation
         )
         self.lbl_export_preview.setPixmap(scaled)
+        if hasattr(self.win, 'viewport'):
+            self.win.viewport.set_export_preview_image(qimg)
 
     def on_export_finished(self, success: bool, message: str):
+        self._is_rendering = False
         self.btn_start_render.setEnabled(True)
         self.btn_start_render.setText("🚀 Jetzt Video erstellen (Start processing)")
         self.btn_cancel_render.setEnabled(False)
@@ -1752,6 +1809,7 @@ class StepperWizardWidget(QWidget):
             self.lbl_progress_status.setText("Export abgebrochen oder fehlgeschlagen.")
 
     def on_export_cancelled(self):
+        self._is_rendering = False
         self.btn_start_render.setEnabled(True)
         self.btn_start_render.setText("🚀 Jetzt Video erstellen (Start processing)")
         self.btn_cancel_render.setEnabled(False)
@@ -1855,6 +1913,12 @@ class StepperWizardWidget(QWidget):
             self.pages_stack.setCurrentIndex(step_idx)
             self.update_stepper_ui()
             self.step_changed.emit(step_idx)
+
+            if step_idx != 4 and not getattr(self, '_is_rendering', False):
+                if hasattr(self, 'progress_container'):
+                    self.progress_container.setVisible(False)
+                if hasattr(self.win, 'timeline_frame'):
+                    self.win.timeline_frame.setVisible(True)
 
             # Switch Viewport domain dynamically
             if hasattr(self.win, 'viewport'):

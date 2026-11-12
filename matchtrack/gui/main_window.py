@@ -444,9 +444,9 @@ class MainWindow(
         left_layout.addWidget(self.viewport, 1)
 
         # Timeline & Playback Controls Frame (One UI Style)
-        timeline_frame = QFrame()
-        timeline_frame.setObjectName("timelineFrame")
-        timeline_frame.setStyleSheet("""
+        self.timeline_frame = QFrame()
+        self.timeline_frame.setObjectName("timelineFrame")
+        self.timeline_frame.setStyleSheet("""
             #timelineFrame {
                 background-color: #12121a;
                 border: 1px solid #20202e;
@@ -454,7 +454,7 @@ class MainWindow(
                 padding: 8px 12px;
             }
         """)
-        timeline_layout = QVBoxLayout(timeline_frame)
+        timeline_layout = QVBoxLayout(self.timeline_frame)
         timeline_layout.setContentsMargins(6, 6, 6, 6)
         timeline_layout.setSpacing(6)
 
@@ -543,7 +543,7 @@ class MainWindow(
         ctrl_row.addWidget(self.lbl_trim_info, 1)
 
         timeline_layout.addLayout(ctrl_row)
-        left_layout.addWidget(timeline_frame)
+        left_layout.addWidget(self.timeline_frame)
 
         splitter.addWidget(left_pane)
 
@@ -551,7 +551,7 @@ class MainWindow(
         # RIGHT PANE: Clean 4-Step Control Panel (Accordion Style)
         # =========================================================================
         self.right_pane = QTabWidget()
-        self.right_pane.setMinimumWidth(380)
+        self.right_pane.setMinimumWidth(400)
         self.right_pane.setDocumentMode(True)
         self.right_pane.setStyleSheet("QTabWidget::pane { border: none; }")
         self.right_pane.tabBar().hide()
@@ -562,6 +562,11 @@ class MainWindow(
         # -------------------------------------------------------------------------
         self._init_stepper_wizard()
         self.right_pane.addTab(self.tab_stepper, "⚡ Autocam")
+
+        # Dock Stepper's Live Process & Stepping Preview Container into the LEFT Pane
+        if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'progress_container'):
+            left_layout.addWidget(self.tab_stepper.progress_container)
+            self.tab_stepper.progress_container.setVisible(False)
 
         # -------------------------------------------------------------------------
         # TAB 1: 🧵 STITCHING (Quellformat, Videos, Sync & Naht-/Farbkalibrierung)
@@ -753,6 +758,9 @@ class MainWindow(
         self.right_pane.addTab(self.tab_cloud, "☁️ 6. Cloud-Upload")
 
         splitter.addWidget(self.right_pane)
+        splitter.setSizes([1200, 480])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
 
         # Install wheel filter on right pane to prevent slider value changes on scrolling
         self._install_scroll_wheel_filter(self.right_pane)
