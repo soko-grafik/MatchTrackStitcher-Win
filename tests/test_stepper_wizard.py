@@ -112,8 +112,16 @@ class TestStepperWizard(unittest.TestCase):
     def test_step5_cloud_upload_controls(self):
         # Initial status
         self.assertFalse(self.wizard.chk_wizard_cloud_upload.isChecked())
+        self.assertFalse(self.wizard.chk_keep_panorama.isChecked())
+        self.assertFalse(self.wizard.chk_upload_panorama_cloud.isChecked())
+        self.assertFalse(self.wizard.chk_upload_panorama_cloud.isEnabled())
         self.wizard.update_summary()
         self.assertEqual(self.wizard.summary_fields["CLOUD"].text(), "⚪ Deaktiviert")
+
+        # Test Keep Panorama Master checkbox
+        self.wizard.chk_keep_panorama.setChecked(True)
+        self.wizard.update_summary()
+        self.assertIn("+32:9", self.wizard.summary_fields["OUTPUT"].text())
 
         # Simulate authenticated state
         self.win.cloud_client.server_url = "https://cloud.matchtrack.de"
@@ -123,13 +131,30 @@ class TestStepperWizard(unittest.TestCase):
         
         self.wizard.update_cloud_ui()
         self.assertIn("CoachTester", self.wizard.lbl_wizard_cloud_status.text())
-        self.assertEqual(self.wizard.btn_wizard_cloud_login.text(), "🔑 Konto")
+        self.assertTrue(self.wizard.btn_goto_cloud.isEnabled())
 
         # Toggle cloud upload checkbox
         self.wizard.chk_wizard_cloud_upload.setChecked(True)
         self.wizard.update_summary()
         self.assertIn("Auto-Upload", self.wizard.summary_fields["CLOUD"].text())
         self.assertTrue(self.win.chk_cloud_auto_upload.isChecked())
+        self.assertTrue(self.wizard.chk_upload_panorama_cloud.isEnabled())
+
+        # Test Upload Panorama to Cloud checkbox
+        self.wizard.chk_upload_panorama_cloud.setChecked(True)
+        self.assertTrue(self.wizard.chk_keep_panorama.isChecked())
+        self.wizard.update_summary()
+        self.assertIn("+Pano", self.wizard.summary_fields["CLOUD"].text())
+
+        # Test Match Name synchronization
+        self.wizard.txt_wizard_match_name.setText("SG Musterstadt vs. FC Test")
+        self.assertEqual(self.win.txt_cloud_match_name.text(), "SG Musterstadt vs. FC Test")
+
+        # Test Category synchronization
+        cat_idx = self.wizard.combo_wizard_cloud_cat.findData("Pokalspiel")
+        if cat_idx >= 0:
+            self.wizard.combo_wizard_cloud_cat.setCurrentIndex(cat_idx)
+            self.assertEqual(self.win.combo_cloud_category.currentData(), "Pokalspiel")
 
         # Test cloud progress display
         self.wizard.on_cloud_upload_progress(5000, 10000, 12.5, 30.0, "Übertrage Teil 1/2")

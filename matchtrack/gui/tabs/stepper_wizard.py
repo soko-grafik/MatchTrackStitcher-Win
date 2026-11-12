@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QScrollArea, QProgressBar, QMessageBox, QGroupBox, QSpinBox
 )
 
-from ..widgets import NoWheelSpinBox, NoWheelDoubleSpinBox, LabeledSliderSpinBox
+from ..widgets import NoWheelSpinBox, NoWheelDoubleSpinBox, LabeledSliderSpinBox, NoWheelComboBox
 from ...field_calibration import FieldMarking
 
 def create_codec_combobox() -> QComboBox:
@@ -1636,46 +1636,111 @@ class StepperWizardWidget(QWidget):
         lbl_mode_desc.setStyleSheet("color: #64748b; font-size: 10px; line-height: 1.4;")
         l_opts.addWidget(lbl_mode_desc)
 
+        self.chk_keep_panorama = QCheckBox("🎞️ 32:9 Panorama-Mastervideo dauerhaft speichern")
+        self.chk_keep_panorama.setChecked(False)
+        self.chk_keep_panorama.setToolTip("Behält das erzeugte 32:9 / 8:3 Panorama-Mastervideo dauerhaft auf der Festplatte (endet auf _master_32x9.mp4).")
+        self.chk_keep_panorama.setStyleSheet("color: #cbd5e1; font-weight: 600; font-size: 12px;")
+        self.chk_keep_panorama.toggled.connect(self._on_keep_panorama_toggled)
+        l_opts.addWidget(self.chk_keep_panorama)
+
         layout.addWidget(grp_opts)
 
-        # 4. MatchTrack Online Cloud Integration Card
-        grp_cloud = QFrame()
-        grp_cloud.setStyleSheet("QFrame { background: #0c0c14; border: 1px solid #1e1e2d; border-radius: 10px; padding: 12px; }")
+        # 4. MatchTrack Online Cloud Integration Card (Exakt wie Cloud-Upload Vorgabe)
+        grp_cloud = QGroupBox("☁️ MatchTrack Online – Cloud-Upload")
+        grp_cloud.setStyleSheet("""
+            QGroupBox {
+                background: #0c0c14;
+                border: 1px solid #1e1e2d;
+                border-radius: 10px;
+                padding: 14px 12px 12px 12px;
+                margin-top: 8px;
+                font-weight: 700;
+                color: #f8fafc;
+                font-size: 12px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 4px;
+            }
+        """)
         gc_layout = QVBoxLayout(grp_cloud)
         gc_layout.setSpacing(8)
 
-        row_c_hdr = QHBoxLayout()
-        self.chk_wizard_cloud_upload = QCheckBox("☁️ In MatchTrack Online Cloud hochladen")
+        self.chk_wizard_cloud_upload = QCheckBox("🚀 Nach dem Rendern automatisch in Cloud hochladen")
         self.chk_wizard_cloud_upload.setChecked(False)
-        self.chk_wizard_cloud_upload.setStyleSheet("color: #f8fafc; font-weight: 700; font-size: 12px;")
+        self.chk_wizard_cloud_upload.setStyleSheet("color: #10b981; font-weight: 700; font-size: 12px;")
         self.chk_wizard_cloud_upload.stateChanged.connect(self._on_cloud_upload_toggled)
-        row_c_hdr.addWidget(self.chk_wizard_cloud_upload, 1)
+        gc_layout.addWidget(self.chk_wizard_cloud_upload)
 
-        self.btn_wizard_cloud_login = QPushButton("🔑 Verbinden")
-        self.btn_wizard_cloud_login.setStyleSheet("background: #1e293b; color: #60a5fa; font-weight: 700; padding: 4px 10px; border-radius: 6px; border: 1px solid #3b82f6; font-size: 11px;")
-        self.btn_wizard_cloud_login.clicked.connect(self._on_cloud_login_clicked)
-        row_c_hdr.addWidget(self.btn_wizard_cloud_login)
-        gc_layout.addLayout(row_c_hdr)
+        self.chk_upload_panorama_cloud = QCheckBox("🎞️ Panorama-Mastervideo ebenfalls in die Cloud hochladen")
+        self.chk_upload_panorama_cloud.setChecked(False)
+        self.chk_upload_panorama_cloud.setEnabled(False)
+        self.chk_upload_panorama_cloud.setStyleSheet("color: #94a3b8; font-size: 11px; margin-left: 20px;")
+        self.chk_upload_panorama_cloud.toggled.connect(self._on_upload_panorama_cloud_toggled)
+        gc_layout.addWidget(self.chk_upload_panorama_cloud)
 
-        self.row_cloud_details = QHBoxLayout()
-        self.row_cloud_details.setSpacing(8)
-        self.lbl_wizard_cloud_status = QLabel("⚪ Nicht angemeldet")
-        self.lbl_wizard_cloud_status.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 600;")
-        self.row_cloud_details.addWidget(self.lbl_wizard_cloud_status, 1)
+        lbl_match = QLabel("Spielname / Begegnung:")
+        lbl_match.setStyleSheet("color: #cbd5e1; font-size: 11px; font-weight: 600;")
+        gc_layout.addWidget(lbl_match)
 
-        lbl_team_title = QLabel("Team:")
-        lbl_team_title.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 700;")
-        self.row_cloud_details.addWidget(lbl_team_title)
+        self.txt_wizard_match_name = QLineEdit()
+        self.txt_wizard_match_name.setPlaceholderText("z.B. SG Musterstadt vs. FC Beispiel")
+        self.txt_wizard_match_name.setStyleSheet(
+            "background-color: #111118; border: 1px solid #282839; border-radius: 8px; padding: 6px 10px; color: #f4f4f6; font-size: 12px;"
+        )
+        self.txt_wizard_match_name.textChanged.connect(self._on_wizard_match_name_changed)
+        gc_layout.addWidget(self.txt_wizard_match_name)
 
-        self.combo_wizard_cloud_team = QComboBox()
+        row_team_cat = QHBoxLayout()
+        row_team_cat.setSpacing(10)
+
+        col_t = QVBoxLayout()
+        lbl_t = QLabel("Mannschaft:")
+        lbl_t.setStyleSheet("color: #cbd5e1; font-size: 11px; font-weight: 600;")
+        col_t.addWidget(lbl_t)
+        self.combo_wizard_cloud_team = NoWheelComboBox()
+        self.combo_wizard_cloud_team.addItem("— Bitte erst verbinden —", "")
         self.combo_wizard_cloud_team.setStyleSheet("""
-            QComboBox { background: #141420; color: #f8fafc; font-weight: 700; font-size: 11px; padding: 4px 8px; border: 1px solid #28283c; border-radius: 6px; }
+            QComboBox { background: #141420; color: #f8fafc; font-weight: 700; font-size: 11px; padding: 5px 8px; border: 1px solid #28283c; border-radius: 6px; }
             QComboBox::drop-down { border: none; }
             QComboBox QAbstractItemView { background-color: #12121c; color: #f8fafc; selection-background-color: #10b981; }
         """)
         self.combo_wizard_cloud_team.currentIndexChanged.connect(self._on_wizard_cloud_team_changed)
-        self.row_cloud_details.addWidget(self.combo_wizard_cloud_team)
-        gc_layout.addLayout(self.row_cloud_details)
+        col_t.addWidget(self.combo_wizard_cloud_team)
+
+        col_c = QVBoxLayout()
+        lbl_c = QLabel("Kategorie:")
+        lbl_c.setStyleSheet("color: #cbd5e1; font-size: 11px; font-weight: 600;")
+        col_c.addWidget(lbl_c)
+        self.combo_wizard_cloud_cat = NoWheelComboBox()
+        for cat_name in ["Punktspiel", "Testspiel", "Pokalspiel", "Turnier", "Training", "Trainingslager"]:
+            self.combo_wizard_cloud_cat.addItem(cat_name, cat_name)
+        self.combo_wizard_cloud_cat.setStyleSheet("""
+            QComboBox { background: #141420; color: #f8fafc; font-weight: 700; font-size: 11px; padding: 5px 8px; border: 1px solid #28283c; border-radius: 6px; }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView { background-color: #12121c; color: #f8fafc; selection-background-color: #10b981; }
+        """)
+        self.combo_wizard_cloud_cat.currentIndexChanged.connect(self._on_wizard_cloud_cat_changed)
+        col_c.addWidget(self.combo_wizard_cloud_cat)
+
+        row_team_cat.addLayout(col_t, 3)
+        row_team_cat.addLayout(col_c, 2)
+        gc_layout.addLayout(row_team_cat)
+
+        row_status = QHBoxLayout()
+        self.lbl_wizard_cloud_status = QLabel("☁️ Status: Nicht angemeldet")
+        self.lbl_wizard_cloud_status.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        row_status.addWidget(self.lbl_wizard_cloud_status, 1)
+
+        self.btn_goto_cloud = QPushButton("☁️ Cloud-Zentrale öffnen ➔")
+        self.btn_goto_cloud.setStyleSheet(
+            "background-color: #1e1e2d; border: 1px solid #3b82f6; font-size: 11px; padding: 5px 10px; border-radius: 6px; color: #60a5fa; font-weight: 600;"
+        )
+        self.btn_goto_cloud.clicked.connect(self._on_goto_cloud_clicked)
+        self.btn_wizard_cloud_login = self.btn_goto_cloud
+        row_status.addWidget(self.btn_goto_cloud)
+        gc_layout.addLayout(row_status)
 
         layout.addWidget(grp_cloud)
 
@@ -1753,6 +1818,10 @@ class StepperWizardWidget(QWidget):
         f, _ = QFileDialog.getSaveFileName(self, "Export-Videodatei speichern", "MatchTrack_Autocam_Broadcast.mp4", "MP4 Videos (*.mp4)")
         if f:
             self.txt_out_path.setText(f)
+            if hasattr(self, 'txt_wizard_match_name') and not self.txt_wizard_match_name.text().strip():
+                clean_name = os.path.splitext(os.path.basename(f))[0]
+                if clean_name and clean_name.lower() not in ("videos", "export", "output", "desktop", "downloads"):
+                    self.txt_wizard_match_name.setText(clean_name)
             self.update_summary()
 
     def _browse_logo(self):
@@ -1800,17 +1869,21 @@ class StepperWizardWidget(QWidget):
         res_w, res_h = self.combo_wizard_res.currentData() or (1920, 1080)
         bitrate = int(self.ctrl_wizard_bitrate.value())
         use_lookahead = self.chk_wizard_lookahead.isChecked() if hasattr(self, 'chk_wizard_lookahead') else False
-        mode_txt = "2-Pass (Lookahead)" if use_lookahead else "1-Pass (Direkt)"
-        self.summary_fields["OUTPUT"].setText(f"{res_w}x{res_h} - {bitrate}M ({mode_txt})")
+        keep_pano = self.chk_keep_panorama.isChecked() if hasattr(self, 'chk_keep_panorama') else False
+        mode_txt = "2-Pass" if use_lookahead else "1-Pass"
+        extra_txt = " (+32:9)" if keep_pano else ""
+        self.summary_fields["OUTPUT"].setText(f"{res_w}x{res_h} - {bitrate}M ({mode_txt}){extra_txt}")
 
         # Cloud upload status in summary
         if hasattr(self, 'chk_wizard_cloud_upload') and "CLOUD" in self.summary_fields:
             if self.chk_wizard_cloud_upload.isChecked():
                 team_txt = self.combo_wizard_cloud_team.currentText()
+                upload_pano = (self.chk_upload_panorama_cloud.isChecked() and self.chk_upload_panorama_cloud.isEnabled()) if hasattr(self, 'chk_upload_panorama_cloud') else False
+                suffix = " (+Pano)" if upload_pano else ""
                 if team_txt and not team_txt.startswith("—"):
-                    self.summary_fields["CLOUD"].setText(f"🟢 {team_txt[:16]}")
+                    self.summary_fields["CLOUD"].setText(f"🟢 {team_txt[:14]}{suffix}")
                 else:
-                    self.summary_fields["CLOUD"].setText("🟢 Auto-Upload")
+                    self.summary_fields["CLOUD"].setText(f"🟢 Auto-Upload{suffix}")
             else:
                 self.summary_fields["CLOUD"].setText("⚪ Deaktiviert")
 
@@ -1853,19 +1926,32 @@ class StepperWizardWidget(QWidget):
         if hasattr(self.win, 'ctrl_bitrate'):
             self.win.ctrl_bitrate.setValue(bitrate)
 
-        # Synchronize Cloud Auto-Upload settings
+        # Synchronize Cloud Auto-Upload settings & Panorama Retention
+        keep_pano = self.chk_keep_panorama.isChecked() if hasattr(self, 'chk_keep_panorama') else False
+        upload_pano_cloud = (self.chk_upload_panorama_cloud.isChecked() and self.chk_upload_panorama_cloud.isEnabled()) if hasattr(self, 'chk_upload_panorama_cloud') else False
+
         if hasattr(self, 'chk_wizard_cloud_upload'):
             auto_cloud = self.chk_wizard_cloud_upload.isChecked()
             if hasattr(self.win, 'chk_cloud_auto_upload'):
                 self.win.chk_cloud_auto_upload.setChecked(auto_cloud)
             if hasattr(self.win, 'txt_cloud_video_16x9'):
                 self.win.txt_cloud_video_16x9.setText(path)
+            if hasattr(self, 'txt_wizard_match_name') and hasattr(self.win, 'txt_cloud_match_name'):
+                m_txt = self.txt_wizard_match_name.text().strip()
+                if m_txt:
+                    self.win.txt_cloud_match_name.setText(m_txt)
             if hasattr(self, 'combo_wizard_cloud_team') and hasattr(self.win, 'combo_cloud_team'):
                 t_data = self.combo_wizard_cloud_team.currentData()
-                if t_data:
+                if t_data is not None:
                     t_idx = self.win.combo_cloud_team.findData(t_data)
                     if t_idx >= 0:
                         self.win.combo_cloud_team.setCurrentIndex(t_idx)
+            if hasattr(self, 'combo_wizard_cloud_cat') and hasattr(self.win, 'combo_cloud_category'):
+                c_data = self.combo_wizard_cloud_cat.currentData()
+                if c_data:
+                    c_idx = self.win.combo_cloud_category.findData(c_data)
+                    if c_idx >= 0:
+                        self.win.combo_cloud_category.setCurrentIndex(c_idx)
 
         start_f = getattr(self, 'trim_start_frame', 0)
         end_f = getattr(self, 'trim_end_frame', None)
@@ -1882,7 +1968,9 @@ class StepperWizardWidget(QWidget):
             mode="16:9_autocam",
             custom_start_frame=start_f,
             custom_end_frame=end_f,
-            use_lookahead=use_lookahead
+            use_lookahead=use_lookahead,
+            keep_32x9=keep_pano,
+            upload_32x9_cloud=upload_pano_cloud
         )
 
     def on_export_started(self):
@@ -1978,7 +2066,10 @@ class StepperWizardWidget(QWidget):
                 self.btn_cancel_render.setEnabled(True)
                 self.btn_cancel_render.setText("✖ Upload abbrechen")
             else:
-                self.lbl_progress_status.setText("🎉 Video-Export erfolgreich abgeschlossen!")
+                msg = "🎉 Video-Export erfolgreich abgeschlossen!"
+                if hasattr(self, 'chk_keep_panorama') and self.chk_keep_panorama.isChecked():
+                    msg += " (32:9 Panorama-Mastervideo ebenfalls gespeichert)"
+                self.lbl_progress_status.setText(msg)
         else:
             if hasattr(self, 'lbl_progress_badge'):
                 self.lbl_progress_badge.setText("● Fehlgeschlagen")
@@ -2002,9 +2093,39 @@ class StepperWizardWidget(QWidget):
         else:
             self.win.cancel_video_export()
 
-    def _on_cloud_login_clicked(self):
-        self.win.open_cloud_login_dialog()
-        self.update_cloud_ui()
+    def _on_keep_panorama_toggled(self, checked: bool):
+        if not checked and hasattr(self, 'chk_upload_panorama_cloud') and self.chk_upload_panorama_cloud.isChecked():
+            self.chk_upload_panorama_cloud.blockSignals(True)
+            self.chk_upload_panorama_cloud.setChecked(False)
+            self.chk_upload_panorama_cloud.blockSignals(False)
+        self.update_summary()
+
+    def _on_upload_panorama_cloud_toggled(self, checked: bool):
+        if checked and hasattr(self, 'chk_keep_panorama') and not self.chk_keep_panorama.isChecked():
+            self.chk_keep_panorama.setChecked(True)
+        self.update_summary()
+
+    def _on_wizard_match_name_changed(self, text: str):
+        if hasattr(self.win, 'txt_cloud_match_name') and self.win.txt_cloud_match_name.text() != text:
+            self.win.txt_cloud_match_name.blockSignals(True)
+            self.win.txt_cloud_match_name.setText(text)
+            self.win.txt_cloud_match_name.blockSignals(False)
+
+    def _on_wizard_cloud_cat_changed(self, idx: int):
+        val = self.combo_wizard_cloud_cat.currentData()
+        if hasattr(self.win, 'combo_cloud_category') and val:
+            c_idx = self.win.combo_cloud_category.findData(val)
+            if c_idx >= 0 and self.win.combo_cloud_category.currentIndex() != c_idx:
+                self.win.combo_cloud_category.blockSignals(True)
+                self.win.combo_cloud_category.setCurrentIndex(c_idx)
+                self.win.combo_cloud_category.blockSignals(False)
+
+    def _on_goto_cloud_clicked(self):
+        if not self.win.cloud_client.is_authenticated:
+            self.win.open_cloud_login_dialog()
+            self.update_cloud_ui()
+        else:
+            self.win.show_workspace("cloud")
 
     def _on_cloud_upload_toggled(self, state: int):
         checked = bool(state)
@@ -2015,6 +2136,10 @@ class StepperWizardWidget(QWidget):
                 self.chk_wizard_cloud_upload.setChecked(False)
                 self.chk_wizard_cloud_upload.blockSignals(False)
                 return
+        if hasattr(self, 'chk_upload_panorama_cloud'):
+            self.chk_upload_panorama_cloud.setEnabled(checked)
+            if not checked:
+                self.chk_upload_panorama_cloud.setChecked(False)
         if hasattr(self.win, 'chk_cloud_auto_upload'):
             self.win.chk_cloud_auto_upload.setChecked(self.chk_wizard_cloud_upload.isChecked())
         self.update_summary()
@@ -2037,15 +2162,25 @@ class StepperWizardWidget(QWidget):
             username = info.get("username") or self.win.cloud_client.username or "Angemeldet"
             role = info.get("role", "TRAINER")
             host = self.win.cloud_client.server_url.replace("https://", "").replace("http://", "")
-            self.lbl_wizard_cloud_status.setText(f"🟢 {username} ({role}) @ {host}")
+            self.lbl_wizard_cloud_status.setText(f"🟢 Verbunden als {username} ({role}) @ {host}")
             self.lbl_wizard_cloud_status.setStyleSheet("color: #34d399; font-size: 11px; font-weight: 700;")
-            self.btn_wizard_cloud_login.setText("🔑 Konto")
         else:
-            self.lbl_wizard_cloud_status.setText("⚪ Nicht angemeldet")
-            self.lbl_wizard_cloud_status.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 600;")
-            self.btn_wizard_cloud_login.setText("🔑 Verbinden")
+            self.lbl_wizard_cloud_status.setText("☁️ Status: Nicht angemeldet")
+            self.lbl_wizard_cloud_status.setStyleSheet("color: #94a3b8; font-size: 11px;")
         self.sync_cloud_teams()
+        self.sync_cloud_category()
         self.update_summary()
+
+    def sync_cloud_category(self):
+        if not hasattr(self, 'combo_wizard_cloud_cat') or not hasattr(self.win, 'combo_cloud_category'):
+            return
+        cur_cat = self.win.combo_cloud_category.currentData()
+        if cur_cat:
+            c_idx = self.combo_wizard_cloud_cat.findData(cur_cat)
+            if c_idx >= 0 and self.combo_wizard_cloud_cat.currentIndex() != c_idx:
+                self.combo_wizard_cloud_cat.blockSignals(True)
+                self.combo_wizard_cloud_cat.setCurrentIndex(c_idx)
+                self.combo_wizard_cloud_cat.blockSignals(False)
 
     def sync_cloud_teams(self):
         if not hasattr(self, 'combo_wizard_cloud_team') or not hasattr(self.win, 'combo_cloud_team'):
@@ -2118,6 +2253,17 @@ class StepperWizardWidget(QWidget):
                         self.set_trim_range(self.win.in_point_frame, self.win.out_point_frame)
                 elif step_idx == 4: # Output
                     self.win.viewport.set_workflow_domain("autocam")
+                    if not self.txt_out_path.text():
+                        sample = getattr(self.win, 'video_path_l', None) or getattr(self.win, 'panorama_path', None)
+                        if sample:
+                            base_dir = os.path.dirname(os.path.abspath(sample))
+                            raw_name = os.path.splitext(os.path.basename(sample))[0]
+                            clean_name = raw_name.replace("_left", "").replace("_links", "").replace("_L", "").strip()
+                            self.txt_out_path.setText(os.path.join(base_dir, f"{clean_name}_Broadcast_16x9.mp4"))
+                            if hasattr(self, 'txt_wizard_match_name') and not self.txt_wizard_match_name.text().strip():
+                                self.txt_wizard_match_name.setText(clean_name)
+                    self.sync_cloud_teams()
+                    self.sync_cloud_category()
                     self.update_summary()
                     if hasattr(self, 'lbl_export_preview') and hasattr(self, 'preview_monitor_high'):
                         pm = self.preview_monitor_high.pixmap()

@@ -4010,7 +4010,9 @@ class MainWindow(
                            mode: Optional[str] = None,
                            custom_start_frame: Optional[int] = None,
                            custom_end_frame: Optional[int] = None,
-                           use_lookahead: Optional[bool] = None):
+                           use_lookahead: Optional[bool] = None,
+                           keep_32x9: Optional[bool] = None,
+                           upload_32x9_cloud: Optional[bool] = None):
         if not self.has_active_video():
             QMessageBox.warning(self, "Export", "Bitte zuerst Videos laden (2 Kameras oder 32:9 Panorama)!")
             return
@@ -4053,6 +4055,18 @@ class MainWindow(
         if use_lookahead is None:
             use_lookahead = self.chk_lookahead.isChecked() if hasattr(self, 'chk_lookahead') else True
 
+        if keep_32x9 is None:
+            if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'chk_keep_panorama'):
+                keep_32x9 = self.tab_stepper.chk_keep_panorama.isChecked()
+            else:
+                keep_32x9 = False
+
+        if upload_32x9_cloud is None:
+            if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'chk_upload_panorama_cloud'):
+                upload_32x9_cloud = self.tab_stepper.chk_upload_panorama_cloud.isChecked()
+            else:
+                upload_32x9_cloud = False
+
         total_avail = self.engine.get_max_duration_frames()
         if custom_start_frame is not None and custom_end_frame is not None:
             start_frame = max(0, custom_start_frame)
@@ -4084,7 +4098,9 @@ class MainWindow(
             end_frame=end_frame, 
             audio_source=audio_src,
             use_lookahead=use_lookahead,
-            wide_angle_rectifier=self.wide_angle_rectifier
+            wide_angle_rectifier=self.wide_angle_rectifier,
+            keep_32x9=keep_32x9,
+            upload_32x9_cloud=upload_32x9_cloud
         )
         self.render_worker.progress_signal.connect(self.on_render_progress)
         self.render_worker.finished_signal.connect(self.on_render_finished)
@@ -4110,15 +4126,20 @@ class MainWindow(
             logger.info("Video-Export erfolgreich beendet.")
             r_16x9 = getattr(self.render_worker, 'rendered_16x9_path', None)
             r_32x9 = getattr(self.render_worker, 'rendered_32x9_path', None)
+            upload_32x9 = getattr(self.render_worker, 'upload_32x9_cloud', False)
             if r_16x9 and hasattr(self, 'txt_cloud_video_16x9'):
                 self.txt_cloud_video_16x9.setText(r_16x9)
             if r_32x9 and hasattr(self, 'txt_cloud_video_pano'):
                 self.txt_cloud_video_pano.setText(r_32x9)
             if hasattr(self, 'chk_cloud_auto_upload') and self.chk_cloud_auto_upload.isChecked():
                 logger.info("Starte automatischen Cloud-Upload zu MatchTrack Online nach erfolgreichem Rendering...")
-                self._start_cloud_upload(video_16x9_path=r_16x9, video_32x9_path=r_32x9)
+                target_32x9 = r_32x9 if upload_32x9 else None
+                self._start_cloud_upload(video_16x9_path=r_16x9, video_32x9_path=target_32x9)
             else:
-                QMessageBox.information(self, "Export fertig", message)
+                extra_msg = ""
+                if r_32x9 and getattr(self.render_worker, 'keep_32x9', False):
+                    extra_msg = f"\n\n32:9 Panorama-Master wurde ebenfalls gespeichert:\n{r_32x9}"
+                QMessageBox.information(self, "Export fertig", f"{message}{extra_msg}")
         else:
             self.lbl_render_stats.setText("Export abgebrochen / Fehler aufgetreten (siehe Log).")
             logger.warning(f"Video-Export nicht erfolgreich: {message}")
@@ -4182,6 +4203,8 @@ class MainWindow(
     def _init_stepper_wizard(self):
         from .tabs.stepper_wizard import StepperWizardWidget
         self.tab_stepper = StepperWizardWidget(self)
+        if hasattr(self, 'cloud_client'):
+            self.tab_stepper.update_cloud_ui()
         if hasattr(self, 'viewport'):
             if hasattr(self.viewport, 'field_marking_changed'):
                 self.viewport.field_marking_changed.connect(self._on_field_marking_changed)
@@ -4225,8 +4248,8 @@ class MainWindow(
     def open_pre_stitched_panorama(self):
         return self.open_panorama_video()
 
-    def start_export(self, custom_out_path=None, custom_w=None, custom_h=None, mode=None, custom_start_frame=None, custom_end_frame=None, use_lookahead=None):
-        return self.start_video_export(custom_out_path, custom_w, custom_h, mode, custom_start_frame, custom_end_frame, use_lookahead)
+    def start_export(self, custom_out_path=None, custom_w=None, custom_h=None, mode=None, custom_start_frame=None, custom_end_frame=None, use_lookahead=None, keep_32x9=None, upload_32x9_cloud=None):
+        return self.start_video_export(custom_out_path, custom_w, custom_h, mode, custom_start_frame, custom_end_frame, use_lookahead, keep_32x9=keep_32x9, upload_32x9_cloud=upload_32x9_cloud)
 
 
 def launch_gui():

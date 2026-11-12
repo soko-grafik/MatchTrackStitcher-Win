@@ -249,8 +249,10 @@ class CloudIntegrationMixin:
                 return
 
         sample_file = video_16x9_path or video_32x9_path
-        match_name = self._suggest_default_match_name(sample_file)
-        self.txt_cloud_match_name.setText(match_name)
+        match_name = self.txt_cloud_match_name.text().strip()
+        if not match_name:
+            match_name = self._suggest_default_match_name(sample_file)
+            self.txt_cloud_match_name.setText(match_name)
 
         team_id = self.combo_cloud_team.currentData() or None
         user_role = str(self.cloud_client.user_info.get("role", "")).upper()

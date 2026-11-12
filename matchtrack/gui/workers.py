@@ -39,7 +39,9 @@ class RenderWorker(QThread):
                  wide_angle_rectifier: Optional[Any] = None,
                  crop_rect: Optional[Tuple[float, float, float, float]] = None,
                  stretch_x: float = 1.0,
-                 stretch_y: float = 1.0):
+                 stretch_y: float = 1.0,
+                 keep_32x9: bool = False,
+                 upload_32x9_cloud: bool = False):
         super().__init__()
         self.engine = engine
         self.out_path = out_path
@@ -56,6 +58,8 @@ class RenderWorker(QThread):
         self.crop_rect = crop_rect
         self.stretch_x = stretch_x
         self.stretch_y = stretch_y
+        self.keep_32x9 = keep_32x9
+        self.upload_32x9_cloud = upload_32x9_cloud
         self.rendered_16x9_path: Optional[str] = None
         self.rendered_32x9_path: Optional[str] = None
 
@@ -190,9 +194,15 @@ class RenderWorker(QThread):
                     preview_callback=preview_callback
                 )
             elif self.mode == "16:9_autocam":
+                base, ext = os.path.splitext(self.out_path)
+                tag = "8x3" if (hasattr(self.engine, 'is_4_3_mode') and self.engine.is_4_3_mode()) else "32x9"
+                pano_master_path = f"{base}_master_{tag}{ext}"
                 self.rendered_16x9_path = self.out_path
+                should_keep_32x9 = bool(self.keep_32x9 or self.upload_32x9_cloud)
+                self.rendered_32x9_path = pano_master_path if should_keep_32x9 else None
                 success = self.engine.render_two_stage_broadcast(
                     output_16x9_filepath=self.out_path,
+                    output_32x9_filepath=pano_master_path,
                     out_16x9_width=self.width,
                     out_16x9_height=self.height,
                     codec=self.codec,
@@ -201,7 +211,7 @@ class RenderWorker(QThread):
                     end_frame=self.end_frame,
                     audio_source=self.audio_source,
                     use_lookahead=self.use_lookahead,
-                    keep_32x9=False,
+                    keep_32x9=should_keep_32x9,
                     progress_callback=callback,
                     preview_callback=preview_callback
                 )
