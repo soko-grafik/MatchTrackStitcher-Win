@@ -227,20 +227,16 @@ class MainWindow(
         self.btn_nav_wizard = QPushButton("⚡ Autocam Assistent")
         self.btn_nav_home = QPushButton("🏠 Zentrale")
         self.btn_nav_stitch = QPushButton("🧵 Stitching")
-        self.btn_nav_wide = QPushButton("📐 Weitwinkel")
-        self.btn_nav_export = QPushButton("🚀 Export")
         self.btn_nav_live = QPushButton("🔴 Live-Stream")
         self.btn_nav_cloud = QPushButton("☁️ Cloud-Upload")
 
         self.btn_nav_wizard.clicked.connect(lambda: self.show_workspace(0))
         self.btn_nav_home.clicked.connect(self.show_landing_page)
         self.btn_nav_stitch.clicked.connect(lambda: self.show_workspace(1))
-        self.btn_nav_wide.clicked.connect(lambda: self.show_workspace(2))
-        self.btn_nav_export.clicked.connect(lambda: self.show_workspace(3))
-        self.btn_nav_live.clicked.connect(lambda: self.show_workspace(4))
-        self.btn_nav_cloud.clicked.connect(lambda: self.show_workspace(5))
+        self.btn_nav_live.clicked.connect(lambda: self.show_workspace(2))
+        self.btn_nav_cloud.clicked.connect(lambda: self.show_workspace(3))
 
-        for btn in [self.btn_nav_wizard, self.btn_nav_home, self.btn_nav_stitch, self.btn_nav_wide, self.btn_nav_export, self.btn_nav_live, self.btn_nav_cloud]:
+        for btn in [self.btn_nav_wizard, self.btn_nav_home, self.btn_nav_stitch, self.btn_nav_live, self.btn_nav_cloud]:
             btn.setStyleSheet("background-color: transparent; border: none; border-radius: 6px; font-weight: 700; font-size: 11px; padding: 5px 12px; color: #94a3b8;")
             nav_layout.addWidget(btn)
 
@@ -256,8 +252,6 @@ class MainWindow(
         QShortcut(QKeySequence("Ctrl+2"), self, lambda: self.show_workspace(1))
         QShortcut(QKeySequence("Ctrl+3"), self, lambda: self.show_workspace(2))
         QShortcut(QKeySequence("Ctrl+4"), self, lambda: self.show_workspace(3))
-        QShortcut(QKeySequence("Ctrl+5"), self, lambda: self.show_workspace(4))
-        QShortcut(QKeySequence("Ctrl+6"), self, lambda: self.show_workspace(5))
 
         # Profile / Settings Management Buttons
         self.btn_load_prof_tb = QPushButton("📁 Profil")
@@ -574,18 +568,14 @@ class MainWindow(
         self._init_stitching_tab()
         self.right_pane.addTab(self.tab_stitching, "🧵 1. Stitching")
 
-        # -------------------------------------------------------------------------
-        # TAB 2: 📐 Weitwinkel-Studio & 4-Punkt Spielfeld-Trapez
-        # -------------------------------------------------------------------------
+        # TAB: 📐 Weitwinkel-Studio (Optionales Backend im Hintergrund initialisiert, nicht mehr im Hauptmenü)
         self._init_wide_angle_tab()
-        self.right_pane.addTab(self.tab_wide_angle, "📐 2. Weitwinkel")
 
-        # TAB 3: 🎯 KI-Broadcast & Follow-Cam (Legacy-Modus - durch Autocam 5-Schritte ersetzt)
+        # TAB: 🎯 KI-Broadcast & Follow-Cam (Legacy-Modus - durch Autocam 5-Schritte ersetzt)
         self._init_autocam_tab()
-        # Hinweis: self.tab_autocam wird nicht mehr zu right_pane hinzugefügt, da durch Autocam 5-Schritte Assistent ersetzt.
 
         # -------------------------------------------------------------------------
-        # TAB 3: 🚀 Export (Samsung One UI Style)
+        # TAB: 🚀 Legacy Export (Backend initialisiert, durch Autocam Step 5 Output ersetzt)
         # -------------------------------------------------------------------------
         self.tab_export = QWidget()
         layout_tab_exp = QVBoxLayout(self.tab_export)
@@ -743,19 +733,17 @@ class MainWindow(
         scroll_exp.setWidget(widget_exp)
         layout_tab_exp.addWidget(scroll_exp)
 
-        self.right_pane.addTab(self.tab_export, "🚀 4. Export")
-
         # -------------------------------------------------------------------------
-        # TAB 5: OBS-STYLE RTMP LIVE-STREAMING & CAMERA DIRECT CONNECT
+        # TAB 2: OBS-STYLE RTMP LIVE-STREAMING & CAMERA DIRECT CONNECT
         # -------------------------------------------------------------------------
         self._init_livestream_tab()
-        self.right_pane.addTab(self.tab_livestream, "🔴 5. Live-Stream")
+        self.right_pane.addTab(self.tab_livestream, "🔴 2. Live-Stream")
 
         # -------------------------------------------------------------------------
-        # TAB 6: MATCHTRACK ONLINE CLOUD-UPLOAD
+        # TAB 3: MATCHTRACK ONLINE CLOUD-UPLOAD
         # -------------------------------------------------------------------------
         self._init_cloud_tab()
-        self.right_pane.addTab(self.tab_cloud, "☁️ 6. Cloud-Upload")
+        self.right_pane.addTab(self.tab_cloud, "☁️ 3. Cloud-Upload")
 
         splitter.addWidget(self.right_pane)
         splitter.setSizes([1200, 480])
@@ -1803,11 +1791,12 @@ class MainWindow(
         tab_map = {
             "wizard": 0, 0: 0,
             "stitch": 1, 1: 1,
-            "wide": 2, 2: 2,
-            "ai": 0,      # Legacy 'ai' tab now maps directly to Autocam 5-Schritte Assistent (Tab 0)
-            "export": 3, 3: 3,
-            "live": 4, 4: 4,
-            "cloud": 5, 5: 5,
+            "live": 2, 2: 2,
+            "cloud": 3, 3: 3,
+            # Legacy fallbacks:
+            "export": 0,
+            "ai": 0,
+            "wide": 1,
         }
         tab_idx = tab_map.get(tab_identifier, 0)
         if hasattr(self, 'main_stack'):
@@ -1825,31 +1814,15 @@ class MainWindow(
         tab_key_map = {
             0: "wizard",
             1: "stitch",
-            2: "wide",
-            3: "export",
-            4: "live",
-            5: "cloud",
+            2: "live",
+            3: "cloud",
         }
         self._update_nav_highlight(tab_key_map.get(index, "wizard"))
 
         if index == 0:  # Autocam Assistent
             if hasattr(self, 'tab_stepper'):
                 self.tab_stepper.go_to_step(self.tab_stepper.current_step)
-        elif index == 2:  # Weitwinkel tab
-            if hasattr(self, 'viewport'):
-                self.viewport.set_wide_angle_edit_mode(True)
-            if hasattr(self, 'combo_view_mode'):
-                cur_vm = self.combo_view_mode.currentData()
-                if cur_vm not in ("wide_angle", "wide_angle_raw"):
-                    self.set_view_mode_by_id("wide_angle")
-                self.refresh_preview()
-        else:
-            if hasattr(self, 'combo_view_mode'):
-                cur_vm = self.combo_view_mode.currentData()
-                if cur_vm not in ("wide_angle", "wide_angle_raw") and hasattr(self, 'viewport'):
-                    self.viewport.set_wide_angle_edit_mode(False)
-
-        if index == 4:  # Live-Stream tab (now at index 4)
+        elif index == 2:  # Live-Stream tab
             if hasattr(self, 'combo_view_mode') and self.combo_view_mode.findData("grid") >= 0:
                 self.set_view_mode_by_id("grid")
             if hasattr(self, 'live_capture_manager') and not self.live_capture_manager.is_running:
@@ -1864,8 +1837,6 @@ class MainWindow(
             "wizard": getattr(self, "btn_nav_wizard", None),
             "home": getattr(self, "btn_nav_home", None),
             "stitch": getattr(self, "btn_nav_stitch", None),
-            "wide": getattr(self, "btn_nav_wide", None),
-            "export": getattr(self, "btn_nav_export", None),
             "live": getattr(self, "btn_nav_live", None),
             "cloud": getattr(self, "btn_nav_cloud", None),
         }

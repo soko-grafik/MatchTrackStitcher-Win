@@ -180,78 +180,6 @@ def build_landing_page(win) -> QWidget:
     card1_layout.addStretch()
     grid.addWidget(card1, 0, 0)
 
-    # ------------------ CARD 5: Weitwinkel & Einzelkamera-Entzerrung ------------------
-    card5 = QFrame()
-    card5.setStyleSheet(card_style_base)
-    card5_layout = QVBoxLayout(card5)
-    card5_layout.setSpacing(10)
-
-    c5_head = QHBoxLayout()
-    lbl_c5_icon = QLabel("📐")
-    lbl_c5_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
-    c5_title_box = QVBoxLayout()
-    lbl_c5_title = QLabel("2. Weitwinkel & Spielfeld-Trapez")
-    lbl_c5_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
-    lbl_c5_sub = QLabel("DJI Action 4 (155° Ultrawide) • Begradigung • 4-Punkt Kalibrierung")
-    lbl_c5_sub.setStyleSheet("font-size: 11px; color: #38bdf8; font-weight: 600; border: none; background: transparent;")
-    c5_title_box.addWidget(lbl_c5_title)
-    c5_title_box.addWidget(lbl_c5_sub)
-    c5_head.addWidget(lbl_c5_icon)
-    c5_head.addLayout(c5_title_box, 1)
-    card5_layout.addLayout(c5_head)
-
-    lbl_c5_desc = QLabel(
-        "Begradigt stark gekrümmte Ultra-Weitwinkel-Aufnahmen (155° Fisheye der DJI Action 4 auf einem 4m-Stativ) "
-        "und passt das Video per 4-Punkt Ecken-Markierung so an, dass die Spielfeldlinien ein exaktes Trapez oder Rechteck bilden."
-    )
-    lbl_c5_desc.setWordWrap(True)
-    lbl_c5_desc.setStyleSheet("font-size: 12px; color: #94a3b8; border: none; background: transparent;")
-    card5_layout.addWidget(lbl_c5_desc)
-
-    lbl_c5_pick = QLabel("🎥 Einzelkamera-Video wählen & direkt starten:")
-    lbl_c5_pick.setStyleSheet("font-size: 11px; font-weight: 700; color: #cbd5e1; margin-top: 4px; border: none; background: transparent;")
-    card5_layout.addWidget(lbl_c5_pick)
-
-    row_c5_btns = QHBoxLayout()
-    btn_open_wa = QPushButton("🎥 155° Video öffnen")
-    btn_open_wa.setStyleSheet("""
-        QPushButton {
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #0284c7, stop:1 #0369a1);
-            color: #ffffff;
-            font-weight: 800;
-            font-size: 11px;
-            padding: 10px 8px;
-            border-radius: 9px;
-            border: none;
-            text-align: center;
-        }
-        QPushButton:hover { background: #0ea5e9; }
-    """)
-    btn_open_wa.clicked.connect(lambda: win.open_wide_angle_video())
-
-    btn_wa_action = QPushButton("📐 Weitwinkel-Studio ➔")
-    btn_wa_action.setStyleSheet("""
-        QPushButton {
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #2563eb, stop:1 #1d4ed8);
-            color: #ffffff;
-            font-weight: 800;
-            font-size: 11px;
-            padding: 10px 8px;
-            border-radius: 9px;
-            border: none;
-            text-align: center;
-        }
-        QPushButton:hover { background: #3b82f6; }
-    """)
-    btn_wa_action.clicked.connect(lambda: win.show_workspace("wide"))
-
-    row_c5_btns.addWidget(btn_open_wa)
-    row_c5_btns.addWidget(btn_wa_action)
-    card5_layout.addLayout(row_c5_btns)
-
-    card5_layout.addStretch()
-    grid.addWidget(card5, 0, 1)
-
     # ------------------ CARD 2: Autocam 5-Schritte Follow-Cam ------------------
     card2 = QFrame()
     card2.setStyleSheet(card_style_base)
@@ -262,7 +190,7 @@ def build_landing_page(win) -> QWidget:
     lbl_c2_icon = QLabel("⚡")
     lbl_c2_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
     c2_title_box = QVBoxLayout()
-    lbl_c2_title = QLabel("3. Autocam 5-Schritte Follow-Cam")
+    lbl_c2_title = QLabel("2. Autocam 5-Schritte Follow-Cam")
     lbl_c2_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
     lbl_c2_sub = QLabel("Once Autocam Workflow • Dual-Preview & KI-Tracking")
     lbl_c2_sub.setStyleSheet("font-size: 11px; color: #10b981; font-weight: 600; border: none; background: transparent;")
@@ -329,7 +257,7 @@ def build_landing_page(win) -> QWidget:
     row_c2_btns.addWidget(btn_c2_action)
     card2_layout.addLayout(row_c2_btns)
 
-    grid.addWidget(card2, 1, 0)
+    grid.addWidget(card2, 0, 1)
 
     # ------------------ CARD 3: Live-Streaming ------------------
     card3 = QFrame()
@@ -341,7 +269,7 @@ def build_landing_page(win) -> QWidget:
     lbl_c3_icon = QLabel("🔴")
     lbl_c3_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
     c3_title_box = QVBoxLayout()
-    lbl_c3_title = QLabel("4. Live-Streaming Studio")
+    lbl_c3_title = QLabel("3. Live-Streaming Studio")
     lbl_c3_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
     lbl_c3_sub = QLabel("OBS-Style RTMP Multi-Stream • Ohne Mimo App")
     lbl_c3_sub.setStyleSheet("font-size: 11px; color: #f43f5e; font-weight: 600; border: none; background: transparent;")
@@ -385,7 +313,7 @@ def build_landing_page(win) -> QWidget:
     btn_c3_action.clicked.connect(lambda: win.show_workspace("live"))
     card3_layout.addWidget(btn_c3_action)
 
-    grid.addWidget(card3, 1, 1)
+    grid.addWidget(card3, 1, 0)
 
     # ------------------ CARD 4: Cloud-Upload ------------------
     card4 = QFrame()
@@ -397,7 +325,7 @@ def build_landing_page(win) -> QWidget:
     lbl_c4_icon = QLabel("☁️")
     lbl_c4_icon.setStyleSheet("font-size: 26px; border: none; background: transparent;")
     c4_title_box = QVBoxLayout()
-    lbl_c4_title = QLabel("5. MatchTrack Cloud-Upload")
+    lbl_c4_title = QLabel("4. MatchTrack Cloud-Upload")
     lbl_c4_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc; border: none; background: transparent;")
     lbl_c4_sub = QLabel("Fertige Videos hochladen & Matches verwalten")
     lbl_c4_sub.setStyleSheet("font-size: 11px; color: #34d399; font-weight: 600; border: none; background: transparent;")
@@ -440,9 +368,8 @@ def build_landing_page(win) -> QWidget:
     """)
     btn_c4_action.clicked.connect(lambda: win.show_workspace("cloud"))
     card4_layout.addWidget(btn_c4_action)
-    card4_layout.addWidget(btn_c4_action)
 
-    grid.addWidget(card4, 2, 0, 1, 2)
+    grid.addWidget(card4, 1, 1)
 
     layout_main.addLayout(grid)
 
