@@ -53,17 +53,20 @@ class ScrollAreaWheelFilter(QObject):
     instead of altering input values.
     """
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.Wheel:
-            if isinstance(obj, (QSlider, QAbstractSpinBox, QComboBox)):
-                parent = obj.parentWidget()
-                while parent is not None:
-                    if isinstance(parent, QScrollArea):
-                        QApplication.sendEvent(parent.viewport(), event)
-                        return True
-                    parent = parent.parentWidget()
-                event.ignore()
-                return True
-        return False
+        try:
+            if event is not None and event.type() == QEvent.Type.Wheel:
+                if isinstance(obj, (QSlider, QAbstractSpinBox, QComboBox)):
+                    parent = obj.parentWidget()
+                    while parent is not None:
+                        if isinstance(parent, QScrollArea):
+                            QApplication.sendEvent(parent.viewport(), event)
+                            return True
+                        parent = parent.parentWidget()
+                    event.ignore()
+                    return True
+            return super().eventFilter(obj, event) if hasattr(super(), "eventFilter") else False
+        except Exception:
+            return False
 
 
 class LabeledSliderSpinBox(QWidget):

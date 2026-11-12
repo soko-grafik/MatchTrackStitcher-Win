@@ -174,6 +174,33 @@ class TestStepperWizard(unittest.TestCase):
         self.assertEqual(self.wizard.lbl_progress_pct.text(), "100%")
         self.assertIn("Fertig", self.wizard.lbl_progress_badge.text())
 
+    def test_viewport_paint_all_view_modes_including_8x3(self):
+        """Verifies paintEvent does not crash on 8:3 tactical panorama or any other view mode."""
+        from PySide6.QtGui import QImage, QColor, QPainter, QPixmap
+        viewport = self.win.viewport
+
+        test_img = QImage(2880, 1080, QImage.Format_RGB888)
+        test_img.fill(QColor(30, 41, 59))
+        viewport.current_qimage = test_img
+        viewport.resize(960, 540)
+
+        modes = [
+            "8:3", "32:9", "grid", "cam1", "cam2",
+            "wide_angle", "wide_angle_raw", "21:10", "16:9_tactical", "16:9", "custom"
+        ]
+        domains = ["stitching", "field_marking", "framing", "autocam", "livestream", "wide_angle"]
+
+        pixmap = QPixmap(960, 540)
+        for mode in modes:
+            for domain in domains:
+                viewport.view_mode = mode
+                viewport.set_workflow_domain(domain)
+                painter = QPainter(pixmap)
+                try:
+                    viewport._render_viewport(painter)
+                finally:
+                    painter.end()
+
 
 if __name__ == "__main__":
     unittest.main()

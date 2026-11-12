@@ -597,6 +597,8 @@ class InteractivePanoramaViewport(QWidget):
         painter = QPainter(self)
         try:
             self._render_viewport(painter)
+        except Exception as e:
+            logger.error(f"Fehler in VideoViewport.paintEvent: {e}", exc_info=True)
         finally:
             painter.end()
 
@@ -1276,8 +1278,12 @@ class InteractivePanoramaViewport(QWidget):
         painter.setPen(QColor(220, 220, 220, 220))
         painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
         is_8x3 = (self.view_mode == "8:3") or (self.current_qimage and abs(self.current_qimage.width() / max(1, self.current_qimage.height()) - (8.0 / 3.0)) < 0.25)
+        mode_str = "🌟 8:3 Taktik-Panorama" if is_8x3 else "🌟 32:9 Taktik-Panorama"
+        hud_text = f"{mode_str} ({iw}x{ih}) | 🎬 TV-Zoom: {self.dynamic_zoom:.2f}x | Viewport: {int(self.zoom_level*100)}%"
+
         if self.view_mode == "8:3":
             mode_str = "🌟 8:3 Taktik-Panorama"
+            hud_text = f"{mode_str} ({iw}x{ih}) | 🎬 TV-Zoom: {self.dynamic_zoom:.2f}x | Viewport: {int(self.zoom_level*100)}%"
         elif self.view_mode == "grid":
             mode_str = "🔲 4-Kanal Multiview Grid (1, 2, 3, 4)"
             hud_text = f"{mode_str} | Klick auf Quadrant [1-4] zum Vergrößern | Doppelklick: Zurück zum Grid"
@@ -1305,6 +1311,14 @@ class InteractivePanoramaViewport(QWidget):
         else:
             mode_str = "🎥 16:9 Auto-Broadcast"
             hud_text = f"{mode_str} ({iw}x{ih}) | 🎬 TV-Zoom: {self.dynamic_zoom:.2f}x | Viewport: {int(self.zoom_level*100)}%"
+
+        if self.workflow_domain == "field_marking":
+            pts_count = len(self.field_marking.points) if hasattr(self, "field_marking") and self.field_marking else 0
+            hud_text = f"🎯 Autocam Spielfeld-Kalibrierung ({pts_count}/10 Punkte gesetzt) | {iw}x{ih}"
+        elif self.workflow_domain == "framing":
+            widest_z = getattr(self, "framing_widest_zoom", 1.0)
+            tightest_z = getattr(self, "framing_tightest_zoom", 1.7)
+            hud_text = f"🎦 Autocam Framing & Zoom ({iw}x{ih}) | Widest: {widest_z:.2f}x | Tightest: {tightest_z:.2f}x"
         painter.drawText(14, 24 if (not self.pick_center_mode and not self.corner_pin_mode and not self.pitch_roi_mode and self.view_mode != "16:9_tactical") else 48, hud_text)
 
     def _render_wide_angle_overlay(self, painter: QPainter, target_rect: QRectF):

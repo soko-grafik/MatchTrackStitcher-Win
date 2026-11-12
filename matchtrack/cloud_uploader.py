@@ -310,7 +310,7 @@ class MatchTrackOnlineClient:
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
         self.session.headers.update({
-            "User-Agent": "MatchTrack-Stitcher-Windows/1.5.5"
+            "User-Agent": "MatchTrack-Stitcher-Windows/1.5.6"
         })
 
     @property

@@ -491,7 +491,11 @@ class StepperWizardWidget(QWidget):
             self.win.apply_action4_4x3_rocksteady_preset()
 
     def _prepare_stitching(self):
-        self.win.run_auto_stitch_calibration()
+        try:
+            self.win.run_auto_stitch_calibration()
+        except Exception as e:
+            logger.error(f"Fehler bei prepare stitching: {e}", exc_info=True)
+            QMessageBox.critical(self, "Stitching Vorbereitung", f"Fehler bei der Vorbereitung: {e}")
 
     # =========================================================================
     # STEP 3: FIELD MARKING (10-Point Sideline Model)
