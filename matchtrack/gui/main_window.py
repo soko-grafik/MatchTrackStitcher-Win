@@ -1353,7 +1353,41 @@ class MainWindow(
             if hasattr(self, 'ctrl_bottom_taper_y') and "bottom_taper_y" in d:
                 self.ctrl_bottom_taper_y.setValue(d["bottom_taper_y"])
 
+            # Ensure optimal field coverage (protect bottom pitch corners & full sidelines)
+            cam = getattr(self.rig, 'left_camera', None)
+            cam_w = getattr(cam, 'image_width', 1920)
+            cam_h = getattr(cam, 'image_height', 1080)
+            if cam_w / max(1, cam_h) >= 1.55:
+                if hasattr(self, 'ctrl_squeeze') and self.ctrl_squeeze.value() > 0.60:
+                    self.ctrl_squeeze.setValue(0.52)
+                    self.rig.horizontal_squeeze = 0.52
+                if hasattr(self, 'ctrl_v_offset') and self.ctrl_v_offset.value() > -0.05:
+                    self.ctrl_v_offset.setValue(-0.12)
+                    self.rig.vertical_crop_offset = -0.12
+                if hasattr(self, 'ctrl_pano_hfov') and self.ctrl_pano_hfov.value() < 145.0:
+                    self.ctrl_pano_hfov.setValue(146.0)
+                    self.rig.pano_hfov = 146.0
+
+            # Automatic Color & Exposure Matching across left and right cameras
+            self.rig.auto_color_match = True
+            self.rig.color_match_strength = 1.0
+            if hasattr(self, 'chk_auto_color_match'):
+                self.chk_auto_color_match.setChecked(True)
+
             self.engine.invalidate_luts()
+            luts_updated = self.engine.update_luts(2560, 720)
+
+            # Calibrate color matcher with current frames
+            calib_fl = frames_l[len(frames_l)//2] if (use_multi_frame and frames_l) else (fl if 'fl' in locals() else None)
+            calib_fr = frames_r[len(frames_r)//2] if (use_multi_frame and frames_r) else (fr if 'fr' in locals() else None)
+            color_info = ""
+            if calib_fl is not None and calib_fr is not None:
+                color_res = self.engine.color_matcher.calibrate(calib_fl, calib_fr, luts_updated)
+                if color_res.get("success"):
+                    gl = color_res.get("gain_l", [1.0, 1.0, 1.0])
+                    gr = color_res.get("gain_r", [1.0, 1.0, 1.0])
+                    color_info = f"\n\nFarb- & Belichtungsabgleich:\n• Kameras L ↔ R automatisch harmonisiert\n• Gains: L=[{gl[0]:.2f}, {gl[1]:.2f}, {gl[2]:.2f}], R=[{gr[0]:.2f}, {gr[1]:.2f}, {gr[2]:.2f}]"
+
             if self.rig.smart_seam_enabled:
                 curr_l = self.engine.video_left.get_frame(self.current_frame_idx) if self.engine.video_left else None
                 curr_r = self.engine.video_right.get_frame(max(0, self.current_frame_idx - self.engine.frame_offset_right)) if self.engine.video_right else None
@@ -1363,9 +1397,9 @@ class MainWindow(
 
             self.status_bar.showMessage(
                 f"KI-Kalibrierung fertig! {result.num_matches} Matches | "
-                f"Nahtfehler: {result.initial_error_px:.1f}px ➔ {result.optimized_error_px:.2f}px ({result.improvement_pct:.1f}% verbessert)"
+                f"Nahtfehler: {result.initial_error_px:.1f}px ➔ {result.optimized_error_px:.2f}px ({result.improvement_pct:.1f}% verbessert) | Farbabgleich aktiv"
             )
-            QMessageBox.information(self, "KI-Nahtstellen-Kalibrierung", result.message)
+            QMessageBox.information(self, "KI-Nahtstellen-Kalibrierung", result.message + color_info)
 
         except Exception as e:
             self.status_bar.showMessage(f"Fehler bei KI-Kalibrierung: {e}")
@@ -2345,7 +2379,7 @@ class MainWindow(
         self.rig.global_pitch_correction = 2.0
         self.rig.global_roll_correction = 0.0
         self.rig.global_yaw_center = 0.0
-        self.rig.pano_hfov = 148.0
+        self.rig.pano_hfov = 154.0
         self.rig.projection_type = "cylindrical"
         self.rig.field_curvature_correction = 0.0
         self.rig.blend_width_deg = 3.5
@@ -2355,8 +2389,8 @@ class MainWindow(
         self.rig.smart_seam_enabled = False
         self.rig.auto_color_match = True
         self.rig.color_match_strength = 1.0
-        self.rig.vertical_crop_offset = 0.0
-        self.rig.horizontal_squeeze = 0.85
+        self.rig.vertical_crop_offset = -0.12
+        self.rig.horizontal_squeeze = 0.52
         self.rig.auto_crop_lir = True
         self.rig.lir_safety_margin = 0.005
 
@@ -2377,9 +2411,9 @@ class MainWindow(
         self.ctrl_right_roll.setValue(0.0)
         self.ctrl_global_pitch.setValue(2.0)
         self.ctrl_h_offset.setValue(0.0)
-        self.ctrl_pano_hfov.setValue(148.0)
-        self.ctrl_v_offset.setValue(0.0)
-        self.ctrl_squeeze.setValue(0.85)
+        self.ctrl_pano_hfov.setValue(154.0)
+        self.ctrl_v_offset.setValue(-0.12)
+        self.ctrl_squeeze.setValue(0.52)
         self.ctrl_blend_width.setValue(3.5)
         self.ctrl_cam_fov.setValue(92.0)
         self.ctrl_safety_margin.setValue(0.5)
@@ -2430,7 +2464,7 @@ class MainWindow(
         self.rig.global_pitch_correction = 2.0
         self.rig.global_roll_correction = 0.0
         self.rig.global_yaw_center = 0.0
-        self.rig.pano_hfov = 142.0
+        self.rig.pano_hfov = 146.0
         self.rig.projection_type = "cylindrical"
         self.rig.field_curvature_correction = 0.0
         self.rig.blend_width_deg = 3.5
@@ -2440,8 +2474,8 @@ class MainWindow(
         self.rig.smart_seam_enabled = False
         self.rig.auto_color_match = True
         self.rig.color_match_strength = 1.0
-        self.rig.vertical_crop_offset = 0.0
-        self.rig.horizontal_squeeze = 0.85
+        self.rig.vertical_crop_offset = -0.12
+        self.rig.horizontal_squeeze = 0.52
         self.rig.auto_crop_lir = True
         self.rig.lir_safety_margin = 0.005
 
@@ -2462,9 +2496,9 @@ class MainWindow(
         self.ctrl_right_roll.setValue(0.0)
         self.ctrl_global_pitch.setValue(2.0)
         self.ctrl_h_offset.setValue(0.0)
-        self.ctrl_pano_hfov.setValue(142.0)
-        self.ctrl_v_offset.setValue(0.0)
-        self.ctrl_squeeze.setValue(0.85)
+        self.ctrl_pano_hfov.setValue(146.0)
+        self.ctrl_v_offset.setValue(-0.12)
+        self.ctrl_squeeze.setValue(0.52)
         self.ctrl_blend_width.setValue(3.5)
         self.ctrl_cam_fov.setValue(82.0)
         self.ctrl_safety_margin.setValue(0.5)

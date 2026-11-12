@@ -56,6 +56,66 @@ class ColorExposureMatcher:
         self.lut_l = lut_l
         self.lut_r = lut_r
 
+    def calibrate(self, frame_l: np.ndarray, frame_r: np.ndarray, luts: any, strength: float = 1.0) -> dict:
+        """
+        Explicitly calibrates color, white-balance and exposure between Left and Right cameras
+        using the overlap region of the supplied frames. Immediately activates calibrated LUTs.
+        """
+        if frame_l is None or frame_r is None or luts is None:
+            return {"success": False, "message": "Frames oder LUTs fehlen"}
+
+        self.enabled = True
+        self.strength = float(np.clip(strength, 0.0, 1.0))
+
+        # Remap overlap
+        if getattr(luts, 'seam_x_start', None) is not None and getattr(luts, 'map_xl_sub', None) is not None:
+            x0 = luts.seam_x_start
+            x1 = luts.seam_x_end
+            if x1 <= x0:
+                return {"success": False, "message": "Ungültiger Nahtstellen-Bereich"}
+            rem_l_sub = cv2.remap(frame_l, luts.map_xl_sub, luts.map_yl_sub, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+            rem_r_sub = cv2.remap(frame_r, luts.map_xr_sub, luts.map_yr_sub, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+            sub_l = rem_l_sub[:, x0:x1:2][::4]
+            sub_r = rem_r_sub[:, :(x1 - x0):2][::4]
+            sub_wl = luts.weight_seam_l[::4, ::2, 0]
+            sub_wr = luts.weight_seam_r[::4, ::2, 0]
+        else:
+            rem_l = cv2.remap(frame_l, luts.map_x_left, luts.map_y_left, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+            rem_r = cv2.remap(frame_r, luts.map_x_right, luts.map_y_right, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+            sub_l = rem_l[::4, ::4]
+            sub_r = rem_r[::4, ::4]
+            sub_wl = luts.weight_left[::4, ::4, 0]
+            sub_wr = luts.weight_right[::4, ::4, 0]
+
+        valid_mask = (sub_wl > 0.05) & (sub_wr > 0.05) & (sub_l.any(axis=-1)) & (sub_r.any(axis=-1))
+        if np.count_nonzero(valid_mask) < 30:
+            return {"success": False, "message": "Zu wenige Überlappungspixel für Farbabgleich"}
+
+        mean_l = np.mean(sub_l[valid_mask], axis=0).astype(np.float32)
+        mean_r = np.mean(sub_r[valid_mask], axis=0).astype(np.float32)
+
+        if mean_l.min() < 1.0 or mean_r.min() < 1.0:
+            return {"success": False, "message": "Mittelwerte zu dunkel"}
+
+        target_mean = (mean_l + mean_r) * 0.5
+        raw_gain_l = np.clip(target_mean / np.maximum(mean_l, 1.0), 0.55, 1.80)
+        raw_gain_r = np.clip(target_mean / np.maximum(mean_r, 1.0), 0.55, 1.80)
+
+        with self._lock:
+            self.smoothed_gain_l = raw_gain_l
+            self.smoothed_gain_r = raw_gain_r
+            self.initialized = True
+            self._rebuild_luts(self.smoothed_gain_l, self.smoothed_gain_r)
+
+        return {
+            "success": True,
+            "gain_l": raw_gain_l.tolist(),
+            "gain_r": raw_gain_r.tolist(),
+            "mean_l": mean_l.tolist(),
+            "mean_r": mean_r.tolist(),
+            "target_mean": target_mean.tolist()
+        }
+
     def update_gains_from_sub(self, rem_l_sub: np.ndarray, rem_r_sub: np.ndarray, luts: any):
         """
         Calculates per-channel gains from the partitioned overlap strip and updates LUTs.

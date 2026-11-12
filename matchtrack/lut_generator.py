@@ -335,6 +335,24 @@ def find_largest_interior_rectangle(combined_mask: np.ndarray, mask_l: np.ndarra
         if found:
             break
 
+    # Width-preservation safeguard: never sacrifice sidelines and corner flags
+    if found and best_box[2] < int(W * 0.85):
+        for w_cand in range(W, int(W * 0.85), -step_x):
+            center_x = (W - w_cand) // 2
+            for h_cand in range(max_h, int(max_h * 0.60), -step_y):
+                target_sum = w_cand * h_cand
+                for y in range(0, H - h_cand + 1, step_y):
+                    area_sum = integral[y + h_cand, center_x + w_cand] - integral[y, center_x + w_cand] - integral[y + h_cand, center_x] + integral[y, center_x]
+                    if area_sum == target_sum:
+                        sub_l = mask_l[y:y+h_cand, center_x:center_x+w_cand]
+                        sub_r = mask_r[y:y+h_cand, center_x:center_x+w_cand]
+                        if np.any(sub_l) and np.any(sub_r):
+                            best_box = (center_x, y, w_cand, h_cand)
+                            break
+                if best_box[2] >= int(W * 0.85):
+                    break
+            if best_box[2] >= int(W * 0.85):
+                break
 
     if not found:
         # Fallback to full frame if cameras are rotated too far apart
