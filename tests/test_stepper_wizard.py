@@ -22,7 +22,9 @@ class TestStepperWizard(unittest.TestCase):
         cls.win.close()
 
     def setUp(self):
-        self.wizard = StepperWizardWidget(self.win)
+        self.wizard = getattr(self.win, 'tab_stepper', None) or StepperWizardWidget(self.win)
+        self.win.tab_stepper = self.wizard
+        self.wizard.go_to_step(0)
 
     def test_wizard_step_navigation(self):
         self.assertEqual(self.wizard.current_step, 0)
@@ -173,6 +175,50 @@ class TestStepperWizard(unittest.TestCase):
         self.wizard.on_export_finished(True, "Fertig")
         self.assertEqual(self.wizard.lbl_progress_pct.text(), "100%")
         self.assertIn("Fertig", self.wizard.lbl_progress_badge.text())
+
+    def test_video_path_display_and_trim_synchronization(self):
+        # 1. Video path display
+        self.wizard.update_left_video_path("C:/videos/game_left_1080p.mp4")
+        self.assertIn("game_left_1080p.mp4", self.wizard.lbl_path_l.text())
+
+        self.wizard.update_right_video_path("C:/videos/game_right_1080p.mp4")
+        self.assertIn("game_right_1080p.mp4", self.wizard.lbl_path_r.text())
+
+        self.wizard.update_panorama_video_path("C:/videos/panorama_32x9.mp4")
+        self.assertIn("panorama_32x9.mp4", self.wizard.lbl_path_pano.text())
+
+        # 2. Trim synchronization
+        self.wizard.update_video_info(10000, 30.0)
+        self.assertEqual(self.wizard.total_video_frames, 10000)
+
+        # Test setting in/out from current player position
+        self.win.current_frame_idx = 1500
+        self.wizard._set_trim_start_from_current()
+        self.assertEqual(self.wizard.spin_trim_start.value(), 1500)
+        self.assertEqual(self.win.in_point_frame, 1500)
+
+        self.win.current_frame_idx = 8500
+        self.wizard._set_trim_end_from_current()
+        self.assertEqual(self.wizard.spin_trim_end.value(), 8500)
+        self.assertEqual(self.win.out_point_frame, 8500)
+
+        # Test changing in main window updates wizard
+        self.win.set_in_point(2000)
+        self.assertEqual(self.wizard.spin_trim_start.value(), 2000)
+
+        self.win.set_out_point(7000)
+        self.assertEqual(self.wizard.spin_trim_end.value(), 7000)
+
+    def test_dji_action4_1080p_16x9_preset(self):
+        idx_1080p = self.wizard.combo_cam_preset.findData("DJI_Action4_1080p_16_9_Dewarp")
+        self.assertGreaterEqual(idx_1080p, 0)
+        self.wizard.combo_cam_preset.setCurrentIndex(idx_1080p)
+        self.wizard._on_preset_selected(idx_1080p)
+
+        self.assertEqual(self.win.rig.left_camera.image_width, 1920)
+        self.assertEqual(self.win.rig.left_camera.image_height, 1080)
+        self.assertAlmostEqual(self.win.rig.left_camera.hfov_deg, 92.0)
+        self.assertAlmostEqual(self.win.ctrl_master_yaw.value(), 77.0)
 
     def test_viewport_paint_all_view_modes_including_8x3(self):
         """Verifies paintEvent does not crash on 8:3 tactical panorama or any other view mode."""

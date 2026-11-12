@@ -1112,6 +1112,8 @@ class MainWindow(
             if hasattr(self, 'badge_left'):
                 self.badge_left.setText("🟢 Bereit")
                 self.badge_left.setStyleSheet("background: #064e3b; color: #34d399; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600;")
+            if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'update_left_video_path'):
+                self.tab_stepper.update_left_video_path(file_path)
             self._try_init_engine()
 
     def open_right_video(self, file_path_override: Optional[str] = None):
@@ -1123,6 +1125,8 @@ class MainWindow(
             if hasattr(self, 'badge_right'):
                 self.badge_right.setText("🟢 Bereit")
                 self.badge_right.setStyleSheet("background: #064e3b; color: #34d399; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600;")
+            if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'update_right_video_path'):
+                self.tab_stepper.update_right_video_path(file_path)
             self._try_init_engine()
 
     def open_panorama_video(self, file_path_override: Optional[str] = None):
@@ -1139,6 +1143,8 @@ class MainWindow(
             if hasattr(self, 'badge_right'):
                 self.badge_right.setText("—")
                 self.badge_right.setStyleSheet("background: #181824; color: #8e8e9c; border-radius: 6px; padding: 2px 8px; font-size: 11px;")
+            if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'update_panorama_video_path'):
+                self.tab_stepper.update_panorama_video_path(file_path)
             try:
                 self.engine.load_panorama_video(file_path)
                 self.update_ui_for_mode(is_panorama=True)
@@ -1172,8 +1178,17 @@ class MainWindow(
         self.lbl_total_time.setText(f"{h:02d}:{m:02d}:{s:02d}")
         
         self.update_in_out_display()
-        if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'update_video_info'):
-            self.tab_stepper.update_video_info(total_frames, fps)
+        if hasattr(self, 'tab_stepper'):
+            if hasattr(self.tab_stepper, 'update_video_info'):
+                self.tab_stepper.update_video_info(total_frames, fps)
+            if hasattr(self, 'video_path_l') and self.video_path_l:
+                self.tab_stepper.update_left_video_path(self.video_path_l)
+            if hasattr(self, 'video_path_r') and self.video_path_r:
+                self.tab_stepper.update_right_video_path(self.video_path_r)
+            if hasattr(self, 'panorama_path') and self.panorama_path:
+                self.tab_stepper.update_panorama_video_path(self.panorama_path)
+            if hasattr(self.tab_stepper, 'set_trim_range'):
+                self.tab_stepper.set_trim_range(self.in_point_frame, self.out_point_frame)
         if self.engine.is_panorama_mode():
             if hasattr(self, 'lbl_video_status'):
                 status_txt = "🎬 8:3 Panorama geladen" if self.is_4_3_mode() else "🎬 32:9 Panorama geladen"
@@ -1383,13 +1398,11 @@ class MainWindow(
         return f"{h:02d}:{m:02d}:{s:02d}.{millis:02d}"
 
     def set_in_point(self, frame_idx: Optional[int] = None):
-        if not self.has_active_video():
-            return
         if frame_idx is None:
             frame_idx = self.current_frame_idx
-        
-        max_f = max(0, self.engine.get_max_duration_frames() - 1)
-        frame_idx = max(0, min(max_f, frame_idx))
+        if self.has_active_video():
+            max_f = max(0, self.engine.get_max_duration_frames() - 1)
+            frame_idx = max(0, min(max_f, frame_idx))
         if frame_idx > self.out_point_frame:
             self.out_point_frame = frame_idx
         self.in_point_frame = frame_idx
@@ -1397,13 +1410,11 @@ class MainWindow(
         self.status_bar.showMessage(f"🚩 Startpunkt (In) auf Frame {frame_idx} ({self.format_timecode(frame_idx)}) gesetzt.")
 
     def set_out_point(self, frame_idx: Optional[int] = None):
-        if not self.has_active_video():
-            return
         if frame_idx is None:
             frame_idx = self.current_frame_idx
-
-        max_f = max(0, self.engine.get_max_duration_frames() - 1)
-        frame_idx = max(0, min(max_f, frame_idx))
+        if self.has_active_video():
+            max_f = max(0, self.engine.get_max_duration_frames() - 1)
+            frame_idx = max(0, min(max_f, frame_idx))
         if frame_idx < self.in_point_frame:
             self.in_point_frame = frame_idx
         self.out_point_frame = frame_idx
@@ -1427,6 +1438,10 @@ class MainWindow(
         self.status_bar.showMessage("Schnittbereich auf gesamtes Video zurückgesetzt.")
 
     def update_in_out_display(self):
+        # Also sync stepper wizard if present
+        if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'set_trim_range'):
+            self.tab_stepper.set_trim_range(self.in_point_frame, self.out_point_frame)
+
         if not self.has_active_video():
             self.lbl_trim_info.setText("✂️ Schnittbereich: Kein Video geladen")
             return
@@ -1457,6 +1472,10 @@ class MainWindow(
 
         self.lbl_export_in_time.setText(in_tc)
         self.lbl_export_out_time.setText(out_tc)
+
+        # Also sync stepper wizard if present
+        if hasattr(self, 'tab_stepper') and hasattr(self.tab_stepper, 'set_trim_range'):
+            self.tab_stepper.set_trim_range(in_f, out_f)
         
         if self.chk_export_trim_only.isChecked():
             self.lbl_export_duration_info.setText(f"Ausgewählte Export-Dauer: {dur_str} ({diff_frames:,} Frames)")
@@ -2300,6 +2319,196 @@ class MainWindow(
         self.update_resolution_dropdown()
         self.refresh_preview()
         self.status_bar.showMessage("📹 Preset aktiviert: DJI Action 4 1080p 4:3 Dewarp (RockSteady ON, 30fps) - 8:3 Live-Vorschau & Rig optimiert!")
+
+    def apply_action4_1080p_16x9_dewarp_preset(self):
+        """Applies complete stitching preset for DJI Action 4 1080p (16:9) Dewarp Standard (60fps)."""
+        preset_key = "DJI_Action4_1080p_16_9_Dewarp"
+        if preset_key not in CAMERA_PRESETS:
+            preset_key = "DJI_Action4_1080p_Dewarp"
+        if preset_key not in CAMERA_PRESETS:
+            return
+        preset = CAMERA_PRESETS[preset_key]
+        self.rig.left_camera = CameraIntrinsics.from_dict(preset.to_dict())
+        self.rig.right_camera = CameraIntrinsics.from_dict(preset.to_dict())
+
+        # Dual-Rig poses optimized for 16:9 92.0° FOV cameras (~10° central overlap at 77° spread)
+        self.rig.left_pose.yaw = -38.5
+        self.rig.left_pose.pitch = -2.0
+        self.rig.left_pose.roll = 0.0
+        self.rig.left_pose.reset_corners()
+
+        self.rig.right_pose.yaw = 38.5
+        self.rig.right_pose.pitch = -2.0
+        self.rig.right_pose.roll = 0.0
+        self.rig.right_pose.reset_corners()
+
+        self.rig.global_pitch_correction = 2.0
+        self.rig.global_roll_correction = 0.0
+        self.rig.global_yaw_center = 0.0
+        self.rig.pano_hfov = 148.0
+        self.rig.projection_type = "cylindrical"
+        self.rig.field_curvature_correction = 0.0
+        self.rig.blend_width_deg = 3.5
+        self.rig.seam_angle_offset = 0.0
+        self.rig.bottom_seam_taper_x = 0.0
+        self.rig.bottom_seam_taper_y = 0.0
+        self.rig.smart_seam_enabled = False
+        self.rig.auto_color_match = True
+        self.rig.color_match_strength = 1.0
+        self.rig.vertical_crop_offset = 0.0
+        self.rig.horizontal_squeeze = 0.85
+        self.rig.auto_crop_lir = True
+        self.rig.lir_safety_margin = 0.005
+
+        for ctrl in [
+            self.ctrl_left_yaw, self.ctrl_right_yaw, self.ctrl_master_yaw,
+            self.ctrl_cam_pitch, self.ctrl_left_roll, self.ctrl_right_roll,
+            self.ctrl_global_pitch, self.ctrl_h_offset, self.ctrl_pano_hfov,
+            self.ctrl_v_offset, self.ctrl_squeeze, self.ctrl_blend_width,
+            self.ctrl_cam_fov, self.ctrl_safety_margin, self.chk_auto_crop
+        ]:
+            ctrl.blockSignals(True)
+
+        self.ctrl_left_yaw.setValue(-38.5)
+        self.ctrl_right_yaw.setValue(38.5)
+        self.ctrl_master_yaw.setValue(77.0)
+        self.ctrl_cam_pitch.setValue(-2.0)
+        self.ctrl_left_roll.setValue(0.0)
+        self.ctrl_right_roll.setValue(0.0)
+        self.ctrl_global_pitch.setValue(2.0)
+        self.ctrl_h_offset.setValue(0.0)
+        self.ctrl_pano_hfov.setValue(148.0)
+        self.ctrl_v_offset.setValue(0.0)
+        self.ctrl_squeeze.setValue(0.85)
+        self.ctrl_blend_width.setValue(3.5)
+        self.ctrl_cam_fov.setValue(92.0)
+        self.ctrl_safety_margin.setValue(0.5)
+        self.chk_auto_crop.setChecked(True)
+
+        for ctrl in [
+            self.ctrl_left_yaw, self.ctrl_right_yaw, self.ctrl_master_yaw,
+            self.ctrl_cam_pitch, self.ctrl_left_roll, self.ctrl_right_roll,
+            self.ctrl_global_pitch, self.ctrl_h_offset, self.ctrl_pano_hfov,
+            self.ctrl_v_offset, self.ctrl_squeeze, self.ctrl_blend_width,
+            self.ctrl_cam_fov, self.ctrl_safety_margin, self.chk_auto_crop
+        ]:
+            ctrl.blockSignals(False)
+
+        if hasattr(self, 'combo_preset'):
+            idx = self.combo_preset.findData(preset_key)
+            if idx >= 0:
+                self.combo_preset.blockSignals(True)
+                self.combo_preset.setCurrentIndex(idx)
+                self.combo_preset.blockSignals(False)
+
+        self.update_corner_spinboxes_from_rig()
+        self.engine.invalidate_luts()
+        self._update_format_combo_labels()
+        self.update_resolution_dropdown()
+        self.refresh_preview()
+        self.status_bar.showMessage("📹 Preset aktiviert: DJI Action 4 1080p 16:9 Dewarp Standard (60fps)")
+
+    def apply_action4_1080p_16x9_rocksteady_preset(self):
+        """Applies complete stitching preset for DJI Action 4 1080p (16:9) Dewarp RockSteady."""
+        preset_key = "DJI_Action4_1080p_Dewarp_RockSteady"
+        if preset_key not in CAMERA_PRESETS:
+            return
+        preset = CAMERA_PRESETS[preset_key]
+        self.rig.left_camera = CameraIntrinsics.from_dict(preset.to_dict())
+        self.rig.right_camera = CameraIntrinsics.from_dict(preset.to_dict())
+
+        self.rig.left_pose.yaw = -36.5
+        self.rig.left_pose.pitch = -2.0
+        self.rig.left_pose.roll = 0.0
+        self.rig.left_pose.reset_corners()
+
+        self.rig.right_pose.yaw = 36.5
+        self.rig.right_pose.pitch = -2.0
+        self.rig.right_pose.roll = 0.0
+        self.rig.right_pose.reset_corners()
+
+        self.rig.global_pitch_correction = 2.0
+        self.rig.global_roll_correction = 0.0
+        self.rig.global_yaw_center = 0.0
+        self.rig.pano_hfov = 142.0
+        self.rig.projection_type = "cylindrical"
+        self.rig.field_curvature_correction = 0.0
+        self.rig.blend_width_deg = 3.5
+        self.rig.seam_angle_offset = 0.0
+        self.rig.bottom_seam_taper_x = 0.0
+        self.rig.bottom_seam_taper_y = 0.0
+        self.rig.smart_seam_enabled = False
+        self.rig.auto_color_match = True
+        self.rig.color_match_strength = 1.0
+        self.rig.vertical_crop_offset = 0.0
+        self.rig.horizontal_squeeze = 0.85
+        self.rig.auto_crop_lir = True
+        self.rig.lir_safety_margin = 0.005
+
+        for ctrl in [
+            self.ctrl_left_yaw, self.ctrl_right_yaw, self.ctrl_master_yaw,
+            self.ctrl_cam_pitch, self.ctrl_left_roll, self.ctrl_right_roll,
+            self.ctrl_global_pitch, self.ctrl_h_offset, self.ctrl_pano_hfov,
+            self.ctrl_v_offset, self.ctrl_squeeze, self.ctrl_blend_width,
+            self.ctrl_cam_fov, self.ctrl_safety_margin, self.chk_auto_crop
+        ]:
+            ctrl.blockSignals(True)
+
+        self.ctrl_left_yaw.setValue(-36.5)
+        self.ctrl_right_yaw.setValue(36.5)
+        self.ctrl_master_yaw.setValue(73.0)
+        self.ctrl_cam_pitch.setValue(-2.0)
+        self.ctrl_left_roll.setValue(0.0)
+        self.ctrl_right_roll.setValue(0.0)
+        self.ctrl_global_pitch.setValue(2.0)
+        self.ctrl_h_offset.setValue(0.0)
+        self.ctrl_pano_hfov.setValue(142.0)
+        self.ctrl_v_offset.setValue(0.0)
+        self.ctrl_squeeze.setValue(0.85)
+        self.ctrl_blend_width.setValue(3.5)
+        self.ctrl_cam_fov.setValue(82.0)
+        self.ctrl_safety_margin.setValue(0.5)
+        self.chk_auto_crop.setChecked(True)
+
+        for ctrl in [
+            self.ctrl_left_yaw, self.ctrl_right_yaw, self.ctrl_master_yaw,
+            self.ctrl_cam_pitch, self.ctrl_left_roll, self.ctrl_right_roll,
+            self.ctrl_global_pitch, self.ctrl_h_offset, self.ctrl_pano_hfov,
+            self.ctrl_v_offset, self.ctrl_squeeze, self.ctrl_blend_width,
+            self.ctrl_cam_fov, self.ctrl_safety_margin, self.chk_auto_crop
+        ]:
+            ctrl.blockSignals(False)
+
+        if hasattr(self, 'combo_preset'):
+            idx = self.combo_preset.findData(preset_key)
+            if idx >= 0:
+                self.combo_preset.blockSignals(True)
+                self.combo_preset.setCurrentIndex(idx)
+                self.combo_preset.blockSignals(False)
+
+        self.update_corner_spinboxes_from_rig()
+        self.engine.invalidate_luts()
+        self._update_format_combo_labels()
+        self.update_resolution_dropdown()
+        self.refresh_preview()
+        self.status_bar.showMessage("📹 Preset aktiviert: DJI Action 4 1080p 16:9 RockSteady")
+
+    def apply_rig_preset_by_key(self, preset_key: str):
+        """Applies rig preset dynamically by preset key string."""
+        if preset_key in ("DJI_Action4_1080p_16_9_Dewarp", "DJI_Action4_1080p_Dewarp"):
+            self.apply_action4_1080p_16x9_dewarp_preset()
+        elif preset_key == "DJI_Action4_1080p_Dewarp_RockSteady":
+            self.apply_action4_1080p_16x9_rocksteady_preset()
+        elif preset_key == "DJI_Action4_1080p_4_3_Dewarp_RockSteady":
+            self.apply_action4_4x3_rocksteady_preset()
+        elif preset_key in CAMERA_PRESETS:
+            preset = CAMERA_PRESETS[preset_key]
+            self.rig.left_camera = CameraIntrinsics.from_dict(preset.to_dict())
+            self.rig.right_camera = CameraIntrinsics.from_dict(preset.to_dict())
+            self.ctrl_cam_fov.setValue(preset.hfov_deg)
+            self.engine.invalidate_luts()
+            self.refresh_preview()
+            self.status_bar.showMessage(f"Kamera-Preset aktiviert: {preset.name}")
 
     def toggle_auto_crop(self, checked: bool):
         self.rig.auto_crop_lir = checked

@@ -6,7 +6,7 @@ echo ===================================================
 
 if not exist ".venv" (
     echo Creating virtual environment with Python 3.11...
-    "d:\Users\SoKo\AppData\Local\Programs\Python\Python311\python.exe" -m venv .venv
+    py -3.11 -m venv .venv 2>nul || python -m venv .venv
 )
 
 echo Installing dependencies (NumPy, SciPy, OpenCV, PySide6)...

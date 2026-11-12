@@ -326,9 +326,11 @@ class StepperWizardWidget(QWidget):
         row_calib = QHBoxLayout()
         row_calib.addWidget(QLabel("Kamera-Kalibrierung (Calibration):"))
         self.combo_cam_preset = QComboBox()
+        self.combo_cam_preset.addItem("⭐ DJI Osmo Action 4 - 1080p 16:9 Dewarp (Standard)", "DJI_Action4_1080p_16_9_Dewarp")
+        self.combo_cam_preset.addItem("⭐ DJI Osmo Action 4 - 1080p 16:9 RockSteady", "DJI_Action4_1080p_Dewarp_RockSteady")
         self.combo_cam_preset.addItem("⭐ DJI Osmo Action 4 - 4:3 RockSteady (Empfohlen)", "DJI_Action4_1080p_4_3_Dewarp_RockSteady")
-        self.combo_cam_preset.addItem("⭐ DJI Osmo Action 4 - 2.7K 16:9 Dewarp", "DJI_Action4_2_7K_16_9")
-        self.combo_cam_preset.addItem("⭐ DJI Osmo Action 4 - 4K 16:9 Dewarp", "DJI_Action4_4K_16_9")
+        self.combo_cam_preset.addItem("⭐ DJI Osmo Action 4 - 2.7K 16:9 Dewarp", "DJI_Action4_2_7K_Dewarp")
+        self.combo_cam_preset.addItem("⭐ DJI Osmo Action 4 - 4K 16:9 Dewarp", "DJI_Action4_4K_Dewarp")
         self.combo_cam_preset.addItem("📷 GoPro Hero 11 / 12 / 13 Wide", "GoPro13_Wide")
         self.combo_cam_preset.addItem("📱 Apple iPhone 0.5x UltraWide", "iPhone_UltraWide")
         self.combo_cam_preset.currentIndexChanged.connect(self._on_preset_selected)
@@ -375,29 +377,47 @@ class StepperWizardWidget(QWidget):
         t_layout.addWidget(lbl_trim_hdr)
 
         row_trim_ctrls = QHBoxLayout()
-        row_trim_ctrls.setSpacing(12)
+        row_trim_ctrls.setSpacing(8)
 
         lbl_s = QLabel("Start-Frame:")
         lbl_s.setStyleSheet("color: #cbd5e1; font-weight: 700; font-size: 11px;")
         self.spin_trim_start = QSpinBox()
-        self.spin_trim_start.setRange(0, 999999)
+        self.spin_trim_start.setRange(0, 9999999)
         self.spin_trim_start.setValue(0)
-        self.spin_trim_start.setFixedWidth(100)
+        self.spin_trim_start.setFixedWidth(85)
         self.spin_trim_start.setStyleSheet("background: #1e1e2d; color: #10b981; font-weight: 700; padding: 6px; border-radius: 6px;")
         self.spin_trim_start.valueChanged.connect(self._on_trim_changed)
+        
+        self.btn_set_trim_in = QPushButton("🚩 Als Start (In)")
+        self.btn_set_trim_in.setToolTip("Aktuellen Frame im Player als Startpunkt setzen (Taste 'I')")
+        self.btn_set_trim_in.setStyleSheet("background: #064e3b; color: #34d399; font-weight: 700; padding: 6px 10px; border-radius: 6px; border: 1px solid #059669;")
+        self.btn_set_trim_in.clicked.connect(self._set_trim_start_from_current)
+
         row_trim_ctrls.addWidget(lbl_s)
         row_trim_ctrls.addWidget(self.spin_trim_start)
+        row_trim_ctrls.addWidget(self.btn_set_trim_in)
+
+        row_trim_ctrls.addSpacing(14)
 
         lbl_e = QLabel("End-Frame:")
         lbl_e.setStyleSheet("color: #cbd5e1; font-weight: 700; font-size: 11px;")
         self.spin_trim_end = QSpinBox()
-        self.spin_trim_end.setRange(0, 999999)
+        self.spin_trim_end.setRange(0, 9999999)
         self.spin_trim_end.setValue(0)
-        self.spin_trim_end.setFixedWidth(100)
+        self.spin_trim_end.setFixedWidth(85)
         self.spin_trim_end.setStyleSheet("background: #1e1e2d; color: #ef4444; font-weight: 700; padding: 6px; border-radius: 6px;")
         self.spin_trim_end.valueChanged.connect(self._on_trim_changed)
+
+        self.btn_set_trim_out = QPushButton("🏁 Als Ende (Out)")
+        self.btn_set_trim_out.setToolTip("Aktuellen Frame im Player als Endpunkt setzen (Taste 'O')")
+        self.btn_set_trim_out.setStyleSheet("background: #450a0a; color: #f87171; font-weight: 700; padding: 6px 10px; border-radius: 6px; border: 1px solid #dc2626;")
+        self.btn_set_trim_out.clicked.connect(self._set_trim_end_from_current)
+
         row_trim_ctrls.addWidget(lbl_e)
         row_trim_ctrls.addWidget(self.spin_trim_end)
+        row_trim_ctrls.addWidget(self.btn_set_trim_out)
+
+        row_trim_ctrls.addSpacing(14)
 
         btn_full_range = QPushButton("🔄 Gesamtes Video")
         btn_full_range.setStyleSheet("background: #1e1e2d; color: #94a3b8; font-weight: 700; padding: 6px 12px; border-radius: 6px; border: 1px solid #28283a;")
@@ -424,6 +444,14 @@ class StepperWizardWidget(QWidget):
         layout.addWidget(grp_trim)
         layout.addStretch()
 
+        # If videos are already loaded in main window, reflect them immediately
+        if hasattr(self.win, 'video_path_l') and self.win.video_path_l:
+            self.update_left_video_path(self.win.video_path_l)
+        if hasattr(self.win, 'video_path_r') and self.win.video_path_r:
+            self.update_right_video_path(self.win.video_path_r)
+        if hasattr(self.win, 'panorama_path') and self.win.panorama_path:
+            self.update_panorama_video_path(self.win.panorama_path)
+
         self._update_source_page_visibility()
         return page
 
@@ -433,6 +461,69 @@ class StepperWizardWidget(QWidget):
         m, s = divmod(int(sec), 60)
         h, m = divmod(m, 60)
         return f"{h:02d}:{m:02d}:{s:02d}"
+
+    def update_left_video_path(self, path: str):
+        """Displays left camera video path with checkmark badge."""
+        if not path:
+            return
+        fname = os.path.basename(path)
+        if hasattr(self, 'lbl_path_l'):
+            self.lbl_path_l.setText(f"✅ {fname}")
+            self.lbl_path_l.setToolTip(path)
+            self.lbl_path_l.setStyleSheet("color: #34d399; font-weight: 700; font-size: 12px;")
+        self.update_summary()
+
+    def update_right_video_path(self, path: str):
+        """Displays right camera video path with checkmark badge."""
+        if not path:
+            return
+        fname = os.path.basename(path)
+        if hasattr(self, 'lbl_path_r'):
+            self.lbl_path_r.setText(f"✅ {fname}")
+            self.lbl_path_r.setToolTip(path)
+            self.lbl_path_r.setStyleSheet("color: #34d399; font-weight: 700; font-size: 12px;")
+        self.update_summary()
+
+    def update_panorama_video_path(self, path: str):
+        """Displays panorama video path with checkmark badge."""
+        if not path:
+            return
+        fname = os.path.basename(path)
+        if hasattr(self, 'lbl_path_pano'):
+            self.lbl_path_pano.setText(f"✅ {fname}")
+            self.lbl_path_pano.setToolTip(path)
+            self.lbl_path_pano.setStyleSheet("color: #34d399; font-weight: 700; font-size: 12px;")
+        self.update_summary()
+
+    def set_trim_range(self, start_frame: int, end_frame: int):
+        """Sets start and end trim frames, keeping UI widgets synchronized with player."""
+        self.trim_start_frame = max(0, start_frame)
+        self.trim_end_frame = max(self.trim_start_frame, end_frame)
+        if hasattr(self, 'spin_trim_start') and hasattr(self, 'spin_trim_end'):
+            self.spin_trim_start.blockSignals(True)
+            self.spin_trim_end.blockSignals(True)
+            self.spin_trim_start.setValue(self.trim_start_frame)
+            self.spin_trim_end.setValue(self.trim_end_frame)
+            self.spin_trim_start.blockSignals(False)
+            self.spin_trim_end.blockSignals(False)
+        self._refresh_trim_labels()
+        self.update_summary()
+
+    def _set_trim_start_from_current(self):
+        """Sets Start-Frame to the current playback position in the preview player."""
+        curr = getattr(self.win, 'current_frame_idx', 0)
+        if hasattr(self.win, 'set_in_point'):
+            self.win.set_in_point(curr)
+        else:
+            self.set_trim_range(curr, self.trim_end_frame)
+
+    def _set_trim_end_from_current(self):
+        """Sets End-Frame to the current playback position in the preview player."""
+        curr = getattr(self.win, 'current_frame_idx', 0)
+        if hasattr(self.win, 'set_out_point'):
+            self.win.set_out_point(curr)
+        else:
+            self.set_trim_range(self.trim_start_frame, curr)
 
     def update_video_info(self, total_frames: int, fps: float):
         self.total_video_frames = max(1, total_frames)
@@ -467,8 +558,21 @@ class StepperWizardWidget(QWidget):
         self._refresh_trim_labels()
         self.update_summary()
 
+        # Synchronize with main window player timeline in/out
+        if hasattr(self.win, 'in_point_frame') and hasattr(self.win, 'out_point_frame'):
+            self.win.in_point_frame = s_val
+            self.win.out_point_frame = e_val
+            if hasattr(self.win, 'update_in_out_display'):
+                self.spin_trim_start.blockSignals(True)
+                self.spin_trim_end.blockSignals(True)
+                self.win.update_in_out_display()
+                self.spin_trim_start.blockSignals(False)
+                self.spin_trim_end.blockSignals(False)
+
     def _reset_trim_to_full(self):
-        if hasattr(self, 'spin_trim_start') and hasattr(self, 'spin_trim_end'):
+        if hasattr(self.win, 'reset_in_out_points'):
+            self.win.reset_in_out_points()
+        elif hasattr(self, 'spin_trim_start') and hasattr(self, 'spin_trim_end'):
             self.spin_trim_start.setValue(0)
             self.spin_trim_end.setValue(self.total_video_frames)
 
@@ -487,7 +591,9 @@ class StepperWizardWidget(QWidget):
 
     def _on_preset_selected(self, idx: int):
         val = self.combo_cam_preset.currentData()
-        if val and hasattr(self.win, 'apply_action4_4x3_rocksteady_preset'):
+        if val and hasattr(self.win, 'apply_rig_preset_by_key'):
+            self.win.apply_rig_preset_by_key(val)
+        elif val and hasattr(self.win, 'apply_action4_4x3_rocksteady_preset'):
             self.win.apply_action4_4x3_rocksteady_preset()
 
     def _prepare_stitching(self):
@@ -1549,6 +1655,14 @@ class StepperWizardWidget(QWidget):
                     self.update_framing_previews()
                 elif step_idx == 1: # Source
                     self.win.viewport.set_workflow_domain("stitching")
+                    if hasattr(self.win, 'video_path_l') and self.win.video_path_l:
+                        self.update_left_video_path(self.win.video_path_l)
+                    if hasattr(self.win, 'video_path_r') and self.win.video_path_r:
+                        self.update_right_video_path(self.win.video_path_r)
+                    if hasattr(self.win, 'panorama_path') and self.win.panorama_path:
+                        self.update_panorama_video_path(self.win.panorama_path)
+                    if hasattr(self.win, 'in_point_frame') and hasattr(self.win, 'out_point_frame') and self.win.has_active_video():
+                        self.set_trim_range(self.win.in_point_frame, self.win.out_point_frame)
                 elif step_idx == 4: # Output
                     self.win.viewport.set_workflow_domain("autocam")
                     self.update_summary()

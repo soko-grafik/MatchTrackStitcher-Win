@@ -185,6 +185,21 @@ CAMERA_PRESETS = {
         k4=0.0,
         model_type="pinhole"
     ),
+    "DJI_Action4_1080p_16_9_Dewarp": CameraIntrinsics(
+        name="DJI Action 4 1080p Standard/Dewarp (16:9 60fps)",
+        image_width=1920,
+        image_height=1080,
+        hfov_deg=92.0,
+        fx=928.0,
+        fy=928.0,
+        cx=960.0,
+        cy=540.0,
+        k1=0.0,
+        k2=0.0,
+        k3=0.0,
+        k4=0.0,
+        model_type="pinhole"
+    ),
     "DJI_Action4_1080p_Dewarp": CameraIntrinsics(
         name="DJI Action 4 1080p Standard/Dewarp (16:9 60fps)",
         image_width=1920,
